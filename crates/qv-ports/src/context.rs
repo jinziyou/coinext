@@ -147,6 +147,32 @@ impl OrderFactory {
             ts,
         )
     }
+
+    /// A TRAILING stop-market order. `trigger` is the INITIAL stop level (the caller sets it to
+    /// `mark ∓ offset`); the sim ratchets it toward the favorable extreme as the market moves.
+    pub fn trailing_stop(
+        &mut self,
+        instrument_id: InstrumentId,
+        side: OrderSide,
+        qty: Quantity,
+        trigger: Price,
+        ts: UnixNanos,
+    ) -> Order {
+        let id = self.next_id();
+        Order::new(
+            self.strategy_id.clone(),
+            id,
+            instrument_id,
+            side,
+            OrderType::TrailingStopMarket,
+            qty,
+            None,
+            Some(trigger),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            ts,
+        )
+    }
 }
 
 /// Everything a Strategy needs from the platform, injected by the kernel. Reads go straight to
@@ -262,6 +288,30 @@ impl StrategyContext {
         let order = self
             .factory
             .stop_limit(instrument_id, side, qty, trigger, price, ts);
+        let id = order.client_order_id.clone();
+        self.submit(order);
+        id
+    }
+    /// A trailing stop `offset` away from the current mark: the initial stop is `mark ∓ offset` and
+    /// the sim ratchets it toward the favorable extreme. Falls back to `offset` as the stop if no
+    /// mark is cached yet (the order then rests inert until one is).
+    pub fn submit_trailing_stop(
+        &mut self,
+        instrument_id: InstrumentId,
+        side: OrderSide,
+        qty: Quantity,
+        offset: Price,
+    ) -> ClientOrderId {
+        let ts = self.clock.now_ns();
+        let mark = self.cache.borrow().mark(&instrument_id);
+        let trigger = match (mark, side) {
+            (Some(m), OrderSide::Sell) => m.checked_sub(offset).unwrap_or(offset),
+            (Some(m), OrderSide::Buy) => m.checked_add(offset).unwrap_or(offset),
+            (None, _) => offset,
+        };
+        let order = self
+            .factory
+            .trailing_stop(instrument_id, side, qty, trigger, ts);
         let id = order.client_order_id.clone();
         self.submit(order);
         id

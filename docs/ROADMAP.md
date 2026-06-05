@@ -66,9 +66,11 @@
   rises to it / sell: falls to it), then takes liquidity at the market (stop-loss / breakout) — fills
   at the trigger, worsened to the bar on a gap, slipped by the brokerage model; **stop-limit**
   converts on trigger to a resting limit at its price (bounded slippage — fills only at the limit or
-  better). `ctx.submit_stop(side, qty, trigger)` and `ctx.submit_stop_limit(side, qty, trigger,
-  price)` (both cancelable). `on_market` dispatches by order type. Rust (trigger cross, gap fill,
-  limit conversion, no-fill-below-limit) + Python (breakout fires, cancel, stop-limit fills) tested.
+  better); **trailing-stop** trails the favorable extreme by an `offset` (the trigger ratchets
+  monotonically toward the market and fires on a pull-back past the offset). `ctx.submit_stop` /
+  `submit_stop_limit` / `submit_trailing` (all cancelable). `on_market` dispatches by order type.
+  Rust (trigger cross, gap fill, limit conversion, no-fill-below-limit, trail ratchet + no-fire) +
+  Python (breakout, cancel, stop-limit fill, trailing locks in a gain) tested.
 - **Streaming indicators in Python** (`qv_indicators`): the tested Rust `qv-indicators` (SMA / EMA /
   RSI / ATR / **MACD / Bollinger / VWAP**) are bridged through `qv_py`, so a Python strategy uses the
   IDENTICAL incremental implementation as warm-up / live rather than a re-rolled copy. Plus a pure-
@@ -91,8 +93,8 @@
 
 1. **Research notebook** — an end-to-end demo (download → screen → optimize → backtest → tear-sheet)
    over real data, stringing the features together.
-2. **Strategy ergonomics** — historical bookTicker (websocket capture) for real quotes; the
-   trailing-stop order type (the remaining one) in the sim.
+2. **Strategy ergonomics** — historical bookTicker (websocket capture) for real quotes (the last
+   research-side data gap; `on_quote` currently runs on synthetic or tick-derived quotes).
 
 ## Deferred — live / ops (start when ready to trade)
 
