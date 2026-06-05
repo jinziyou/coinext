@@ -87,7 +87,13 @@ never reached (a close-only series would miss it). The same path serves real OHL
 
 ```bash
 uv run qv backtest-multi --symbols BTCUSDT,ETHUSDT,SOLUSDT     # a portfolio through ONE kernel
+uv run qv screen --from-lake --symbol BTCUSDT                  # fast vectorized sweep + cross-check
 ```
+
+`screen` ranks a parameter grid in milliseconds with a **vectorized** (numpy) backtest — fast but
+NON-authoritative (no fees/slippage/latency/queue) — then runs `qv_parity.cross_check` to warn if the
+best params **drift** from the event-driven runner. Narrow the space with `screen`, then confirm
+survivors with the parity-valid `qv backtest`.
 
 `backtest-multi` runs a per-symbol SMA portfolio across many instruments in a single deterministic
 kernel (shared Cache / sim / risk / portfolio). The strategy reads `bar.symbol` and targets orders

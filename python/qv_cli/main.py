@@ -332,6 +332,55 @@ def _cmd_optimize(
     return 0
 
 
+def _cmd_screen(
+    symbol: str = "BTCUSDT", from_lake: bool = False, interval: str = "1m", n: int = 1200
+) -> int:
+    """FAST vectorized SMA-cross sweep (non-authoritative), then cross-check the best vs the runner.
+
+    The vectorized screen ranks a grid in milliseconds with numpy (no Risk/Exec/Brokerage); the
+    advisory ``qv_parity.cross_check`` then warns if the best params drift from the AUTHORITATIVE
+    event-driven backtest. Use the screen to narrow a space, confirm survivors with ``qv backtest``.
+    """
+    import qv_backtest
+    from qv_screen import cross_check_vs_event, sweep_sma_cross
+
+    if from_lake:
+        from qv_data import _HAVE_LAKE, DataLake
+
+        if not _HAVE_LAKE:
+            print("pyarrow not installed — `--from-lake` needs the lake (`uv pip install pyarrow`)")
+            return 1
+        bars = DataLake().read_closes("BINANCE", symbol, interval)
+        if not bars:
+            print(f"lake empty for {symbol} {interval} — run `qv download --symbols {symbol}`")
+            return 1
+        print(f"[lake] screening over {len(bars)} {symbol} {interval} bars")
+    else:
+        bars = qv_backtest.synthetic_bars(n=n)
+
+    fasts, slows = [5, 8, 11, 14, 17, 20], [25, 30, 40, 50, 60]
+    rows = sweep_sma_cross(bars, fasts, slows)
+    print("======== vectorized screen (NON-authoritative, fast) ========")
+    print(f"swept {len(rows)} (fast,slow) combos; top by vectorized Sharpe:")
+    for r in rows[:5]:
+        print(
+            f"  fast={r.params['fast']:>3} slow={r.params['slow']:>3}  "
+            f"sharpe={r.sharpe:>9.3f}  return={r.total_return * 100:>8.2f}%  trades={r.n_trades}"
+        )
+    best = rows[0].params
+    print(f"cross-checking best {best} vs the AUTHORITATIVE event-driven runner ...")
+    warnings = cross_check_vs_event(bars, best["fast"], best["slow"], symbol=symbol)
+    if warnings:
+        print("  advisory drift (the fast screen is misleading for this strategy):")
+        for w in warnings:
+            print(f"    ⚠ {w}")
+    else:
+        print("  no material drift — the screen tracks the event-driven runner here.")
+    print("=============================================================")
+    print("Confirm survivors with: qv backtest --fast <f> --slow <s> (the parity-valid runner)")
+    return 0
+
+
 def _cmd_download(
     symbols: str = "BTCUSDT", interval: str = "1m", days: float = 7.0, venue: str = "BINANCE"
 ) -> int:
@@ -476,6 +525,13 @@ def _build_typer_app():
         raise typer.Exit(_cmd_optimize(symbol, trials, splits, mode, optuna, from_lake, interval))
 
     @app.command()
+    def screen(
+        symbol: str = "BTCUSDT", from_lake: bool = False, interval: str = "1m", n: int = 1200
+    ) -> None:
+        """Fast vectorized SMA-cross sweep, then cross-check the best vs the event-driven runner."""
+        raise typer.Exit(_cmd_screen(symbol, from_lake, interval, n))
+
+    @app.command()
     def download(
         symbols: str = "BTCUSDT", interval: str = "1m", days: float = 7.0, venue: str = "BINANCE"
     ) -> None:
@@ -553,6 +609,12 @@ def _build_argparse_parser():
     p.add_argument("--from-lake", action="store_true", help="Optimize over the local Parquet lake.")
     p.add_argument("--interval", default="1m")
 
+    p = sub.add_parser("screen", help="Fast vectorized sweep + cross-check vs the event runner.")
+    p.add_argument("--symbol", default="BTCUSDT")
+    p.add_argument("--from-lake", action="store_true", help="Screen over the local Parquet lake.")
+    p.add_argument("--interval", default="1m")
+    p.add_argument("--n", type=int, default=1200)
+
     p = sub.add_parser("download", help="Download REAL history into the local Parquet lake.")
     p.add_argument("--symbols", default="BTCUSDT", help="comma-separated, e.g. BTCUSDT,ETHUSDT")
     p.add_argument("--interval", default="1m")
@@ -589,6 +651,7 @@ def _run_argparse(argv: list[str] | None) -> int:
         "optimize": lambda: _cmd_optimize(
             ns.symbol, ns.trials, ns.splits, ns.mode, ns.optuna, ns.from_lake, ns.interval
         ),
+        "screen": lambda: _cmd_screen(ns.symbol, ns.from_lake, ns.interval, ns.n),
         "download": lambda: _cmd_download(ns.symbols, ns.interval, ns.days, ns.venue),
         "live": lambda: _cmd_live(ns.env, ns.symbol),
         "reconcile": lambda: _cmd_reconcile(ns.symbol),

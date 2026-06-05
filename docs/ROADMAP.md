@@ -56,15 +56,19 @@
 - **Broadened Strategy event surface** (`qv-py`): the full trait is bridged — `on_start`/`on_stop`,
   `on_order_filled`/`on_order_event`, `on_timer` (via `ctx.set_timer`), plus `on_quote`/`on_trade`
   (feed-dependent). `ctx.cancel` and a cancelable client_order_id returned from `submit_*`.
+- **Vectorized research screen + cross-check** (`qv_screen`): a FAST, NON-authoritative numpy screen
+  (signals → positions → mark-to-market PnL in one pass) for coarse `(fast, slow)` sweeps, plus
+  `cross_check_vs_event` wiring the advisory `qv_parity.cross_check` drift warning against the
+  AUTHORITATIVE event-driven runner. `qv screen [--from-lake]`. Fixed a real bucket-alignment bug
+  (real bars close at `:59.999`, so event-fill latency crosses the minute boundary) by snapping both
+  fill streams to the bar grid. Unit + integration tested.
 
 ## Next — research side (recommended order)
 
 1. **More microstructure** — per-bar market-order participation (cap aggressive fills by volume
    too), and a quote/trade data feed so `on_quote`/`on_trade` fire in research backtests.
-2. **Vectorized research screen + cross-check** — the fast, NON-authoritative `populate_*` screen for
-   coarse sweeps, with the advisory `qv_parity.cross_check` drift warning vs the event-driven runner.
-3. **Strategy ergonomics** — broaden the Python `Strategy` surface further (quotes/trades/timers/
-   order events; `ctx.cancel`), wire indicators, notebooks for the research loop.
+2. **Strategy ergonomics** — wire the streaming indicators (`qv-indicators`) into the Python surface,
+   research notebooks for the screen → optimize → backtest loop.
 
 ## Deferred — live / ops (start when ready to trade)
 
