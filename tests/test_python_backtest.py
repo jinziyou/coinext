@@ -192,6 +192,47 @@ def test_queue_position_delays_a_touched_limit():
     assert queued.fills == 0
 
 
+def test_large_market_order_participates_over_bars():
+    # A single market BUY of qty 5.0 against volume-4 bars (participation 0.25 -> 1.0/bar) takes 1.0
+    # at submit and fills the aggressive remainder 1.0 per later bar: ONE order, FIVE fills.
+    from qv_strategy import Strategy
+
+    class BigMarketOnce(Strategy):
+        def __init__(self):
+            self.done = False
+
+        def on_bar(self, bar, ctx):
+            if not self.done:
+                self.done = True
+                ctx.submit_market("buy", 5.0)
+
+    step, base = 60_000_000_000, 1_700_000_000_000_000_000
+    bars = [(base + i * step, 100.0, 100.5, 99.5, 100.0, 4.0) for i in range(8)]  # OHLCV, vol 4
+    res = run(BigMarketOnce(), bars=bars)
+    assert res.orders_submitted == 1
+    assert res.fills == 5  # qty 5.0 / (0.25 * 4.0 = 1.0 per bar)
+    assert res.orders_denied == 0
+
+
+def test_market_order_fills_fully_without_volume():
+    # Backward compat: a close-only series carries no volume -> market orders fill in one shot.
+    from qv_strategy import Strategy
+
+    class BuyOnce(Strategy):
+        def __init__(self):
+            self.done = False
+
+        def on_bar(self, bar, ctx):
+            if not self.done:
+                self.done = True
+                ctx.submit_market("buy", 5.0)
+
+    base, step = 1_700_000_000_000_000_000, 60_000_000_000
+    res = run(BuyOnce(), bars=[(base + i * step, 100.0) for i in range(4)])
+    assert res.orders_submitted == 1
+    assert res.fills == 1  # no volume -> no participation cap -> single full fill
+
+
 def test_pybar_exposes_threaded_volume():
     from qv_strategy import Strategy
 

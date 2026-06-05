@@ -96,9 +96,9 @@ struct Resting {
 struct SimState {
     queue: DelayedEventQueue,
     resting: Vec<Resting>,
-    /// Last seen `(low, high)` per instrument, for OHLC-aware MARKET-order slippage in `on_submit`
-    /// (which otherwise has no bar in scope).
-    last_bar_range: HashMap<InstrumentId, (Price, Price)>,
+    /// Last seen bar `(low, high, volume)` per instrument, for OHLC-aware MARKET-order slippage and
+    /// volume participation in `on_submit` (which otherwise has no bar in scope).
+    last_bar: HashMap<InstrumentId, (Price, Price, Quantity)>,
     venue_seq: u64,
     trade_seq: u64,
 }
@@ -128,7 +128,7 @@ impl SimulatedExecutionClient {
             state: RefCell::new(SimState {
                 queue: DelayedEventQueue::default(),
                 resting: Vec::new(),
-                last_bar_range: HashMap::new(),
+                last_bar: HashMap::new(),
                 venue_seq: 0,
                 trade_seq: 0,
             }),
@@ -221,35 +221,53 @@ impl SimulatedExecutionClient {
         };
 
         if marketable {
-            let (fill_px, liquidity) = match order.order_type {
+            let last_bar = state.last_bar.get(&order.instrument_id).copied();
+            let (fill_px, liquidity, first_chunk) = match order.order_type {
                 OrderType::Market => {
-                    // OHLC-aware slippage: the most recent bar's (low, high) for this instrument.
-                    let bar_range = state.last_bar_range.get(&order.instrument_id).copied();
-                    (
-                        self.model.fill_price(
-                            &order,
-                            ref_px.unwrap_or_else(|| order.price.unwrap()),
-                            bar_range,
-                            &*inst,
-                        ),
-                        LiquiditySide::Taker,
-                    )
+                    // OHLC-aware slippage from the most recent bar's (low, high).
+                    let bar_range = last_bar.map(|(lo, hi, _v)| (lo, hi));
+                    let px = self.model.fill_price(
+                        &order,
+                        ref_px.unwrap_or_else(|| order.price.unwrap()),
+                        bar_range,
+                        &*inst,
+                    );
+                    // Volume participation: a large market order takes at most a share of the last
+                    // bar's volume now; the rest rests as an aggressive remainder (filled over later
+                    // bars). No bar/volume known yet -> fill in full (the pre-participation path).
+                    let chunk = match last_bar {
+                        Some((_, _, vol)) => self.model.fillable_qty(order.quantity, vol, &*inst),
+                        None => order.quantity,
+                    };
+                    (px, LiquiditySide::Taker, chunk)
                 }
-                _ => (order.price.unwrap(), LiquiditySide::Taker),
+                _ => (order.price.unwrap(), LiquiditySide::Taker, order.quantity),
             };
             let fill_at = now.saturating_add_ns(self.model.latency_ns(CommandKind::Submit));
-            // Marketable (aggressive) orders take liquidity immediately and fill in full.
             let fill = self.make_fill(
                 &mut state,
                 &order,
-                venue_order_id,
+                venue_order_id.clone(),
                 fill_px,
-                order.quantity,
+                first_chunk,
                 liquidity,
                 fill_at,
                 &*inst,
             );
             state.queue.push(fill_at, fill);
+            // A market order that couldn't fully fill this bar rests its remainder AGGRESSIVELY
+            // (order_type Market, no price): it fills at each later bar's market price (taker),
+            // capped by participation — never sits passively at a limit.
+            if let Ok(remaining) = order.quantity.checked_sub(first_chunk) {
+                if remaining.is_positive() {
+                    state.resting.push(Resting {
+                        order,
+                        remaining,
+                        queue_ahead: None,
+                        venue_order_id,
+                    });
+                }
+            }
         } else {
             // Passive limit: rest with its full quantity; partial fills decrement `remaining`. The
             // queue-ahead is seeded lazily on the first crossing bar (no volume is in scope here).
@@ -280,9 +298,11 @@ impl SimulatedExecutionClient {
         }
     }
 
-    /// Match resting limit orders against an incoming market event; schedule fills that cross,
-    /// capped per bar by the BrokerageModel's volume participation (large orders fill over several
-    /// bars). Also caches the bar's `(low, high)` for OHLC-aware market-order slippage.
+    /// Match resting orders against an incoming market event and schedule fills. Passive limits
+    /// cross at their price (capped per bar by volume participation + queue position); AGGRESSIVE
+    /// market remainders (a market order that couldn't fully fill at submit) take liquidity at the
+    /// bar's market price every bar (taker), also volume-capped. Caches the bar's `(low, high,
+    /// volume)` for OHLC-aware market-order slippage + participation in `on_submit`.
     pub fn on_market(&self, ev: &MarketEvent) {
         let now = self.clock.now_ns();
         let id = ev.instrument_id().clone();
@@ -296,25 +316,27 @@ impl SimulatedExecutionClient {
             MarketEvent::Quote(q) => Some((q.bid, q.ask, q.mid())),
             MarketEvent::Delta(_) => None,
         };
-        let Some((low, high, _close)) = market_px else {
+        let Some((low, high, close)) = market_px else {
             return;
         };
         // The traded volume available to resting orders this event (only bars carry it; quotes/
-        // trades cap nothing here -> `None` means fill the full crossed remaining).
+        // trades cap nothing here -> `None` means fill the full remaining).
         let bar_volume = match ev {
             MarketEvent::Bar(b) => Some(b.volume),
             _ => None,
         };
 
         let mut state = self.state.borrow_mut();
-        // Remember the bar range for later market-order slippage.
-        if matches!(ev, MarketEvent::Bar(_)) {
-            state.last_bar_range.insert(id.clone(), (low, high));
+        // Remember the bar (range + volume) for later market-order slippage + participation.
+        if let MarketEvent::Bar(b) = ev {
+            state.last_bar.insert(id.clone(), (low, high, b.volume));
         }
 
-        // Phase 1: decide each crossing's fill quantity AND its new queue-ahead (immutable borrow of
-        // `resting`). Tuple: (index, venue id, order, limit, qty to fill this bar, new queue-ahead).
-        // `new_queue` is `Some(_)` only when it must be written back (a bar event paid it down).
+        // Phase 1: per resting order, decide (fill qty, fill price, liquidity, new queue-ahead),
+        // immutably borrowing `resting`. `new_queue` is `Some(_)` only for a passive limit whose
+        // queue must be written back. Tuple: (index, venue id, order, fill price, fill qty,
+        // new queue-ahead, liquidity).
+        #[allow(clippy::type_complexity)]
         let mut decisions: Vec<(
             usize,
             VenueOrderId,
@@ -322,14 +344,38 @@ impl SimulatedExecutionClient {
             Price,
             Quantity,
             Option<Quantity>,
+            LiquiditySide,
         )> = Vec::new();
         for (i, r) in state.resting.iter().enumerate() {
             if r.order.instrument_id != id {
                 continue;
             }
-            let Some(limit) = r.order.price else { continue };
-            // Split a cross into THROUGH (price traded strictly past the limit -> level swept) vs
-            // TOUCH (price reached the limit exactly -> must wait behind the queue).
+            let Some(limit) = r.order.price else {
+                // AGGRESSIVE market remainder (no price): takes liquidity at the bar's market price,
+                // capped by participation, no queue. It only participates on BARS (which carry the
+                // volume to cap against); a quote/trade tick has no bar volume, so skip it rather
+                // than dumping the whole remainder in one shot (which would defeat participation).
+                if let Some(v) = bar_volume {
+                    let fill_qty = self.model.fillable_qty(r.remaining, v, &*inst);
+                    if fill_qty.is_positive() {
+                        let fill_px =
+                            self.model
+                                .fill_price(&r.order, close, Some((low, high)), &*inst);
+                        decisions.push((
+                            i,
+                            r.venue_order_id.clone(),
+                            r.order.clone(),
+                            fill_px,
+                            fill_qty,
+                            None,
+                            LiquiditySide::Taker,
+                        ));
+                    }
+                }
+                continue;
+            };
+            // Passive limit. Split a cross into THROUGH (price traded strictly past the limit ->
+            // level swept) vs TOUCH (price reached the limit exactly -> must wait behind the queue).
             let (through, touch) = match r.order.side {
                 OrderSide::Buy => (low < limit, low == limit),
                 OrderSide::Sell => (high > limit, high == limit),
@@ -347,6 +393,7 @@ impl SimulatedExecutionClient {
                         limit,
                         r.remaining,
                         None,
+                        LiquiditySide::Maker,
                     ));
                 }
                 continue;
@@ -381,24 +428,18 @@ impl SimulatedExecutionClient {
                 limit,
                 fill_qty,
                 Some(new_queue),
+                LiquiditySide::Maker,
             ));
         }
 
         // Phase 2: schedule fills, decrement `remaining`, and write back queue-ahead (mutable).
         // Iteration order is ascending resting-index, so the `seq` assigned by the queue is stable.
         let mut to_remove: Vec<usize> = Vec::new();
-        for (i, void, order, limit, fill_qty, new_queue) in decisions {
+        for (i, void, order, fill_px, fill_qty, new_queue, liquidity) in decisions {
             if fill_qty.is_positive() {
                 let at = now.saturating_add_ns(self.model.latency_ns(CommandKind::Submit));
                 let fill = self.make_fill(
-                    &mut state,
-                    &order,
-                    void,
-                    limit,
-                    fill_qty,
-                    LiquiditySide::Maker,
-                    at,
-                    &*inst,
+                    &mut state, &order, void, fill_px, fill_qty, liquidity, at, &*inst,
                 );
                 state.queue.push(at, fill);
             }
@@ -784,6 +825,75 @@ mod tests {
                 assert_eq!(fills, 1, "bar {n}: queue cleared -> fills");
             }
         }
+    }
+
+    #[test]
+    fn market_order_participation_fills_over_bars() {
+        // A market BUY for qty 3.0 against volume-4 bars at participation 0.25 takes 1.0 now and
+        // rests an aggressive remainder that fills 1.0/bar at the market price over the next bars.
+        let (clock, cache, id, _inst) = setup();
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            Box::new(DefaultBrokerageModel::default()), // participation 0.25
+        );
+        let drain_qtys = |sim: &SimulatedExecutionClient, frontier: u64| -> Vec<Quantity> {
+            sim.drain_due(UnixNanos(frontier))
+                .into_iter()
+                .filter_map(|r| match r {
+                    ExecutionReport::Fill(f) => Some(f.last_qty),
+                    _ => None,
+                })
+                .collect()
+        };
+        let one = Quantity::from_decimal(dec!(1), 3).unwrap();
+
+        // Bar 1 seeds the volume cache (no resting orders yet -> no fills).
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_vol(&id, "49900", "50100", "50000", "4", 1_000_000_000));
+        assert!(drain_qtys(&sim, 1_100_000_000).is_empty());
+
+        // Submit a market buy for 3.0: first chunk (cap 1.0) fills now; 2.0 rests aggressively.
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        let order = factory.market(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(3), 3).unwrap(),
+            UnixNanos(1_000_000_000),
+        );
+        sim.on_submit(order);
+        assert_eq!(
+            drain_qtys(&sim, 1_200_000_000),
+            vec![one],
+            "first chunk fills at submit"
+        );
+
+        // Bars 2 and 3 each fill 1.0 of the aggressive remainder.
+        clock.advance_to(UnixNanos(2_000_000_000));
+        sim.on_market(&bar_vol(&id, "49900", "50100", "50000", "4", 2_000_000_000));
+        assert_eq!(
+            drain_qtys(&sim, 2_200_000_000),
+            vec![one],
+            "bar 2 fills 1.0"
+        );
+
+        clock.advance_to(UnixNanos(3_000_000_000));
+        sim.on_market(&bar_vol(&id, "49900", "50100", "50000", "4", 3_000_000_000));
+        assert_eq!(
+            drain_qtys(&sim, 3_200_000_000),
+            vec![one],
+            "bar 3 completes the order"
+        );
+
+        // Bar 4: nothing left to fill.
+        clock.advance_to(UnixNanos(4_000_000_000));
+        sim.on_market(&bar_vol(&id, "49900", "50100", "50000", "4", 4_000_000_000));
+        assert!(
+            drain_qtys(&sim, 4_200_000_000).is_empty(),
+            "order complete -> no more fills"
+        );
     }
 
     #[test]
