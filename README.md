@@ -95,6 +95,10 @@ NON-authoritative (no fees/slippage/latency/queue) — then runs `qv_parity.cros
 best params **drift** from the event-driven runner. Narrow the space with `screen`, then confirm
 survivors with the parity-valid `qv backtest`.
 
+The end-to-end research loop (screen → optimize → backtest → indicators → portfolio → ticks) is a
+single runnable script: `uv run python notebooks/research_loop.py` (synthetic by default; flip
+`USE_LAKE = True` to run over the real lake).
+
 `backtest-multi` runs a per-symbol SMA portfolio across many instruments in a single deterministic
 kernel (shared Cache / sim / risk / portfolio). The strategy reads `bar.symbol` and targets orders
 with `ctx.submit_market(side, qty, symbol)`; positions stay isolated per instrument, and a portfolio

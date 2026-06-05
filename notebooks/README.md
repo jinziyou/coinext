@@ -8,6 +8,10 @@ diff cleanly in git and run as plain Python.
 - `quickstart.py` — build synthetic bars, run the authoritative event-driven backtest
   (`qv_backtest.run`) with `qv_strategy.SmaCross` through the Rust kernel, print the
   `qv_analytics.tear_sheet`.
+- `research_loop.py` — the full end-to-end loop: vectorized **screen** + cross-check → walk-forward
+  **optimize** (OOS) → authoritative **backtest** + tear sheet → **indicators** (RSI) →
+  multi-instrument **portfolio** → **tick** feed. Synthetic by default (reproducible, no network);
+  set `USE_LAKE = True` to run over real downloaded history. Covered by `tests/test_notebook.py`.
 
 ## Running directly
 
