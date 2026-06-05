@@ -63,10 +63,11 @@
   (real bars close at `:59.999`, so event-fill latency crosses the minute boundary) by snapping both
   fill streams to the bar grid. Unit + integration tested.
 - **Streaming indicators in Python** (`qv_indicators`): the tested Rust `qv-indicators` (SMA / EMA /
-  RSI / ATR) are bridged through `qv_py`, so a Python strategy uses the IDENTICAL incremental
-  implementation as warm-up / live rather than a re-rolled copy. `from qv_indicators import Rsi` →
-  `rsi.update(x); rsi.value()`; an `RsiReversion` example strategy. Values verified equal to the
-  Rust crate + the existing hand-rolled `_Sma`.
+  RSI / ATR / **MACD / Bollinger / VWAP**) are bridged through `qv_py`, so a Python strategy uses the
+  IDENTICAL incremental implementation as warm-up / live rather than a re-rolled copy. Plus a pure-
+  Python **`Resampler`** for multi-timeframe (1m → 5m / 1h) so a strategy can drive indicators off
+  coarser bars. `from qv_indicators import Rsi`; an `RsiReversion` example. Values verified equal to
+  the Rust crate + the existing hand-rolled `_Sma`.
 - **Market-order volume participation** (`qv-sim`): a large market order takes at most
   `participation × bar volume` at submit; the remainder rests as an AGGRESSIVE order (taker, filled
   at each later bar's market price, also volume-capped) instead of dumping in one bar. Reuses the
