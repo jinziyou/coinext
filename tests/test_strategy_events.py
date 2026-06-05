@@ -242,6 +242,30 @@ def test_trailing_stop_ratchets_up_then_fires_on_pullback():
     assert s.px > 100.0  # ratcheted well above the entry, not the initial 97 stop
 
 
+def test_trailing_stop_rejects_nonpositive_offset():
+    # A 0 offset would degrade to a static stop at the mark -> reject it at submit (like other bad
+    # args), and the rejection must not desync the next predicted client_order_id.
+    class BadThenGood(Strategy):
+        def __init__(self):
+            self.raised = False
+            self.fills = 0
+
+        def on_bar(self, bar, ctx):
+            if not self.raised:
+                try:
+                    ctx.submit_trailing("sell", 1.0, 0.0)  # invalid -> ValueError, no id consumed
+                except ValueError:
+                    self.raised = True
+
+        def on_order_filled(self, fill, ctx):
+            self.fills += 1
+
+    s = BadThenGood()
+    run(s, bars=[(BASE + i * STEP, 100.0) for i in range(3)])
+    assert s.raised
+    assert s.fills == 0  # nothing rested -> nothing fired
+
+
 def test_stop_can_be_canceled_before_it_triggers():
     class StopThenCancel(Strategy):
         def __init__(self):

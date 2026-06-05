@@ -398,6 +398,11 @@ impl SimulatedExecutionClient {
             //  * StopLimit -> CONVERTS to a passive LIMIT at its price (filled from the next bar by
             //    the limit logic, so slippage is bounded by the limit).
             if !matches!(r.order.order_type, OrderType::Market | OrderType::Limit) {
+                // A trailing stop with no trail state (no offset/mark at submit) is misconfigured ->
+                // rest INERT rather than degrade into a static stop at its seed trigger.
+                if r.order.order_type == OrderType::TrailingStopMarket && r.trail.is_none() {
+                    continue;
+                }
                 let Some(trigger) = r.order.trigger else {
                     continue;
                 };

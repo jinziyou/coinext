@@ -483,7 +483,10 @@ mod imp {
         ) -> PyResult<String> {
             let (_sym, pp, sp) = self.resolve(&symbol)?;
             Quantity::from_f64(qty, sp).map_err(vexc)?;
-            Price::from_f64(offset, pp).map_err(vexc)?;
+            let off = Price::from_f64(offset, pp).map_err(vexc)?;
+            if off.raw() <= 0 {
+                return Err(vexc("trailing stop offset must be > 0"));
+            }
             self.outbox.borrow_mut().push(PyIntent::Submit {
                 side: side.to_string(),
                 qty,
