@@ -642,6 +642,7 @@ dependencies = [
  "pyo3",
  "qv-cache",
  "qv-core",
+ "qv-indicators",
  "qv-kernel",
  "qv-model",
  "qv-ports",

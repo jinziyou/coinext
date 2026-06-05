@@ -14,6 +14,7 @@
 mod imp {
     use pyo3::prelude::*;
     use qv_core::{Currency, Money, Price, Quantity, UnixNanos};
+    use qv_indicators::{Atr, Ema, Indicator, Rsi, Sma};
     use qv_kernel::{BacktestConfig, BacktestKernel};
     use qv_model::{
         AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, Instrument,
@@ -110,6 +111,118 @@ mod imp {
         pub size: f64,
         #[pyo3(get)]
         pub ts: u64,
+    }
+
+    // --- Streaming technical indicators (the SAME Rust code as warm-up + live; see qv-indicators).
+    // A Python strategy owns these as state and feeds them in its handlers, instead of re-rolling
+    // them in Python. `value()` returns `None` until the indicator is warm.
+
+    /// Simple Moving Average over a fixed `period` window.
+    #[pyclass(name = "Sma")]
+    pub struct PySma {
+        inner: Sma,
+    }
+    #[pymethods]
+    impl PySma {
+        #[new]
+        fn new(period: usize) -> PyResult<Self> {
+            if period == 0 {
+                return Err(vexc("SMA period must be > 0"));
+            }
+            Ok(PySma {
+                inner: Sma::new(period),
+            })
+        }
+        fn update(&mut self, value: f64) {
+            self.inner.update(value);
+        }
+        fn value(&self) -> Option<f64> {
+            self.inner.value()
+        }
+        fn is_ready(&self) -> bool {
+            self.inner.is_ready()
+        }
+    }
+
+    /// Exponential Moving Average (`alpha = 2/(period+1)`).
+    #[pyclass(name = "Ema")]
+    pub struct PyEma {
+        inner: Ema,
+    }
+    #[pymethods]
+    impl PyEma {
+        #[new]
+        fn new(period: usize) -> PyResult<Self> {
+            if period == 0 {
+                return Err(vexc("EMA period must be > 0"));
+            }
+            Ok(PyEma {
+                inner: Ema::new(period),
+            })
+        }
+        fn update(&mut self, value: f64) {
+            self.inner.update(value);
+        }
+        fn value(&self) -> Option<f64> {
+            self.inner.value()
+        }
+        fn is_ready(&self) -> bool {
+            self.inner.is_ready()
+        }
+    }
+
+    /// Wilder's Relative Strength Index (0–100).
+    #[pyclass(name = "Rsi")]
+    pub struct PyRsi {
+        inner: Rsi,
+    }
+    #[pymethods]
+    impl PyRsi {
+        #[new]
+        fn new(period: usize) -> PyResult<Self> {
+            if period == 0 {
+                return Err(vexc("RSI period must be > 0"));
+            }
+            Ok(PyRsi {
+                inner: Rsi::new(period),
+            })
+        }
+        fn update(&mut self, value: f64) {
+            self.inner.update(value);
+        }
+        fn value(&self) -> Option<f64> {
+            self.inner.value()
+        }
+        fn is_ready(&self) -> bool {
+            self.inner.is_ready()
+        }
+    }
+
+    /// Average True Range (Wilder smoothing). Feed `update(high, low, close)`.
+    #[pyclass(name = "Atr")]
+    pub struct PyAtr {
+        inner: Atr,
+    }
+    #[pymethods]
+    impl PyAtr {
+        #[new]
+        fn new(period: usize) -> PyResult<Self> {
+            if period == 0 {
+                return Err(vexc("ATR period must be > 0"));
+            }
+            Ok(PyAtr {
+                inner: Atr::new(period),
+            })
+        }
+        fn update(&mut self, high: f64, low: f64, close: f64) {
+            self.inner.update_hlc(high, low, close);
+        }
+        fn value(&self) -> Option<f64> {
+            self.inner.value()
+        }
+        fn is_ready(&self) -> bool {
+            self.inner.value().is_some()
+        }
     }
 
     /// One queued intent from a Python handler, replayed onto the real `StrategyContext` afterwards.
@@ -779,6 +892,10 @@ mod imp {
         m.add_class::<PyTimer>()?;
         m.add_class::<PyQuote>()?;
         m.add_class::<PyTrade>()?;
+        m.add_class::<PySma>()?;
+        m.add_class::<PyEma>()?;
+        m.add_class::<PyRsi>()?;
+        m.add_class::<PyAtr>()?;
         m.add_function(wrap_pyfunction!(run_backtest, m)?)?;
         m.add_function(wrap_pyfunction!(run_backtest_multi, m)?)?;
         m.add("__doc__", "VeloxQuant Rust core exposed to Python (PyO3).")?;

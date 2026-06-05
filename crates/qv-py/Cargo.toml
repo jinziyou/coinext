@@ -17,6 +17,7 @@ qv-ports.workspace = true
 qv-cache.workspace = true
 qv-sim.workspace = true
 qv-kernel.workspace = true
+qv-indicators.workspace = true
 rust_decimal.workspace = true
 pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
 
