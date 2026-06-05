@@ -35,6 +35,13 @@ pub trait BrokerageModel {
     fn fillable_qty(&self, leaves: Quantity, _bar_volume: Quantity, _inst: &dyn Instrument) -> Quantity {
         leaves
     }
+    /// Estimated volume resting AHEAD of a freshly-placed limit order at its price level — the queue
+    /// it must wait behind before filling (bar-based estimate; there is no real L2 book). Seeded the
+    /// first bar the order becomes crossable. The default is `0` (no queue → fill on first cross,
+    /// the pre-queue behavior).
+    fn initial_queue_ahead(&self, bar_volume: Quantity, _inst: &dyn Instrument) -> Quantity {
+        Quantity::zero(bar_volume.precision())
+    }
     /// The fee charged for a fill, as first-class `Money` in the settlement currency.
     fn fee(
         &self,
@@ -60,6 +67,12 @@ pub struct DefaultBrokerageModel {
     /// Max share of a bar's volume one resting order may take per bar (`0` or volume `0` = no cap →
     /// fill fully). A large order vs thin volume then fills across several bars.
     pub participation_rate: Decimal,
+    /// Queue-position estimate: a freshly-placed limit assumes `queue_ahead_factor` × the crossing
+    /// bar's volume rests ahead of it, which must trade through before it fills (a TOUCH of the
+    /// level pays the queue down; a price that trades THROUGH the level sweeps it). `0` = no queue =
+    /// fill on first cross (the pre-queue behavior). Most existing fills are through-crosses, so a
+    /// positive value only delays orders the price merely *touches*.
+    pub queue_ahead_factor: Decimal,
     pub latency_ns: u64,
 }
 
@@ -69,6 +82,7 @@ impl Default for DefaultBrokerageModel {
             slippage_bps: Decimal::new(1, 0),     // 1 bp base
             range_impact: Decimal::new(1, 1),     // 0.1 of the bar range
             participation_rate: Decimal::new(25, 2), // 0.25 of a bar's volume
+            queue_ahead_factor: Decimal::ZERO,    // queue modeling OFF by default (opt-in)
             latency_ns: 1_000_000,
         }
     }
@@ -133,6 +147,17 @@ impl BrokerageModel for DefaultBrokerageModel {
         let fillable = floored.max(one_lot).min(leaves.as_decimal());
         // `fillable <= leaves` (already at `prec`), so from_decimal cannot round it above leaves.
         Quantity::from_decimal(fillable, prec).unwrap_or(leaves)
+    }
+
+    fn initial_queue_ahead(&self, bar_volume: Quantity, _inst: &dyn Instrument) -> Quantity {
+        if self.queue_ahead_factor <= Decimal::ZERO {
+            return Quantity::zero(bar_volume.precision());
+        }
+        let prec = bar_volume.precision();
+        // Floor to a whole lot (ToZero) so the queue is lot-aligned and depletes to exactly zero.
+        let q = (self.queue_ahead_factor * bar_volume.as_decimal())
+            .round_dp_with_strategy(prec as u32, RoundingStrategy::ToZero);
+        Quantity::from_decimal(q, prec).unwrap_or_else(|_| Quantity::zero(prec))
     }
 
     fn fee(

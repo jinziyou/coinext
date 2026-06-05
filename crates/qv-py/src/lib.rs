@@ -570,8 +570,17 @@ mod imp {
         metas: std::collections::HashMap<String, InstrumentMeta>,
         default_symbol: String,
         events: Vec<MarketEvent>,
+        queue_ahead_factor: f64,
     ) -> PyResultObj {
-        let cfg = BacktestConfig::new(Venue::from(venue), instruments, settle, starting);
+        let mut cfg = BacktestConfig::new(Venue::from(venue), instruments, settle, starting);
+        // Opt-in queue-position modeling: a resting limit waits behind ~queue_ahead_factor x bar
+        // volume at a price the market only TOUCHES (a price trading THROUGH still fills). 0 = off.
+        if queue_ahead_factor > 0.0 {
+            cfg.brokerage = Box::new(qv_sim::DefaultBrokerageModel {
+                queue_ahead_factor: Decimal::from_f64(queue_ahead_factor).unwrap_or(Decimal::ZERO),
+                ..qv_sim::DefaultBrokerageModel::default()
+            });
+        }
         let adapter = PyStrategyAdapter {
             obj: strategy,
             instruments: metas,
@@ -611,6 +620,7 @@ mod imp {
     #[pyo3(signature = (
         strategy, symbol, venue, starting_balance, bars,
         price_precision=2, size_precision=3, maker_fee=0.0002, taker_fee=0.0004,
+        queue_ahead_factor=0.0,
     ))]
     pub fn run_backtest(
         strategy: Py<PyAny>,
@@ -625,6 +635,7 @@ mod imp {
         size_precision: u8,
         maker_fee: f64,
         taker_fee: f64,
+        queue_ahead_factor: f64,
     ) -> PyResult<PyResultObj> {
         let settle = Currency::new("USDT", 8).map_err(vexc)?;
         let (inst, meta) = build_pair(
@@ -654,6 +665,7 @@ mod imp {
             metas,
             symbol,
             events,
+            queue_ahead_factor,
         ))
     }
 
@@ -662,7 +674,7 @@ mod imp {
     /// the Python-facing entry point. The Python `Strategy` reads `bar.symbol` and targets orders
     /// via the optional `symbol` arg on `ctx.submit_market`/`submit_limit`/`position`.
     #[pyfunction]
-    #[pyo3(signature = (strategy, venue, starting_balance, instruments, bars))]
+    #[pyo3(signature = (strategy, venue, starting_balance, instruments, bars, queue_ahead_factor=0.0))]
     pub fn run_backtest_multi(
         strategy: Py<PyAny>,
         venue: String,
@@ -671,6 +683,7 @@ mod imp {
         instruments: Vec<(String, u8, u8, f64, f64)>,
         // Tagged OHLCV stream: `(ts_ns, symbol, open, high, low, close, volume)` (any order; sorted).
         bars: Vec<(u64, String, f64, f64, f64, f64, f64)>,
+        queue_ahead_factor: f64,
     ) -> PyResult<PyResultObj> {
         if instruments.is_empty() {
             return Err(vexc("run_backtest_multi needs at least one instrument"));
@@ -711,6 +724,7 @@ mod imp {
             metas,
             default_symbol,
             events,
+            queue_ahead_factor,
         ))
     }
 

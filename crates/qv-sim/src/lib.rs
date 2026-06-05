@@ -84,6 +84,10 @@ struct Resting {
     order: Order,
     /// Quantity still to fill (decremented by each partial fill; the order is removed at zero).
     remaining: Quantity,
+    /// Estimated volume still resting AHEAD of this order in the queue at its price level. `None`
+    /// until the order first becomes crossable (lazy-seeded from the BrokerageModel), then paid
+    /// DOWN each bar that merely TOUCHES the level; a price that trades THROUGH the level zeroes it.
+    queue_ahead: Option<Quantity>,
     /// The venue id allocated when the order was accepted — STABLE across partial fills (never the
     /// Vec index, which shifts as other orders are removed).
     venue_order_id: VenueOrderId,
@@ -247,11 +251,13 @@ impl SimulatedExecutionClient {
             );
             state.queue.push(fill_at, fill);
         } else {
-            // Passive limit: rest with its full quantity; partial fills decrement `remaining`.
+            // Passive limit: rest with its full quantity; partial fills decrement `remaining`. The
+            // queue-ahead is seeded lazily on the first crossing bar (no volume is in scope here).
             let remaining = order.quantity;
             state.resting.push(Resting {
                 order,
                 remaining,
+                queue_ahead: None,
                 venue_order_id,
             });
         }
@@ -306,51 +312,92 @@ impl SimulatedExecutionClient {
             state.last_bar_range.insert(id.clone(), (low, high));
         }
 
-        // Phase 1: decide each crossing's fillable quantity (immutable borrow of `resting`).
-        // Tuple: (resting index, stable venue id, order clone, limit price, qty to fill this bar).
-        let mut decisions: Vec<(usize, VenueOrderId, Order, Price, Quantity)> = Vec::new();
+        // Phase 1: decide each crossing's fill quantity AND its new queue-ahead (immutable borrow of
+        // `resting`). Tuple: (index, venue id, order, limit, qty to fill this bar, new queue-ahead).
+        // `new_queue` is `Some(_)` only when it must be written back (a bar event paid it down).
+        let mut decisions: Vec<(usize, VenueOrderId, Order, Price, Quantity, Option<Quantity>)> =
+            Vec::new();
         for (i, r) in state.resting.iter().enumerate() {
             if r.order.instrument_id != id {
                 continue;
             }
             let Some(limit) = r.order.price else { continue };
-            let crossed = match r.order.side {
-                OrderSide::Buy => low <= limit,   // price dipped to/below our bid
-                OrderSide::Sell => high >= limit, // price rose to/above our ask
+            // Split a cross into THROUGH (price traded strictly past the limit -> level swept) vs
+            // TOUCH (price reached the limit exactly -> must wait behind the queue).
+            let (through, touch) = match r.order.side {
+                OrderSide::Buy => (low < limit, low == limit),
+                OrderSide::Sell => (high > limit, high == limit),
             };
-            if !crossed {
+            if !(through || touch) {
                 continue;
             }
-            let fillable = match bar_volume {
-                Some(v) => self.model.fillable_qty(r.remaining, v, &*inst),
-                None => r.remaining,
+            let Some(v) = bar_volume else {
+                // Non-bar event (quote/trade): no volume model -> fill the full crossed remaining.
+                if r.remaining.is_positive() {
+                    decisions.push((i, r.venue_order_id.clone(), r.order.clone(), limit, r.remaining, None));
+                }
+                continue;
             };
-            if fillable.is_positive() {
-                decisions.push((i, r.venue_order_id.clone(), r.order.clone(), limit, fillable));
-            }
+            // The participation-capped per-bar budget (unchanged); it is the only volume the queue
+            // logic may spend, so the participation cap is never inflated.
+            let share = self.model.fillable_qty(r.remaining, v, &*inst);
+            let prec = share.precision();
+            let queue = r
+                .queue_ahead
+                .unwrap_or_else(|| self.model.initial_queue_ahead(v, &*inst));
+            let (fill_qty, new_queue) = if through {
+                // The whole level traded through: everyone ahead of us executed -> queue cleared.
+                (share, Quantity::zero(prec))
+            } else {
+                // Touch only: our per-bar budget first pays down the queue; the excess fills us.
+                let paid = share.as_decimal().min(queue.as_decimal());
+                let paid = Quantity::from_decimal(paid, prec).unwrap_or_else(|_| Quantity::zero(prec));
+                let nq = queue
+                    .checked_sub(paid)
+                    .unwrap_or_else(|_| Quantity::zero(prec));
+                let fq = share
+                    .checked_sub(paid)
+                    .unwrap_or_else(|_| Quantity::zero(prec));
+                (fq, nq)
+            };
+            decisions.push((
+                i,
+                r.venue_order_id.clone(),
+                r.order.clone(),
+                limit,
+                fill_qty,
+                Some(new_queue),
+            ));
         }
 
-        // Phase 2: schedule the fills and decrement `remaining` (mutable). Iteration order is
-        // ascending resting-index, so the `seq` assigned by the queue stays deterministic.
+        // Phase 2: schedule fills, decrement `remaining`, and write back queue-ahead (mutable).
+        // Iteration order is ascending resting-index, so the `seq` assigned by the queue is stable.
         let mut to_remove: Vec<usize> = Vec::new();
-        for (i, void, order, limit, fillable) in decisions {
-            let at = now.saturating_add_ns(self.model.latency_ns(CommandKind::Submit));
-            let fill = self.make_fill(
-                &mut state,
-                &order,
-                void,
-                limit,
-                fillable,
-                LiquiditySide::Maker,
-                at,
-                &*inst,
-            );
-            state.queue.push(at, fill);
+        for (i, void, order, limit, fill_qty, new_queue) in decisions {
+            if fill_qty.is_positive() {
+                let at = now.saturating_add_ns(self.model.latency_ns(CommandKind::Submit));
+                let fill = self.make_fill(
+                    &mut state,
+                    &order,
+                    void,
+                    limit,
+                    fill_qty,
+                    LiquiditySide::Maker,
+                    at,
+                    &*inst,
+                );
+                state.queue.push(at, fill);
+            }
             let r = &mut state.resting[i];
-            r.remaining = r
-                .remaining
-                .checked_sub(fillable)
-                .unwrap_or_else(|_| Quantity::zero(fillable.precision()));
+            if fill_qty.is_positive() {
+                r.remaining = r
+                    .remaining
+                    .checked_sub(fill_qty)
+                    .unwrap_or_else(|_| Quantity::zero(fill_qty.precision()));
+            }
+            if let Some(nq) = new_queue {
+                r.queue_ahead = Some(nq);
+            }
             if r.remaining.is_zero() {
                 to_remove.push(i);
             }
@@ -379,6 +426,7 @@ mod tests {
     use qv_core::HistoricalClock;
     use qv_model::{CurrencyPair, OrderFlags, StrategyId, TimeInForce};
     use qv_ports::OrderFactory;
+    use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
     use std::sync::Arc;
 
@@ -645,6 +693,69 @@ mod tests {
             .collect();
         assert_eq!(f1.len(), 1, "thin bar still fills (no stall)");
         assert_eq!(f1[0], Quantity::from_decimal(dec!(0.001), 3).unwrap());
+    }
+
+    fn queue_sim(factor: Decimal, qty: &str) -> (Rc<HistoricalClock>, SimulatedExecutionClient) {
+        let (clock, cache, id, _inst) = setup();
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        let model = DefaultBrokerageModel {
+            queue_ahead_factor: factor,
+            ..DefaultBrokerageModel::default()
+        };
+        let sim =
+            SimulatedExecutionClient::new(Venue::from("BINANCE"), clock_dyn, cache, Box::new(model));
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        // Buy limit @ 49000 rests (mark 50000 > 49000).
+        let order = factory.limit(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(qty.parse().unwrap(), 3).unwrap(),
+            Price::from_decimal(dec!(49000), 2).unwrap(),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            UnixNanos(0),
+        );
+        sim.on_submit(order);
+        let _ = sim.drain_due(UnixNanos(10_000_000)); // Accepted; now resting
+        (clock, sim)
+    }
+
+    fn drain_fill_count(sim: &SimulatedExecutionClient, frontier: u64) -> usize {
+        sim.drain_due(UnixNanos(frontier))
+            .into_iter()
+            .filter(|r| matches!(r, ExecutionReport::Fill(_)))
+            .count()
+    }
+
+    #[test]
+    fn queue_position_touch_waits_then_fills() {
+        // queue_ahead_factor 0.5 on volume-4 bars -> queue seeds to 2.0; each TOUCH bar (low ==
+        // limit) pays down 1.0 (the participation share). So the qty-1 order fills only on the THIRD
+        // touch bar (bars 1 and 2 pay down the queue, bar 3 fills).
+        let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let (clock, sim) = queue_sim(dec!(0.5), "1");
+        let touch = |ts: u64| bar_vol(&id, "49000", "50000", "49500", "4", ts); // low == limit
+        for (n, ts) in [1u64, 2, 3].iter().map(|&n| (n, n * 1_000_000_000)) {
+            clock.advance_to(UnixNanos(ts));
+            sim.on_market(&touch(ts));
+            let fills = drain_fill_count(&sim, ts + 500_000_000);
+            if n < 3 {
+                assert_eq!(fills, 0, "bar {n}: still waiting behind the queue");
+            } else {
+                assert_eq!(fills, 1, "bar {n}: queue cleared -> fills");
+            }
+        }
+    }
+
+    #[test]
+    fn queue_position_through_cross_fills_immediately() {
+        // Even with queue_ahead_factor 0.5, a price that trades THROUGH the level (low 48000 < limit
+        // 49000) sweeps the book -> the order fills on the first crossing bar (no queue wait).
+        let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let (clock, sim) = queue_sim(dec!(0.5), "1");
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_vol(&id, "48000", "50000", "49500", "4", 1_000_000_000)); // low < limit
+        assert_eq!(drain_fill_count(&sim, 1_500_000_000), 1, "through-cross fills immediately");
     }
 
     #[test]

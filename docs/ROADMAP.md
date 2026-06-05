@@ -47,10 +47,20 @@
   `DataLake.read_ohlcv`); `volume=0` means "no cap" (close-only series unchanged). Rust + Python
   tested (a qty-5 limit splitting into 5 fills over 5 bars; slippage direction/cap; backward compat).
 
+- **Limit-order queue position** (`qv-sim`): a resting limit waits behind an estimated
+  `queue_ahead_factor` × bar-volume queue at its price; a price that trades **through** the level
+  sweeps it (fills), one that merely **touches** it pays the queue down first (you wait your turn).
+  Composes with the participation cap (the per-bar share is the queue budget); `0` = off (default,
+  backward-compatible — most fills are through-crosses). Opt in via `qv_backtest.run(...,
+  queue_ahead_factor=0.5)`. Rust + Python tested (touch waits, through fills immediately).
+- **Broadened Strategy event surface** (`qv-py`): the full trait is bridged — `on_start`/`on_stop`,
+  `on_order_filled`/`on_order_event`, `on_timer` (via `ctx.set_timer`), plus `on_quote`/`on_trade`
+  (feed-dependent). `ctx.cancel` and a cancelable client_order_id returned from `submit_*`.
+
 ## Next — research side (recommended order)
 
-1. **Deeper microstructure** — limit-order **queue position** (fill only after the volume ahead of
-   you trades through) and per-bar market-order participation (cap aggressive fills by volume too).
+1. **More microstructure** — per-bar market-order participation (cap aggressive fills by volume
+   too), and a quote/trade data feed so `on_quote`/`on_trade` fire in research backtests.
 2. **Vectorized research screen + cross-check** — the fast, NON-authoritative `populate_*` screen for
    coarse sweeps, with the advisory `qv_parity.cross_check` drift warning vs the event-driven runner.
 3. **Strategy ergonomics** — broaden the Python `Strategy` surface further (quotes/trades/timers/

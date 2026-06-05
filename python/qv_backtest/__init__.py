@@ -62,13 +62,16 @@ def run(
     size_precision: int = 3,
     maker_fee: float = 0.0002,
     taker_fee: float = 0.0004,
+    queue_ahead_factor: float = 0.0,
 ) -> Any:
     """Run ``strategy`` over ``bars``; return the BacktestResult.
 
     ``bars`` may be close-only ``(ts, close)``, OHLC ``(ts, o, h, l, c)``, or OHLCV
     ``(ts, o, h, l, c, volume)``. OHLC enables OHLC-aware fills (resting limits match each bar's
     high/low; market orders slip within the bar range); volume drives participation-based partial
-    fills (a large resting order fills over several bars).
+    fills (a large resting order fills over several bars). ``queue_ahead_factor`` (>0) enables
+    limit-order **queue position**: a passive order waits behind ~that × bar volume at a price the
+    market only TOUCHES (a price trading THROUGH the level still fills).
     """
     return qv_py.run_backtest(
         strategy,
@@ -80,6 +83,7 @@ def run(
         size_precision=size_precision,
         maker_fee=maker_fee,
         taker_fee=taker_fee,
+        queue_ahead_factor=queue_ahead_factor,
     )
 
 
@@ -94,6 +98,7 @@ def run_multi(
     size_precision: int = 3,
     maker_fee: float = 0.0002,
     taker_fee: float = 0.0004,
+    queue_ahead_factor: float = 0.0,
 ) -> Any:
     """Run ``strategy`` over MULTIPLE instruments through one kernel; return the BacktestResult.
 
@@ -123,7 +128,9 @@ def run_multi(
         )
         for ts, o, h, lo, c, v in _to_ohlcv(bars[sym]):
             tagged.append((int(ts), sym, o, h, lo, c, v))
-    return qv_py.run_backtest_multi(strategy, venue, starting_balance, specs, tagged)
+    return qv_py.run_backtest_multi(
+        strategy, venue, starting_balance, specs, tagged, queue_ahead_factor=queue_ahead_factor
+    )
 
 
 def synthetic_bars(

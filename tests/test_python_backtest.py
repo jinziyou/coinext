@@ -164,6 +164,34 @@ def test_large_limit_partial_fills_over_bars_via_bridge():
     assert res.fills == 5  # qty 5.0 / (0.25 * 4.0 = 1.0 per bar) = 5 partial fills
 
 
+def test_queue_position_delays_a_touched_limit():
+    # With queue_ahead_factor > 0, a buy limit the price only TOUCHES (bar low == limit) waits
+    # behind the queue, so it fills LATER than with the queue off. (A price THROUGH still fills.)
+    from qv_strategy import Strategy
+
+    class LimitOnce(Strategy):
+        def __init__(self):
+            self.done = False
+
+        def on_bar(self, bar, ctx):
+            if not self.done:
+                self.done = True
+                ctx.submit_limit("buy", 0.5, 95.0)
+
+    step, base = 60_000_000_000, 1_700_000_000_000_000_000
+    # Bar 0 posts the limit @95 (close 100). Three TOUCH bars (low == 95) with volume 4.
+    bars = [(base, 100.0, 100.0, 100.0, 100.0, 4.0)]
+    for i in range(1, 4):
+        bars.append((base + i * step, 100.0, 100.0, 95.0, 100.0, 4.0))  # low == limit -> touch
+
+    no_queue = run(LimitOnce(), bars=bars, queue_ahead_factor=0.0)
+    queued = run(LimitOnce(), bars=bars, queue_ahead_factor=0.5)
+    # Queue off: fills on the first touch. Queue on: queue_ahead = 0.5*4 = 2.0, paid down by the 0.5
+    # participation share each bar; 3 touch bars only pay it to 0.5 -> the order never fills here.
+    assert no_queue.fills == 1
+    assert queued.fills == 0
+
+
 def test_pybar_exposes_threaded_volume():
     from qv_strategy import Strategy
 
