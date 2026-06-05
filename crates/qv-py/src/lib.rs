@@ -314,7 +314,8 @@ mod imp {
         Submit {
             side: String,
             qty: f64,
-            limit_px: Option<f64>, // None = market
+            limit_px: Option<f64>, // Some = limit
+            trigger: Option<f64>,  // Some = stop-market (overrides limit_px)
             symbol: Option<String>,
         },
         Cancel {
@@ -388,6 +389,7 @@ mod imp {
                 side: side.to_string(),
                 qty,
                 limit_px: None,
+                trigger: None,
                 symbol,
             });
             Ok(self.next_coid())
@@ -410,6 +412,30 @@ mod imp {
                 side: side.to_string(),
                 qty,
                 limit_px: Some(price),
+                trigger: None,
+                symbol,
+            });
+            Ok(self.next_coid())
+        }
+        /// Queue a stop-MARKET order with `trigger`; returns its client_order_id. Rests until the
+        /// market crosses the trigger (buy: rises to it / sell: falls to it), then takes liquidity at
+        /// the market — a stop-loss or breakout entry. Raises `ValueError` for bad symbol/qty/trigger.
+        #[pyo3(signature = (side, qty, trigger, symbol=None))]
+        fn submit_stop(
+            &self,
+            side: &str,
+            qty: f64,
+            trigger: f64,
+            symbol: Option<String>,
+        ) -> PyResult<String> {
+            let (_sym, pp, sp) = self.resolve(&symbol)?;
+            Quantity::from_f64(qty, sp).map_err(vexc)?;
+            Price::from_f64(trigger, pp).map_err(vexc)?;
+            self.outbox.borrow_mut().push(PyIntent::Submit {
+                side: side.to_string(),
+                qty,
+                limit_px: None,
+                trigger: Some(trigger),
                 symbol,
             });
             Ok(self.next_coid())
@@ -558,6 +584,7 @@ mod imp {
                         side,
                         qty,
                         limit_px,
+                        trigger,
                         symbol,
                     } => {
                         let sym = symbol.unwrap_or_else(|| self.default_symbol.clone());
@@ -572,14 +599,20 @@ mod imp {
                         let Ok(q) = Quantity::from_f64(qty, meta.size_precision) else {
                             continue;
                         };
-                        match limit_px {
-                            None => {
-                                ctx.submit_market(meta.iid.clone(), side, q);
+                        match (trigger, limit_px) {
+                            (Some(trig), _) => {
+                                // Stop-market (trigger overrides any limit price).
+                                if let Ok(t) = Price::from_f64(trig, meta.price_precision) {
+                                    ctx.submit_stop_market(meta.iid.clone(), side, q, t);
+                                }
                             }
-                            Some(px) => {
+                            (None, Some(px)) => {
                                 if let Ok(p) = Price::from_f64(px, meta.price_precision) {
                                     ctx.submit_limit(meta.iid.clone(), side, q, p);
                                 }
+                            }
+                            (None, None) => {
+                                ctx.submit_market(meta.iid.clone(), side, q);
                             }
                         }
                     }

@@ -62,6 +62,12 @@
   AUTHORITATIVE event-driven runner. `qv screen [--from-lake]`. Fixed a real bucket-alignment bug
   (real bars close at `:59.999`, so event-fill latency crosses the minute boundary) by snapping both
   fill streams to the bar grid. Unit + integration tested.
+- **Stop-market orders** (`qv-sim`): a stop-market rests until the market crosses its `trigger` (buy:
+  price rises to it / sell: falls to it), then takes liquidity at the market — a stop-loss or
+  breakout entry. Fills at the trigger, worsened to the bar if the price gapped past it, then slipped
+  by the brokerage model; volume-capped on bars, fills on ticks too. `ctx.submit_stop(side, qty,
+  trigger)` (cancelable). `OrderFactory.stop_market` + `StrategyContext.submit_stop_market`. Rust
+  (trigger cross, gap fill) + Python (breakout fires, cancel before trigger) tested.
 - **Streaming indicators in Python** (`qv_indicators`): the tested Rust `qv-indicators` (SMA / EMA /
   RSI / ATR / **MACD / Bollinger / VWAP**) are bridged through `qv_py`, so a Python strategy uses the
   IDENTICAL incremental implementation as warm-up / live rather than a re-rolled copy. Plus a pure-
@@ -84,8 +90,8 @@
 
 1. **Research notebook** — an end-to-end demo (download → screen → optimize → backtest → tear-sheet)
    over real data, stringing the features together.
-2. **Strategy ergonomics** — historical bookTicker (websocket capture) for real quotes; richer order
-   types (stop / trailing) in the sim.
+2. **Strategy ergonomics** — historical bookTicker (websocket capture) for real quotes; remaining
+   order types (stop-limit, trailing-stop) in the sim.
 
 ## Deferred — live / ops (start when ready to trade)
 

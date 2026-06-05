@@ -350,6 +350,49 @@ impl SimulatedExecutionClient {
             if r.order.instrument_id != id {
                 continue;
             }
+            // Stop-MARKET: rests until the market crosses the trigger, then takes liquidity at the
+            // market (taker). A stop is aggressive, so it fills on ticks too (full remaining) and is
+            // volume-capped only on bars. Other unmodeled stop types rest inert for now.
+            if !matches!(r.order.order_type, OrderType::Market | OrderType::Limit) {
+                if r.order.order_type == OrderType::StopMarket {
+                    if let Some(trigger) = r.order.trigger {
+                        let triggered = match r.order.side {
+                            OrderSide::Buy => high >= trigger, // price rose to the stop
+                            OrderSide::Sell => low <= trigger, // price fell to the stop
+                        };
+                        let fill_qty = if !triggered {
+                            Quantity::zero(r.remaining.precision())
+                        } else {
+                            match bar_volume {
+                                Some(v) => self.model.fillable_qty(r.remaining, v, &*inst),
+                                None => r.remaining,
+                            }
+                        };
+                        if fill_qty.is_positive() {
+                            // Stop out at the trigger, worsened to the bar if the price gapped past
+                            // it (a buy stop fills no better than the bar low, a sell no better than
+                            // the high), then slipped within the bar by the brokerage model.
+                            let ref_px = match r.order.side {
+                                OrderSide::Buy => trigger.max(low),
+                                OrderSide::Sell => trigger.min(high),
+                            };
+                            let fill_px =
+                                self.model
+                                    .fill_price(&r.order, ref_px, Some((low, high)), &*inst);
+                            decisions.push((
+                                i,
+                                r.venue_order_id.clone(),
+                                r.order.clone(),
+                                fill_px,
+                                fill_qty,
+                                None,
+                                LiquiditySide::Taker,
+                            ));
+                        }
+                    }
+                }
+                continue;
+            }
             let Some(limit) = r.order.price else {
                 // AGGRESSIVE market remainder (no price): takes liquidity at the bar's market price,
                 // capped by participation, no queue. It only participates on BARS (which carry the
@@ -893,6 +936,93 @@ mod tests {
         assert!(
             drain_qtys(&sim, 4_200_000_000).is_empty(),
             "order complete -> no more fills"
+        );
+    }
+
+    fn stop_sim(side: OrderSide, trigger: &str) -> (Rc<HistoricalClock>, SimulatedExecutionClient) {
+        let (clock, cache, id, _inst) = setup(); // mark 50000
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            Box::new(DefaultBrokerageModel::default()),
+        );
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        let order = factory.stop_market(
+            id,
+            side,
+            Quantity::from_decimal(dec!(1), 3).unwrap(),
+            Price::from_decimal(trigger.parse().unwrap(), 2).unwrap(),
+            UnixNanos(0),
+        );
+        sim.on_submit(order);
+        let _ = sim.drain_due(UnixNanos(10_000_000)); // Accepted; now resting
+        (clock, sim)
+    }
+
+    fn drain_fills(reports: Vec<ExecutionReport>) -> Vec<(Price, Quantity)> {
+        reports
+            .into_iter()
+            .filter_map(|r| match r {
+                ExecutionReport::Fill(f) => Some((f.last_px, f.last_qty)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stop_market_buy_triggers_above_the_stop() {
+        let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let (clock, sim) = stop_sim(OrderSide::Buy, "51000"); // breakout buy stop above mark
+                                                              // A bar that does NOT reach 51000 -> no trigger.
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "49000",
+            "50500",
+            "50000",
+            "10",
+            1_000_000_000,
+        ));
+        assert!(drain_fills(sim.drain_due(UnixNanos(1_500_000_000))).is_empty());
+        // A bar whose HIGH reaches 51000 -> triggers and fills at/above the stop.
+        clock.advance_to(UnixNanos(2_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "50000",
+            "51200",
+            "51000",
+            "10",
+            2_000_000_000,
+        ));
+        let fills = drain_fills(sim.drain_due(UnixNanos(2_500_000_000)));
+        assert_eq!(fills.len(), 1);
+        assert!(
+            fills[0].0 >= Price::from_decimal(dec!(51000), 2).unwrap(),
+            "buy stop fills >= trigger"
+        );
+    }
+
+    #[test]
+    fn stop_market_sell_fills_through_a_gap_below_the_stop() {
+        let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let (clock, sim) = stop_sim(OrderSide::Sell, "49000"); // stop-loss below mark
+                                                               // A bar that GAPS below the 49000 stop (high 48500 < trigger) -> fills WORSE than the stop.
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "48000",
+            "48500",
+            "48200",
+            "10",
+            1_000_000_000,
+        ));
+        let fills = drain_fills(sim.drain_due(UnixNanos(1_500_000_000)));
+        assert_eq!(fills.len(), 1);
+        assert!(
+            fills[0].0 < Price::from_decimal(dec!(49000), 2).unwrap(),
+            "gap-down fills below stop"
         );
     }
 

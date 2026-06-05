@@ -159,6 +159,57 @@ def test_set_timer_fires_on_timer():
     assert s.fires == ["tick"]
 
 
+def test_stop_market_fires_on_breakout():
+    # A buy stop @105 rests while the market is below it, then fills when a bar's high breaks above.
+    class StopEntry(Strategy):
+        def __init__(self, trigger: float):
+            self.trigger = trigger
+            self.done = False
+            self.fills = 0
+
+        def on_bar(self, bar, ctx):
+            if not self.done:
+                self.done = True
+                ctx.submit_stop("buy", 1.0, self.trigger)
+
+        def on_order_filled(self, fill, ctx):
+            self.fills += 1
+
+    # bar0 posts the stop; bar1 high 103 (no break); bar2 high 106 breaks 105 -> fills.
+    bars = _ohlc([(100, 100, 100), (100, 103, 102), (102, 106, 105), (104, 107, 106)])
+    fired = StopEntry(105.0)
+    run(fired, bars=bars)
+    assert fired.fills == 1
+
+    never = StopEntry(200.0)  # trigger never reached
+    run(never, bars=bars)
+    assert never.fills == 0
+
+
+def test_stop_can_be_canceled_before_it_triggers():
+    class StopThenCancel(Strategy):
+        def __init__(self):
+            self.oid = None
+            self.n = 0
+            self.fills = 0
+
+        def on_bar(self, bar, ctx):
+            self.n += 1
+            if self.n == 1:
+                self.oid = ctx.submit_stop("buy", 1.0, 105.0)
+            elif self.n == 2:
+                ctx.cancel(self.oid)  # cancel before the breakout bar
+
+        def on_order_filled(self, fill, ctx):
+            self.fills += 1
+
+    # bar3 would break 105, but the stop was canceled on bar 2.
+    bars = _ohlc([(100, 100, 100), (100, 102, 101), (101, 106, 105), (104, 107, 106)])
+    s = StopThenCancel()
+    run(s, bars=bars)
+    assert s.fills == 0
+
+
 def test_on_timer_can_submit_orders():
     # A timer handler can place an order (the ctx in on_timer is fully functional).
     class TimerTrader(Strategy):
