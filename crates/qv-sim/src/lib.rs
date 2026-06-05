@@ -346,50 +346,55 @@ impl SimulatedExecutionClient {
             Option<Quantity>,
             LiquiditySide,
         )> = Vec::new();
+        // StopLimit orders whose trigger crossed this bar: convert them to resting limits.
+        let mut to_activate: Vec<usize> = Vec::new();
         for (i, r) in state.resting.iter().enumerate() {
             if r.order.instrument_id != id {
                 continue;
             }
-            // Stop-MARKET: rests until the market crosses the trigger, then takes liquidity at the
-            // market (taker). A stop is aggressive, so it fills on ticks too (full remaining) and is
-            // volume-capped only on bars. Other unmodeled stop types rest inert for now.
+            // Stop orders rest until the market crosses their trigger.
+            //  * StopMarket -> takes liquidity at the market (taker; ticks fill the full remaining,
+            //    bars are volume-capped).
+            //  * StopLimit  -> CONVERTS to a passive LIMIT at its price (filled from the next bar by
+            //    the limit logic, so slippage is bounded by the limit).
+            // Other unmodeled stop types rest inert for now.
             if !matches!(r.order.order_type, OrderType::Market | OrderType::Limit) {
-                if r.order.order_type == OrderType::StopMarket {
-                    if let Some(trigger) = r.order.trigger {
-                        let triggered = match r.order.side {
-                            OrderSide::Buy => high >= trigger, // price rose to the stop
-                            OrderSide::Sell => low <= trigger, // price fell to the stop
+                let Some(trigger) = r.order.trigger else {
+                    continue;
+                };
+                let triggered = match r.order.side {
+                    OrderSide::Buy => high >= trigger, // price rose to the stop
+                    OrderSide::Sell => low <= trigger, // price fell to the stop
+                };
+                if triggered && r.order.order_type == OrderType::StopMarket {
+                    let fill_qty = match bar_volume {
+                        Some(v) => self.model.fillable_qty(r.remaining, v, &*inst),
+                        None => r.remaining,
+                    };
+                    if fill_qty.is_positive() {
+                        // Stop out at the trigger, worsened to the bar if the price gapped past it
+                        // (a buy stop fills no better than the bar low, a sell no better than the
+                        // high), then slipped within the bar by the brokerage model.
+                        let ref_px = match r.order.side {
+                            OrderSide::Buy => trigger.max(low),
+                            OrderSide::Sell => trigger.min(high),
                         };
-                        let fill_qty = if !triggered {
-                            Quantity::zero(r.remaining.precision())
-                        } else {
-                            match bar_volume {
-                                Some(v) => self.model.fillable_qty(r.remaining, v, &*inst),
-                                None => r.remaining,
-                            }
-                        };
-                        if fill_qty.is_positive() {
-                            // Stop out at the trigger, worsened to the bar if the price gapped past
-                            // it (a buy stop fills no better than the bar low, a sell no better than
-                            // the high), then slipped within the bar by the brokerage model.
-                            let ref_px = match r.order.side {
-                                OrderSide::Buy => trigger.max(low),
-                                OrderSide::Sell => trigger.min(high),
-                            };
-                            let fill_px =
-                                self.model
-                                    .fill_price(&r.order, ref_px, Some((low, high)), &*inst);
-                            decisions.push((
-                                i,
-                                r.venue_order_id.clone(),
-                                r.order.clone(),
-                                fill_px,
-                                fill_qty,
-                                None,
-                                LiquiditySide::Taker,
-                            ));
-                        }
+                        let fill_px =
+                            self.model
+                                .fill_price(&r.order, ref_px, Some((low, high)), &*inst);
+                        decisions.push((
+                            i,
+                            r.venue_order_id.clone(),
+                            r.order.clone(),
+                            fill_px,
+                            fill_qty,
+                            None,
+                            LiquiditySide::Taker,
+                        ));
                     }
+                } else if triggered && r.order.order_type == OrderType::StopLimit {
+                    // Activate: it becomes a resting Limit (handled by the limit branch next bar).
+                    to_activate.push(i);
                 }
                 continue;
             }
@@ -473,6 +478,11 @@ impl SimulatedExecutionClient {
                 Some(new_queue),
                 LiquiditySide::Maker,
             ));
+        }
+
+        // Activate triggered StopLimit orders -> they rest as plain Limits from here on.
+        for &i in &to_activate {
+            state.resting[i].order.order_type = OrderType::Limit;
         }
 
         // Phase 2: schedule fills, decrement `remaining`, and write back queue-ahead (mutable).
@@ -1001,6 +1011,95 @@ mod tests {
         assert!(
             fills[0].0 >= Price::from_decimal(dec!(51000), 2).unwrap(),
             "buy stop fills >= trigger"
+        );
+    }
+
+    fn stop_limit_sim(
+        trigger: &str,
+        limit: &str,
+    ) -> (Rc<HistoricalClock>, SimulatedExecutionClient) {
+        let (clock, cache, id, _inst) = setup();
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            Box::new(DefaultBrokerageModel::default()),
+        );
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        // A SELL stop-limit below the mark (stop-loss with a price floor).
+        let order = factory.stop_limit(
+            id,
+            OrderSide::Sell,
+            Quantity::from_decimal(dec!(1), 3).unwrap(),
+            Price::from_decimal(trigger.parse().unwrap(), 2).unwrap(),
+            Price::from_decimal(limit.parse().unwrap(), 2).unwrap(),
+            UnixNanos(0),
+        );
+        sim.on_submit(order);
+        let _ = sim.drain_due(UnixNanos(10_000_000));
+        (clock, sim)
+    }
+
+    #[test]
+    fn stop_limit_triggers_then_fills_at_its_limit() {
+        let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let (clock, sim) = stop_limit_sim("49000", "48900"); // sell stop @49000, limit floor 48900
+                                                             // Bar 1: low 48800 crosses the 49000 stop -> converts to a sell limit @48900; bar high 48850
+                                                             // is below the limit, so no fill this bar.
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "48800",
+            "48850",
+            "48820",
+            "10",
+            1_000_000_000,
+        ));
+        assert!(drain_fills(sim.drain_due(UnixNanos(1_500_000_000))).is_empty());
+        // Bar 2: high 49000 >= the 48900 sell limit -> fills at the limit price.
+        clock.advance_to(UnixNanos(2_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "48850",
+            "49000",
+            "48950",
+            "10",
+            2_000_000_000,
+        ));
+        let fills = drain_fills(sim.drain_due(UnixNanos(2_500_000_000)));
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].0, Price::from_decimal(dec!(48900), 2).unwrap());
+    }
+
+    #[test]
+    fn stop_limit_does_not_fill_below_its_limit() {
+        // The price gaps through the stop AND the limit and never recovers -> no fill (the limit
+        // floor protects against selling below 48900).
+        let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let (clock, sim) = stop_limit_sim("49000", "48900");
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "48000",
+            "48100",
+            "48050",
+            "10",
+            1_000_000_000,
+        )); // triggers
+        clock.advance_to(UnixNanos(2_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "48000",
+            "48200",
+            "48100",
+            "10",
+            2_000_000_000,
+        )); // stays below
+        let fills = drain_fills(sim.drain_due(UnixNanos(2_500_000_000)));
+        assert!(
+            fills.is_empty(),
+            "sell limit @48900 never crossed -> no fill"
         );
     }
 
