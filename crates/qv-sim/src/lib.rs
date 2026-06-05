@@ -315,8 +315,14 @@ impl SimulatedExecutionClient {
         // Phase 1: decide each crossing's fill quantity AND its new queue-ahead (immutable borrow of
         // `resting`). Tuple: (index, venue id, order, limit, qty to fill this bar, new queue-ahead).
         // `new_queue` is `Some(_)` only when it must be written back (a bar event paid it down).
-        let mut decisions: Vec<(usize, VenueOrderId, Order, Price, Quantity, Option<Quantity>)> =
-            Vec::new();
+        let mut decisions: Vec<(
+            usize,
+            VenueOrderId,
+            Order,
+            Price,
+            Quantity,
+            Option<Quantity>,
+        )> = Vec::new();
         for (i, r) in state.resting.iter().enumerate() {
             if r.order.instrument_id != id {
                 continue;
@@ -334,7 +340,14 @@ impl SimulatedExecutionClient {
             let Some(v) = bar_volume else {
                 // Non-bar event (quote/trade): no volume model -> fill the full crossed remaining.
                 if r.remaining.is_positive() {
-                    decisions.push((i, r.venue_order_id.clone(), r.order.clone(), limit, r.remaining, None));
+                    decisions.push((
+                        i,
+                        r.venue_order_id.clone(),
+                        r.order.clone(),
+                        limit,
+                        r.remaining,
+                        None,
+                    ));
                 }
                 continue;
             };
@@ -351,7 +364,8 @@ impl SimulatedExecutionClient {
             } else {
                 // Touch only: our per-bar budget first pays down the queue; the excess fills us.
                 let paid = share.as_decimal().min(queue.as_decimal());
-                let paid = Quantity::from_decimal(paid, prec).unwrap_or_else(|_| Quantity::zero(prec));
+                let paid =
+                    Quantity::from_decimal(paid, prec).unwrap_or_else(|_| Quantity::zero(prec));
                 let nq = queue
                     .checked_sub(paid)
                     .unwrap_or_else(|_| Quantity::zero(prec));
@@ -537,7 +551,9 @@ mod tests {
         sim.on_submit(order);
         // Drain the Accepted; the order is now resting (no fill yet).
         let reports = sim.drain_due(UnixNanos(10_000_000));
-        assert!(reports.iter().all(|r| !matches!(r, ExecutionReport::Fill(_))));
+        assert!(reports
+            .iter()
+            .all(|r| !matches!(r, ExecutionReport::Fill(_))));
         (clock, sim)
     }
 
@@ -558,7 +574,10 @@ mod tests {
             })
             .collect();
         assert_eq!(fills.len(), 1, "low crossed the limit -> exactly one fill");
-        assert_eq!(fills[0].last_px, Price::from_decimal(dec!(49000), 2).unwrap());
+        assert_eq!(
+            fills[0].last_px,
+            Price::from_decimal(dec!(49000), 2).unwrap()
+        );
     }
 
     #[test]
@@ -571,12 +590,21 @@ mod tests {
         sim.on_market(&bar(&id, "50500", "50600", "50500", 1_000_000_000));
         let reports = sim.drain_due(UnixNanos(2_000_000_000));
         assert!(
-            reports.iter().all(|r| !matches!(r, ExecutionReport::Fill(_))),
+            reports
+                .iter()
+                .all(|r| !matches!(r, ExecutionReport::Fill(_))),
             "low stayed above the limit -> no fill"
         );
     }
 
-    fn bar_vol(id: &InstrumentId, low: &str, high: &str, close: &str, vol: &str, ts: u64) -> MarketEvent {
+    fn bar_vol(
+        id: &InstrumentId,
+        low: &str,
+        high: &str,
+        close: &str,
+        vol: &str,
+        ts: u64,
+    ) -> MarketEvent {
         use qv_model::{AggregationSource, Bar, BarAggregation, BarSpec, BarType, PriceType};
         let p = |s: &str| Price::from_decimal(s.parse().unwrap(), 2).unwrap();
         MarketEvent::Bar(Bar {
@@ -682,7 +710,14 @@ mod tests {
 
         // Bar 1: thin volume 0.003 -> fills the one-lot minimum 0.001.
         clock.advance_to(UnixNanos(1_000_000_000));
-        sim.on_market(&bar_vol(&id, "48000", "50600", "50500", "0.003", 1_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "48000",
+            "50600",
+            "50500",
+            "0.003",
+            1_000_000_000,
+        ));
         let f1: Vec<_> = sim
             .drain_due(UnixNanos(1_500_000_000))
             .into_iter()
@@ -702,8 +737,12 @@ mod tests {
             queue_ahead_factor: factor,
             ..DefaultBrokerageModel::default()
         };
-        let sim =
-            SimulatedExecutionClient::new(Venue::from("BINANCE"), clock_dyn, cache, Box::new(model));
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            Box::new(model),
+        );
         let mut factory = OrderFactory::new(StrategyId::from("s1"));
         // Buy limit @ 49000 rests (mark 50000 > 49000).
         let order = factory.limit(
@@ -755,7 +794,11 @@ mod tests {
         let (clock, sim) = queue_sim(dec!(0.5), "1");
         clock.advance_to(UnixNanos(1_000_000_000));
         sim.on_market(&bar_vol(&id, "48000", "50000", "49500", "4", 1_000_000_000)); // low < limit
-        assert_eq!(drain_fill_count(&sim, 1_500_000_000), 1, "through-cross fills immediately");
+        assert_eq!(
+            drain_fill_count(&sim, 1_500_000_000),
+            1,
+            "through-cross fills immediately"
+        );
     }
 
     #[test]
@@ -779,7 +822,10 @@ mod tests {
         let lo = Price::from_decimal(dec!(49000), 2).unwrap();
         let hi = Price::from_decimal(dec!(51000), 2).unwrap();
         let ranged = model.fill_price(&buy, refpx, Some((lo, hi)), &*inst);
-        assert!(ranged > no_range, "range adds slippage: {ranged:?} !> {no_range:?}");
+        assert!(
+            ranged > no_range,
+            "range adds slippage: {ranged:?} !> {no_range:?}"
+        );
         assert!(ranged <= hi, "buy fill capped at the bar high");
 
         // A high reference near the top forces the cap to bind exactly at the high.
@@ -790,7 +836,10 @@ mod tests {
         // Close AT the high: the range cap must NOT swallow the base slippage — a buy still pays
         // the base bps above the close (1 bp on 51000 = 5.10), i.e. just past the high.
         let at_high = model.fill_price(&buy, hi, Some((lo, hi)), &*inst);
-        assert!(at_high > hi, "base slippage preserved even when close == high: {at_high:?}");
+        assert!(
+            at_high > hi,
+            "base slippage preserved even when close == high: {at_high:?}"
+        );
         assert_eq!(at_high, Price::from_decimal(dec!(51005.10), 2).unwrap());
     }
 }

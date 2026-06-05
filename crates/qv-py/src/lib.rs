@@ -162,7 +162,9 @@ mod imp {
         }
         /// Resolve a symbol (default if `None`) to its (price_precision, size_precision), or raise.
         fn resolve(&self, symbol: &Option<String>) -> PyResult<(String, u8, u8)> {
-            let sym = symbol.clone().unwrap_or_else(|| self.default_symbol.clone());
+            let sym = symbol
+                .clone()
+                .unwrap_or_else(|| self.default_symbol.clone());
             match self.metas.get(&sym) {
                 Some(&(pp, sp)) => Ok((sym, pp, sp)),
                 None => Err(vexc(format!("unknown symbol {sym:?}"))),
@@ -226,7 +228,9 @@ mod imp {
         /// Arm a one-shot timer firing at absolute `at` (ns); delivered to `on_timer` with `name`.
         /// Re-arm in `on_timer` for periodic behavior (e.g. `ctx.set_timer("rebalance", ctx.now + N)`).
         fn set_timer(&self, name: String, at: u64) {
-            self.outbox.borrow_mut().push(PyIntent::SetTimer { name, at });
+            self.outbox
+                .borrow_mut()
+                .push(PyIntent::SetTimer { name, at });
         }
     }
 
@@ -343,7 +347,7 @@ mod imp {
                 )
                 .expect("alloc PyCtx");
                 let bound = self.obj.bind(py);
-                if let Err(e) = call(py, &bound, py_ctx.clone_ref(py)) {
+                if let Err(e) = call(py, bound, py_ctx.clone_ref(py)) {
                     e.print(py);
                 }
                 py_ctx.bind(py).borrow().outbox.borrow().clone()
@@ -683,9 +687,11 @@ mod imp {
         for (ts, open, high, low, close, volume) in bars {
             events.push(build_bar_event(&meta, ts, open, high, low, close, volume)?);
         }
-        let starting =
-            Money::from_decimal(Decimal::from_f64(starting_balance).unwrap_or(Decimal::ZERO), settle)
-                .map_err(vexc)?;
+        let starting = Money::from_decimal(
+            Decimal::from_f64(starting_balance).unwrap_or(Decimal::ZERO),
+            settle,
+        )
+        .map_err(vexc)?;
         let mut metas = std::collections::HashMap::new();
         metas.insert(symbol.clone(), meta);
         Ok(run_kernel(
@@ -744,9 +750,11 @@ mod imp {
                 .ok_or_else(|| vexc(format!("bar for unknown symbol {symbol:?}")))?;
             events.push(build_bar_event(meta, ts, open, high, low, close, volume)?);
         }
-        let starting =
-            Money::from_decimal(Decimal::from_f64(starting_balance).unwrap_or(Decimal::ZERO), settle)
-                .map_err(vexc)?;
+        let starting = Money::from_decimal(
+            Decimal::from_f64(starting_balance).unwrap_or(Decimal::ZERO),
+            settle,
+        )
+        .map_err(vexc)?;
         Ok(run_kernel(
             strategy,
             &venue,

@@ -32,7 +32,12 @@ pub trait BrokerageModel {
     /// (`leaves`) quantity and the event's traded `bar_volume`. The default is no cap (fill all
     /// `leaves`); a volume-participation model caps a single bar's fill to a share of its volume so a
     /// large order fills over multiple bars. MUST return `<= leaves` (never over-fill).
-    fn fillable_qty(&self, leaves: Quantity, _bar_volume: Quantity, _inst: &dyn Instrument) -> Quantity {
+    fn fillable_qty(
+        &self,
+        leaves: Quantity,
+        _bar_volume: Quantity,
+        _inst: &dyn Instrument,
+    ) -> Quantity {
         leaves
     }
     /// Estimated volume resting AHEAD of a freshly-placed limit order at its price level — the queue
@@ -79,10 +84,10 @@ pub struct DefaultBrokerageModel {
 impl Default for DefaultBrokerageModel {
     fn default() -> Self {
         DefaultBrokerageModel {
-            slippage_bps: Decimal::new(1, 0),     // 1 bp base
-            range_impact: Decimal::new(1, 1),     // 0.1 of the bar range
+            slippage_bps: Decimal::new(1, 0),        // 1 bp base
+            range_impact: Decimal::new(1, 1),        // 0.1 of the bar range
             participation_rate: Decimal::new(25, 2), // 0.25 of a bar's volume
-            queue_ahead_factor: Decimal::ZERO,    // queue modeling OFF by default (opt-in)
+            queue_ahead_factor: Decimal::ZERO,       // queue modeling OFF by default (opt-in)
             latency_ns: 1_000_000,
         }
     }
@@ -131,7 +136,12 @@ impl BrokerageModel for DefaultBrokerageModel {
         inst.make_price(adjusted).unwrap_or(ref_px)
     }
 
-    fn fillable_qty(&self, leaves: Quantity, bar_volume: Quantity, inst: &dyn Instrument) -> Quantity {
+    fn fillable_qty(
+        &self,
+        leaves: Quantity,
+        bar_volume: Quantity,
+        inst: &dyn Instrument,
+    ) -> Quantity {
         // No cap when participation is disabled or the bar carries no volume (e.g. a close-only
         // series): fill the whole remaining quantity, preserving the pre-participation behavior.
         if self.participation_rate <= Decimal::ZERO || bar_volume.as_decimal() <= Decimal::ZERO {
