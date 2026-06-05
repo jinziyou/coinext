@@ -25,6 +25,41 @@ class Bar(Protocol):
     high: float
     low: float
     close: float
+    volume: float
+    ts: int
+
+
+class Quote(Protocol):
+    symbol: str
+    bid: float
+    ask: float
+    bid_size: float
+    ask_size: float
+    ts: int
+
+
+class Trade(Protocol):
+    symbol: str
+    price: float
+    size: float
+    ts: int
+
+
+class Fill(Protocol):
+    symbol: str
+    side: int  # +1 buy / -1 sell
+    qty: float
+    price: float
+    client_order_id: str
+
+
+class OrderEvent(Protocol):
+    kind: str  # submitted/accepted/partially_filled/filled/denied/rejected/canceled/expired/...
+    reason: str | None
+
+
+class Timer(Protocol):
+    name: str
     ts: int
 
 
@@ -32,22 +67,46 @@ class Ctx(Protocol):
     now: int
 
     def position(self, symbol: str | None = None) -> float: ...
-    def submit_market(self, side: str, qty: float, symbol: str | None = None) -> None: ...
+    def submit_market(self, side: str, qty: float, symbol: str | None = None) -> str: ...
     def submit_limit(
         self, side: str, qty: float, price: float, symbol: str | None = None
-    ) -> None: ...
+    ) -> str: ...
+    def cancel(self, client_order_id: str) -> None: ...
+    def set_timer(self, name: str, at: int) -> None: ...
 
 
 class Strategy:
-    """Base strategy. Override the handlers you need; defaults are no-ops."""
+    """Base strategy. Override the handlers you need; defaults are no-ops.
 
-    def on_start(self) -> None:  # pragma: no cover - lifecycle hook
+    Every handler receives ``ctx`` (the platform surface: ``now``, ``position()``,
+    ``submit_market``/``submit_limit`` which return a cancelable client_order_id, ``cancel``,
+    ``set_timer``). ``on_quote``/``on_trade`` fire only when the feed provides quotes/trades (a
+    bar-only backtest does not emit them); ``on_order_filled``/``on_order_event`` fire on the
+    strategy's own orders; ``on_timer`` fires for timers armed via ``ctx.set_timer``.
+    """
+
+    def on_start(self, ctx: Ctx) -> None:  # pragma: no cover - lifecycle hook
         pass
 
     def on_bar(self, bar: Bar, ctx: Ctx) -> None:
         pass
 
-    def on_stop(self) -> None:  # pragma: no cover - lifecycle hook
+    def on_quote(self, quote: Quote, ctx: Ctx) -> None:  # pragma: no cover - feed-dependent
+        pass
+
+    def on_trade(self, trade: Trade, ctx: Ctx) -> None:  # pragma: no cover - feed-dependent
+        pass
+
+    def on_order_filled(self, fill: Fill, ctx: Ctx) -> None:
+        pass
+
+    def on_order_event(self, event: OrderEvent, ctx: Ctx) -> None:
+        pass
+
+    def on_timer(self, timer: Timer, ctx: Ctx) -> None:
+        pass
+
+    def on_stop(self, ctx: Ctx) -> None:  # pragma: no cover - lifecycle hook
         pass
 
 
@@ -176,4 +235,16 @@ class MultiSma(Strategy):
         st["prev_fast"], st["prev_slow"] = f, s
 
 
-__all__ = ["Strategy", "SmaCross", "LimitMaker", "MultiSma", "Bar", "Ctx"]
+__all__ = [
+    "Strategy",
+    "SmaCross",
+    "LimitMaker",
+    "MultiSma",
+    "Bar",
+    "Quote",
+    "Trade",
+    "Fill",
+    "OrderEvent",
+    "Timer",
+    "Ctx",
+]

@@ -17,7 +17,8 @@ mod imp {
     use qv_kernel::{BacktestConfig, BacktestKernel};
     use qv_model::{
         AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, Instrument,
-        InstrumentId, MarketEvent, OrderSide, PositionSide, PriceType, StrategyId, Symbol, Venue,
+        InstrumentId, MarketEvent, OrderEvent, OrderSide, PositionSide, PriceType, StrategyId,
+        Symbol, Venue,
     };
     use qv_ports::{Strategy, StrategyContext};
     use rust_decimal::prelude::FromPrimitive;
@@ -46,13 +47,87 @@ mod imp {
         pub ts: u64,
     }
 
-    /// One queued order intent: side, quantity, an optional limit price (`None` = market), and an
-    /// optional target `symbol` (`None` = the default/only instrument).
-    struct Intent {
-        side: String,
-        qty: f64,
-        limit_px: Option<f64>,
-        symbol: Option<String>,
+    /// A fill of one of the strategy's own orders, delivered to `on_order_filled`.
+    #[pyclass(unsendable, name = "Fill")]
+    pub struct PyFill {
+        #[pyo3(get)]
+        pub symbol: String,
+        #[pyo3(get)]
+        pub side: i8, // +1 buy / -1 sell
+        #[pyo3(get)]
+        pub qty: f64,
+        #[pyo3(get)]
+        pub price: f64,
+        #[pyo3(get)]
+        pub client_order_id: String,
+    }
+
+    /// An order-lifecycle event, delivered to `on_order_event`. `kind` is one of
+    /// submitted/accepted/partially_filled/filled/denied/rejected/canceled/expired/…; `reason` is
+    /// set for denied/rejected.
+    #[pyclass(unsendable, name = "OrderEvent")]
+    pub struct PyOrderEvent {
+        #[pyo3(get)]
+        pub kind: String,
+        #[pyo3(get)]
+        pub reason: Option<String>,
+    }
+
+    /// A timer firing, delivered to `on_timer` (armed via `ctx.set_timer(name, at_ns)`).
+    #[pyclass(unsendable, name = "Timer")]
+    pub struct PyTimer {
+        #[pyo3(get)]
+        pub name: String,
+        #[pyo3(get)]
+        pub ts: u64,
+    }
+
+    /// A top-of-book quote, delivered to `on_quote` when the feed provides quotes.
+    #[pyclass(unsendable, name = "Quote")]
+    pub struct PyQuote {
+        #[pyo3(get)]
+        pub symbol: String,
+        #[pyo3(get)]
+        pub bid: f64,
+        #[pyo3(get)]
+        pub ask: f64,
+        #[pyo3(get)]
+        pub bid_size: f64,
+        #[pyo3(get)]
+        pub ask_size: f64,
+        #[pyo3(get)]
+        pub ts: u64,
+    }
+
+    /// A public trade print, delivered to `on_trade` when the feed provides trades.
+    #[pyclass(unsendable, name = "Trade")]
+    pub struct PyTrade {
+        #[pyo3(get)]
+        pub symbol: String,
+        #[pyo3(get)]
+        pub price: f64,
+        #[pyo3(get)]
+        pub size: f64,
+        #[pyo3(get)]
+        pub ts: u64,
+    }
+
+    /// One queued intent from a Python handler, replayed onto the real `StrategyContext` afterwards.
+    #[derive(Clone)]
+    enum PyIntent {
+        Submit {
+            side: String,
+            qty: f64,
+            limit_px: Option<f64>, // None = market
+            symbol: Option<String>,
+        },
+        Cancel {
+            client_order_id: String,
+        },
+        SetTimer {
+            name: String,
+            at: u64,
+        },
     }
 
     /// The strategy context exposed to Python during a handler. Reads (now, positions) are snapshot
@@ -66,7 +141,21 @@ mod imp {
         pub now: u64,
         signed_positions: std::collections::HashMap<String, f64>,
         default_symbol: String,
-        outbox: RefCell<Vec<Intent>>,
+        // For deterministically pre-computing the client_order_id a submit WILL get on replay
+        // (`{strategy_id}-{seq:020}`), so a handler can cancel an order it just submitted.
+        strategy_id: String,
+        base_seq: u64,
+        submit_count: RefCell<u64>,
+        outbox: RefCell<Vec<PyIntent>>,
+    }
+
+    impl PyCtx {
+        /// The client_order_id the next submit will receive once replayed onto the real factory.
+        fn next_coid(&self) -> String {
+            let mut n = self.submit_count.borrow_mut();
+            *n += 1;
+            format!("{}-{:020}", self.strategy_id, self.base_seq + *n)
+        }
     }
 
     #[pymethods]
@@ -77,26 +166,41 @@ mod imp {
             let key = symbol.unwrap_or(self.default_symbol.as_str());
             self.signed_positions.get(key).copied().unwrap_or(0.0)
         }
-        /// Queue a market order. `side` is "buy" or "sell"; `symbol` defaults to the only instrument.
+        /// Queue a market order; returns its client_order_id (usable with `cancel`). `side` is
+        /// "buy"/"sell"; `symbol` defaults to the only instrument.
         #[pyo3(signature = (side, qty, symbol=None))]
-        fn submit_market(&self, side: &str, qty: f64, symbol: Option<String>) {
-            self.outbox.borrow_mut().push(Intent {
+        fn submit_market(&self, side: &str, qty: f64, symbol: Option<String>) -> String {
+            self.outbox.borrow_mut().push(PyIntent::Submit {
                 side: side.to_string(),
                 qty,
                 limit_px: None,
                 symbol,
             });
+            self.next_coid()
         }
-        /// Queue a resting limit order at `price`. Fills when a later bar's low/high crosses it —
-        /// the OHLC-aware path (the sim matches resting limits against bar high/low, not just close).
+        /// Queue a resting limit order at `price`; returns its client_order_id. Fills when a later
+        /// bar's low/high crosses it — the OHLC-aware path (matched against bar high/low, not close).
         #[pyo3(signature = (side, qty, price, symbol=None))]
-        fn submit_limit(&self, side: &str, qty: f64, price: f64, symbol: Option<String>) {
-            self.outbox.borrow_mut().push(Intent {
+        fn submit_limit(&self, side: &str, qty: f64, price: f64, symbol: Option<String>) -> String {
+            self.outbox.borrow_mut().push(PyIntent::Submit {
                 side: side.to_string(),
                 qty,
                 limit_px: Some(price),
                 symbol,
             });
+            self.next_coid()
+        }
+        /// Cancel a resting order by the client_order_id returned from `submit_market`/`submit_limit`
+        /// (or seen on a `Fill`/`OrderEvent`).
+        fn cancel(&self, client_order_id: String) {
+            self.outbox
+                .borrow_mut()
+                .push(PyIntent::Cancel { client_order_id });
+        }
+        /// Arm a one-shot timer firing at absolute `at` (ns); delivered to `on_timer` with `name`.
+        /// Re-arm in `on_timer` for periodic behavior (e.g. `ctx.set_timer("rebalance", ctx.now + N)`).
+        fn set_timer(&self, name: String, at: u64) {
+            self.outbox.borrow_mut().push(PyIntent::SetTimer { name, at });
         }
     }
 
@@ -141,6 +245,7 @@ mod imp {
         obj: Py<PyAny>,
         instruments: std::collections::HashMap<String, InstrumentMeta>,
         default_symbol: String,
+        strategy_id: String,
     }
 
     fn signed_qty(ctx: &StrategyContext, iid: &InstrumentId) -> f64 {
@@ -154,84 +259,232 @@ mod imp {
         }
     }
 
-    impl Strategy for PyStrategyAdapter {
-        fn on_bar(&mut self, bar: &Bar, ctx: &mut StrategyContext) {
-            let now = ctx.now_ns().as_u64();
-            let bar_symbol = bar.bar_type.instrument_id.symbol.as_str().to_string();
-            // Snapshot the signed position of every instrument before the call (no Rust refs cross
-            // the GIL); the Python ctx reads them by symbol.
-            let signed_positions: std::collections::HashMap<String, f64> = self
-                .instruments
+    /// Map an `OrderEvent` to a `(kind, reason)` pair for the Python `on_order_event` hook.
+    fn order_event_kind(e: &OrderEvent) -> (String, Option<String>) {
+        use OrderEvent::*;
+        match e {
+            Initialized { .. } => ("initialized".into(), None),
+            Submitted { .. } => ("submitted".into(), None),
+            Accepted { .. } => ("accepted".into(), None),
+            PendingUpdate { .. } => ("pending_update".into(), None),
+            Updated { .. } => ("updated".into(), None),
+            PendingCancel { .. } => ("pending_cancel".into(), None),
+            PartiallyFilled(_) => ("partially_filled".into(), None),
+            Filled(_) => ("filled".into(), None),
+            Denied { reason, .. } => ("denied".into(), Some(reason.clone())),
+            Rejected { reason, .. } => ("rejected".into(), Some(reason.clone())),
+            Canceled { .. } => ("canceled".into(), None),
+            Expired { .. } => ("expired".into(), None),
+        }
+    }
+
+    impl PyStrategyAdapter {
+        fn snapshot(&self, ctx: &StrategyContext) -> std::collections::HashMap<String, f64> {
+            self.instruments
                 .iter()
                 .map(|(sym, meta)| (sym.clone(), signed_qty(ctx, &meta.iid)))
-                .collect();
+                .collect()
+        }
 
-            // Acquire the GIL only for the handler; collect intents, then replay GIL-free.
-            let intents: Vec<(String, f64, Option<f64>, Option<String>)> = Python::attach(|py| {
-                let py_bar = Py::new(
-                    py,
-                    PyBar {
-                        symbol: bar_symbol,
-                        close: bar.close.as_f64(),
-                        open: bar.open.as_f64(),
-                        high: bar.high.as_f64(),
-                        low: bar.low.as_f64(),
-                        volume: bar.volume.as_f64(),
-                        ts: bar.ts_event.as_u64(),
-                    },
-                )
-                .expect("alloc PyBar");
+        /// The shared dispatch path: snapshot state, build a fresh `PyCtx`, run the Python handler
+        /// (the closure builds the event object and calls the method), then replay the queued
+        /// intents onto the real `StrategyContext`. The GIL is held only inside the closure.
+        fn run_handler<F>(&self, ctx: &mut StrategyContext, call: F)
+        where
+            F: FnOnce(Python<'_>, &Bound<'_, PyAny>, Py<PyCtx>) -> PyResult<()>,
+        {
+            let now = ctx.now_ns().as_u64();
+            let base_seq = ctx.order_factory().seq();
+            let signed_positions = self.snapshot(ctx);
+            let intents: Vec<PyIntent> = Python::attach(|py| {
                 let py_ctx = Py::new(
                     py,
                     PyCtx {
                         now,
                         signed_positions,
                         default_symbol: self.default_symbol.clone(),
+                        strategy_id: self.strategy_id.clone(),
+                        base_seq,
+                        submit_count: RefCell::new(0),
                         outbox: RefCell::new(Vec::new()),
                     },
                 )
                 .expect("alloc PyCtx");
-                if let Err(e) = self
-                    .obj
-                    .bind(py)
-                    .call_method1("on_bar", (py_bar, py_ctx.clone_ref(py)))
-                {
+                let bound = self.obj.bind(py);
+                if let Err(e) = call(py, &bound, py_ctx.clone_ref(py)) {
                     e.print(py);
                 }
-                let out: Vec<(String, f64, Option<f64>, Option<String>)> = py_ctx
-                    .bind(py)
-                    .borrow()
-                    .outbox
-                    .borrow()
-                    .iter()
-                    .map(|i| (i.side.clone(), i.qty, i.limit_px, i.symbol.clone()))
-                    .collect();
-                out
+                py_ctx.bind(py).borrow().outbox.borrow().clone()
             });
-            for (side, qty, limit_px, symbol) in intents {
-                let sym = symbol.unwrap_or_else(|| self.default_symbol.clone());
-                let Some(meta) = self.instruments.get(&sym) else {
-                    continue; // unknown symbol: drop the intent (kernel validates upstream too)
-                };
-                let side = if side.eq_ignore_ascii_case("sell") {
-                    OrderSide::Sell
-                } else {
-                    OrderSide::Buy
-                };
-                let Ok(q) = Quantity::from_f64(qty, meta.size_precision) else {
-                    continue;
-                };
-                match limit_px {
-                    None => {
-                        ctx.submit_market(meta.iid.clone(), side, q);
-                    }
-                    Some(px) => {
-                        if let Ok(p) = Price::from_f64(px, meta.price_precision) {
-                            ctx.submit_limit(meta.iid.clone(), side, q, p);
+            self.replay(ctx, intents);
+        }
+
+        fn replay(&self, ctx: &mut StrategyContext, intents: Vec<PyIntent>) {
+            for intent in intents {
+                match intent {
+                    PyIntent::Submit {
+                        side,
+                        qty,
+                        limit_px,
+                        symbol,
+                    } => {
+                        let sym = symbol.unwrap_or_else(|| self.default_symbol.clone());
+                        let Some(meta) = self.instruments.get(&sym) else {
+                            continue; // unknown symbol: drop (kernel validates upstream too)
+                        };
+                        let side = if side.eq_ignore_ascii_case("sell") {
+                            OrderSide::Sell
+                        } else {
+                            OrderSide::Buy
+                        };
+                        let Ok(q) = Quantity::from_f64(qty, meta.size_precision) else {
+                            continue;
+                        };
+                        match limit_px {
+                            None => {
+                                ctx.submit_market(meta.iid.clone(), side, q);
+                            }
+                            Some(px) => {
+                                if let Ok(p) = Price::from_f64(px, meta.price_precision) {
+                                    ctx.submit_limit(meta.iid.clone(), side, q, p);
+                                }
+                            }
                         }
+                    }
+                    PyIntent::Cancel { client_order_id } => {
+                        ctx.cancel(qv_model::ClientOrderId::from(client_order_id.as_str()));
+                    }
+                    PyIntent::SetTimer { name, at } => {
+                        ctx.set_timer(&name, UnixNanos(at));
                     }
                 }
             }
+        }
+    }
+
+    impl Strategy for PyStrategyAdapter {
+        fn on_start(&mut self, ctx: &mut StrategyContext) {
+            self.run_handler(ctx, |_py, obj, pyctx| {
+                obj.call_method1("on_start", (pyctx,)).map(|_| ())
+            });
+        }
+
+        fn on_bar(&mut self, bar: &Bar, ctx: &mut StrategyContext) {
+            let v = (
+                bar.bar_type.instrument_id.symbol.as_str().to_string(),
+                bar.open.as_f64(),
+                bar.high.as_f64(),
+                bar.low.as_f64(),
+                bar.close.as_f64(),
+                bar.volume.as_f64(),
+                bar.ts_event.as_u64(),
+            );
+            self.run_handler(ctx, move |py, obj, pyctx| {
+                let py_bar = Py::new(
+                    py,
+                    PyBar {
+                        symbol: v.0,
+                        open: v.1,
+                        high: v.2,
+                        low: v.3,
+                        close: v.4,
+                        volume: v.5,
+                        ts: v.6,
+                    },
+                )?;
+                obj.call_method1("on_bar", (py_bar, pyctx)).map(|_| ())
+            });
+        }
+
+        fn on_quote(&mut self, q: &qv_model::QuoteTick, ctx: &mut StrategyContext) {
+            let v = (
+                q.instrument_id.symbol.as_str().to_string(),
+                q.bid.as_f64(),
+                q.ask.as_f64(),
+                q.bid_size.as_f64(),
+                q.ask_size.as_f64(),
+                q.ts_event.as_u64(),
+            );
+            self.run_handler(ctx, move |py, obj, pyctx| {
+                let pq = Py::new(
+                    py,
+                    PyQuote {
+                        symbol: v.0,
+                        bid: v.1,
+                        ask: v.2,
+                        bid_size: v.3,
+                        ask_size: v.4,
+                        ts: v.5,
+                    },
+                )?;
+                obj.call_method1("on_quote", (pq, pyctx)).map(|_| ())
+            });
+        }
+
+        fn on_trade(&mut self, t: &qv_model::TradeTick, ctx: &mut StrategyContext) {
+            let v = (
+                t.instrument_id.symbol.as_str().to_string(),
+                t.price.as_f64(),
+                t.size.as_f64(),
+                t.ts_event.as_u64(),
+            );
+            self.run_handler(ctx, move |py, obj, pyctx| {
+                let pt = Py::new(
+                    py,
+                    PyTrade {
+                        symbol: v.0,
+                        price: v.1,
+                        size: v.2,
+                        ts: v.3,
+                    },
+                )?;
+                obj.call_method1("on_trade", (pt, pyctx)).map(|_| ())
+            });
+        }
+
+        fn on_order_filled(&mut self, f: &qv_model::Fill, ctx: &mut StrategyContext) {
+            let v = (
+                f.instrument_id.symbol.as_str().to_string(),
+                f.side.sign() as i8,
+                f.last_qty.as_f64(),
+                f.last_px.as_f64(),
+                f.client_order_id.as_str().to_string(),
+            );
+            self.run_handler(ctx, move |py, obj, pyctx| {
+                let pf = Py::new(
+                    py,
+                    PyFill {
+                        symbol: v.0,
+                        side: v.1,
+                        qty: v.2,
+                        price: v.3,
+                        client_order_id: v.4,
+                    },
+                )?;
+                obj.call_method1("on_order_filled", (pf, pyctx)).map(|_| ())
+            });
+        }
+
+        fn on_order_event(&mut self, e: &OrderEvent, ctx: &mut StrategyContext) {
+            let (kind, reason) = order_event_kind(e);
+            self.run_handler(ctx, move |py, obj, pyctx| {
+                let pe = Py::new(py, PyOrderEvent { kind, reason })?;
+                obj.call_method1("on_order_event", (pe, pyctx)).map(|_| ())
+            });
+        }
+
+        fn on_timer(&mut self, ev: &qv_core::TimerEvent, ctx: &mut StrategyContext) {
+            let v = (ev.name.clone(), ev.ts_event.as_u64());
+            self.run_handler(ctx, move |py, obj, pyctx| {
+                let pt = Py::new(py, PyTimer { name: v.0, ts: v.1 })?;
+                obj.call_method1("on_timer", (pt, pyctx)).map(|_| ())
+            });
+        }
+
+        fn on_stop(&mut self, ctx: &mut StrategyContext) {
+            self.run_handler(ctx, |_py, obj, pyctx| {
+                obj.call_method1("on_stop", (pyctx,)).map(|_| ())
+            });
         }
     }
 
@@ -323,6 +576,9 @@ mod imp {
             obj: strategy,
             instruments: metas,
             default_symbol,
+            // MUST match the StrategyId below: the adapter pre-computes client_order_ids as
+            // `{strategy_id}-{seq}` so a handler can cancel an order it just submitted.
+            strategy_id: "py-strategy".to_string(),
         };
         let mut kernel = BacktestKernel::build(
             cfg,
@@ -464,6 +720,11 @@ mod imp {
         m.add_class::<PyBar>()?;
         m.add_class::<PyCtx>()?;
         m.add_class::<PyResultObj>()?;
+        m.add_class::<PyFill>()?;
+        m.add_class::<PyOrderEvent>()?;
+        m.add_class::<PyTimer>()?;
+        m.add_class::<PyQuote>()?;
+        m.add_class::<PyTrade>()?;
         m.add_function(wrap_pyfunction!(run_backtest, m)?)?;
         m.add_function(wrap_pyfunction!(run_backtest_multi, m)?)?;
         m.add("__doc__", "VeloxQuant Rust core exposed to Python (PyO3).")?;
