@@ -314,8 +314,9 @@ mod imp {
         Submit {
             side: String,
             qty: f64,
-            limit_px: Option<f64>, // Some = limit
-            trigger: Option<f64>,  // Some = stop-market (overrides limit_px)
+            limit_px: Option<f64>,     // Some = limit
+            trigger: Option<f64>,      // Some = stop (+ limit_px = stop-limit)
+            trail_offset: Option<f64>, // Some = trailing stop (overrides trigger/limit_px)
             symbol: Option<String>,
         },
         Cancel {
@@ -390,6 +391,7 @@ mod imp {
                 qty,
                 limit_px: None,
                 trigger: None,
+                trail_offset: None,
                 symbol,
             });
             Ok(self.next_coid())
@@ -413,6 +415,7 @@ mod imp {
                 qty,
                 limit_px: Some(price),
                 trigger: None,
+                trail_offset: None,
                 symbol,
             });
             Ok(self.next_coid())
@@ -436,6 +439,7 @@ mod imp {
                 qty,
                 limit_px: None,
                 trigger: Some(trigger),
+                trail_offset: None,
                 symbol,
             });
             Ok(self.next_coid())
@@ -461,6 +465,34 @@ mod imp {
                 qty,
                 limit_px: Some(price),
                 trigger: Some(trigger),
+                trail_offset: None,
+                symbol,
+            });
+            Ok(self.next_coid())
+        }
+        /// Queue a TRAILING stop-market order `offset` away from the current mark; returns its
+        /// client_order_id. The stop trails the favorable extreme (the sim sets the initial level to
+        /// `mark ∓ offset` and ratchets it). Raises `ValueError` for bad symbol/qty/offset.
+        #[pyo3(signature = (side, qty, offset, symbol=None))]
+        fn submit_trailing(
+            &self,
+            side: &str,
+            qty: f64,
+            offset: f64,
+            symbol: Option<String>,
+        ) -> PyResult<String> {
+            let (_sym, pp, sp) = self.resolve(&symbol)?;
+            Quantity::from_f64(qty, sp).map_err(vexc)?;
+            let off = Price::from_f64(offset, pp).map_err(vexc)?;
+            if off.raw() <= 0 {
+                return Err(vexc("trailing stop offset must be > 0"));
+            }
+            self.outbox.borrow_mut().push(PyIntent::Submit {
+                side: side.to_string(),
+                qty,
+                limit_px: None,
+                trigger: None,
+                trail_offset: Some(offset),
                 symbol,
             });
             Ok(self.next_coid())
@@ -610,6 +642,7 @@ mod imp {
                         qty,
                         limit_px,
                         trigger,
+                        trail_offset,
                         symbol,
                     } => {
                         let sym = symbol.unwrap_or_else(|| self.default_symbol.clone());
@@ -624,6 +657,13 @@ mod imp {
                         let Ok(q) = Quantity::from_f64(qty, meta.size_precision) else {
                             continue;
                         };
+                        // A trailing stop is its own thing (offset, not an absolute trigger).
+                        if let Some(off) = trail_offset {
+                            if let Ok(o) = Price::from_f64(off, meta.price_precision) {
+                                ctx.submit_trailing_stop(meta.iid.clone(), side, q, o);
+                            }
+                            continue;
+                        }
                         match (trigger, limit_px) {
                             (Some(trig), Some(px)) => {
                                 // Stop-limit: trigger + limit price.

@@ -80,6 +80,13 @@ impl DelayedEventQueue {
     }
 }
 
+/// Trailing-stop bookkeeping: the trailing distance and the favorable extreme seen so far. The
+/// order's `trigger` is `extreme ∓ offset`, ratcheted in the favorable direction every bar.
+struct TrailState {
+    offset: Price,
+    extreme: Price,
+}
+
 struct Resting {
     order: Order,
     /// Quantity still to fill (decremented by each partial fill; the order is removed at zero).
@@ -91,6 +98,8 @@ struct Resting {
     /// The venue id allocated when the order was accepted — STABLE across partial fills (never the
     /// Vec index, which shifts as other orders are removed).
     venue_order_id: VenueOrderId,
+    /// `Some` only for a `TrailingStopMarket`: its trailing distance + high/low-water mark.
+    trail: Option<TrailState>,
 }
 
 struct SimState {
@@ -265,18 +274,46 @@ impl SimulatedExecutionClient {
                         remaining,
                         queue_ahead: None,
                         venue_order_id,
+                        trail: None,
                     });
                 }
             }
         } else {
-            // Passive limit: rest with its full quantity; partial fills decrement `remaining`. The
-            // queue-ahead is seeded lazily on the first crossing bar (no volume is in scope here).
+            // Passive resting order (limit / stop / trailing stop). Partial fills decrement
+            // `remaining`; the queue-ahead is seeded lazily on the first crossing bar.
             let remaining = order.quantity;
+            // A trailing stop seeds its high/low-water mark to the current mark and its trailing
+            // distance to `|mark - trigger|` (the submit set `trigger = mark ∓ offset`). If there's
+            // no mark yet it rests inert until one exists.
+            let trail = if order.order_type == OrderType::TrailingStopMarket {
+                match (
+                    self.cache.borrow().mark(&order.instrument_id),
+                    order.trigger,
+                ) {
+                    (Some(mark), Some(trigger)) => {
+                        let offset = match order.side {
+                            OrderSide::Sell => mark.checked_sub(trigger),
+                            OrderSide::Buy => trigger.checked_sub(mark),
+                        };
+                        offset
+                            .ok()
+                            .filter(|o| o.raw() > 0)
+                            .map(|offset| TrailState {
+                                offset,
+                                extreme: mark,
+                            })
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
             state.resting.push(Resting {
                 order,
                 remaining,
                 queue_ahead: None,
                 venue_order_id,
+                trail,
             });
         }
     }
@@ -348,17 +385,24 @@ impl SimulatedExecutionClient {
         )> = Vec::new();
         // StopLimit orders whose trigger crossed this bar: convert them to resting limits.
         let mut to_activate: Vec<usize> = Vec::new();
+        // TrailingStopMarket ratchets: (resting index, new extreme, new trigger) to write back.
+        let mut to_trail: Vec<(usize, Price, Price)> = Vec::new();
         for (i, r) in state.resting.iter().enumerate() {
             if r.order.instrument_id != id {
                 continue;
             }
             // Stop orders rest until the market crosses their trigger.
-            //  * StopMarket -> takes liquidity at the market (taker; ticks fill the full remaining,
-            //    bars are volume-capped).
-            //  * StopLimit  -> CONVERTS to a passive LIMIT at its price (filled from the next bar by
+            //  * StopMarket / TrailingStopMarket -> take liquidity at the market (taker; ticks fill
+            //    the full remaining, bars are volume-capped). A trailing stop's trigger first
+            //    RATCHETS toward the favorable extreme each bar it is not yet hit.
+            //  * StopLimit -> CONVERTS to a passive LIMIT at its price (filled from the next bar by
             //    the limit logic, so slippage is bounded by the limit).
-            // Other unmodeled stop types rest inert for now.
             if !matches!(r.order.order_type, OrderType::Market | OrderType::Limit) {
+                // A trailing stop with no trail state (no offset/mark at submit) is misconfigured ->
+                // rest INERT rather than degrade into a static stop at its seed trigger.
+                if r.order.order_type == OrderType::TrailingStopMarket && r.trail.is_none() {
+                    continue;
+                }
                 let Some(trigger) = r.order.trigger else {
                     continue;
                 };
@@ -366,7 +410,11 @@ impl SimulatedExecutionClient {
                     OrderSide::Buy => high >= trigger, // price rose to the stop
                     OrderSide::Sell => low <= trigger, // price fell to the stop
                 };
-                if triggered && r.order.order_type == OrderType::StopMarket {
+                let is_market_stop = matches!(
+                    r.order.order_type,
+                    OrderType::StopMarket | OrderType::TrailingStopMarket
+                );
+                if triggered && is_market_stop {
                     let fill_qty = match bar_volume {
                         Some(v) => self.model.fillable_qty(r.remaining, v, &*inst),
                         None => r.remaining,
@@ -395,6 +443,22 @@ impl SimulatedExecutionClient {
                 } else if triggered && r.order.order_type == OrderType::StopLimit {
                     // Activate: it becomes a resting Limit (handled by the limit branch next bar).
                     to_activate.push(i);
+                } else if !triggered && r.order.order_type == OrderType::TrailingStopMarket {
+                    // Not hit: ratchet the trail toward the favorable extreme (monotonic — the
+                    // trigger only tightens, never loosens), for next bar.
+                    if let Some(t) = &r.trail {
+                        let new_extreme = match r.order.side {
+                            OrderSide::Sell => t.extreme.max(high),
+                            OrderSide::Buy => t.extreme.min(low),
+                        };
+                        let new_trigger = match r.order.side {
+                            OrderSide::Sell => new_extreme.checked_sub(t.offset),
+                            OrderSide::Buy => new_extreme.checked_add(t.offset),
+                        };
+                        if let Ok(nt) = new_trigger {
+                            to_trail.push((i, new_extreme, nt));
+                        }
+                    }
                 }
                 continue;
             }
@@ -483,6 +547,13 @@ impl SimulatedExecutionClient {
         // Activate triggered StopLimit orders -> they rest as plain Limits from here on.
         for &i in &to_activate {
             state.resting[i].order.order_type = OrderType::Limit;
+        }
+        // Write back trailing-stop ratchets (new high/low-water mark + tightened trigger).
+        for (i, extreme, trigger) in to_trail {
+            if let Some(t) = state.resting[i].trail.as_mut() {
+                t.extreme = extreme;
+            }
+            state.resting[i].order.trigger = Some(trigger);
         }
 
         // Phase 2: schedule fills, decrement `remaining`, and write back queue-ahead (mutable).
@@ -1101,6 +1172,76 @@ mod tests {
             fills.is_empty(),
             "sell limit @48900 never crossed -> no fill"
         );
+    }
+
+    fn trailing_sim() -> (Rc<HistoricalClock>, SimulatedExecutionClient) {
+        let (clock, cache, id, _inst) = setup(); // mark 50000
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            Box::new(DefaultBrokerageModel::default()),
+        );
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        // SELL trailing stop with a 1000 offset: initial stop = mark(50000) - 1000 = 49000.
+        let order = factory.trailing_stop(
+            id,
+            OrderSide::Sell,
+            Quantity::from_decimal(dec!(1), 3).unwrap(),
+            Price::from_decimal(dec!(49000), 2).unwrap(),
+            UnixNanos(0),
+        );
+        sim.on_submit(order);
+        let _ = sim.drain_due(UnixNanos(10_000_000));
+        (clock, sim)
+    }
+
+    #[test]
+    fn trailing_stop_ratchets_up_then_fills_on_pullback() {
+        let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let (clock, sim) = trailing_sim();
+        // Bar 1: price runs up to 52000 -> not hit; the stop ratchets to 52000-1000 = 51000.
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "51000",
+            "52000",
+            "51500",
+            "10",
+            1_000_000_000,
+        ));
+        assert!(drain_fills(sim.drain_due(UnixNanos(1_500_000_000))).is_empty());
+        // Bar 2: pulls back to 50800, below the ratcheted 51000 stop -> fills near 51000.
+        clock.advance_to(UnixNanos(2_000_000_000));
+        sim.on_market(&bar_vol(
+            &id,
+            "50800",
+            "51500",
+            "51000",
+            "10",
+            2_000_000_000,
+        ));
+        let fills = drain_fills(sim.drain_due(UnixNanos(2_500_000_000)));
+        assert_eq!(fills.len(), 1);
+        // The trail locked in well above the 50000 entry (and far above the initial 49000 stop).
+        assert!(fills[0].0 > Price::from_decimal(dec!(50000), 2).unwrap());
+    }
+
+    #[test]
+    fn trailing_stop_does_not_fire_while_price_keeps_rising() {
+        let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let (clock, sim) = trailing_sim();
+        // Each bar makes a higher low -> the stop keeps trailing below the market, never hit.
+        for (n, (lo, hi, c)) in [("51000", "52000", "51500"), ("52000", "53000", "52500")]
+            .into_iter()
+            .enumerate()
+        {
+            let t = (n as u64 + 1) * 1_000_000_000;
+            clock.advance_to(UnixNanos(t));
+            sim.on_market(&bar_vol(&id, lo, hi, c, "10", t));
+            assert!(drain_fills(sim.drain_due(UnixNanos(t + 500_000_000))).is_empty());
+        }
     }
 
     #[test]
