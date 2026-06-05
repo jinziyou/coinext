@@ -14,7 +14,7 @@
 mod imp {
     use pyo3::prelude::*;
     use qv_core::{Currency, Money, Price, Quantity, UnixNanos};
-    use qv_indicators::{Atr, Ema, Indicator, Rsi, Sma};
+    use qv_indicators::{Atr, Bollinger, Ema, Indicator, Macd, Rsi, Sma, Vwap};
     use qv_kernel::{BacktestConfig, BacktestKernel};
     use qv_model::{
         AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, Instrument,
@@ -222,6 +222,89 @@ mod imp {
         }
         fn is_ready(&self) -> bool {
             self.inner.value().is_some()
+        }
+    }
+
+    /// MACD; `value()` is `(macd, signal, histogram)` once warm.
+    #[pyclass(name = "Macd")]
+    pub struct PyMacd {
+        inner: Macd,
+    }
+    #[pymethods]
+    impl PyMacd {
+        #[new]
+        #[pyo3(signature = (fast=12, slow=26, signal=9))]
+        fn new(fast: usize, slow: usize, signal: usize) -> PyResult<Self> {
+            if fast == 0 || slow == 0 || signal == 0 {
+                return Err(vexc("MACD periods must be > 0"));
+            }
+            Ok(PyMacd {
+                inner: Macd::new(fast, slow, signal),
+            })
+        }
+        fn update(&mut self, value: f64) {
+            self.inner.update(value);
+        }
+        fn value(&self) -> Option<(f64, f64, f64)> {
+            self.inner.value()
+        }
+        fn is_ready(&self) -> bool {
+            self.inner.is_ready()
+        }
+    }
+
+    /// Bollinger Bands; `value()` is `(lower, mid, upper)` once warm.
+    #[pyclass(name = "Bollinger")]
+    pub struct PyBollinger {
+        inner: Bollinger,
+    }
+    #[pymethods]
+    impl PyBollinger {
+        #[new]
+        #[pyo3(signature = (period=20, k=2.0))]
+        fn new(period: usize, k: f64) -> PyResult<Self> {
+            if period == 0 {
+                return Err(vexc("Bollinger period must be > 0"));
+            }
+            Ok(PyBollinger {
+                inner: Bollinger::new(period, k),
+            })
+        }
+        fn update(&mut self, value: f64) {
+            self.inner.update(value);
+        }
+        fn value(&self) -> Option<(f64, f64, f64)> {
+            self.inner.value()
+        }
+        fn is_ready(&self) -> bool {
+            self.inner.is_ready()
+        }
+    }
+
+    /// Rolling VWAP over `period` bars. Feed `update(price, volume)`.
+    #[pyclass(name = "Vwap")]
+    pub struct PyVwap {
+        inner: Vwap,
+    }
+    #[pymethods]
+    impl PyVwap {
+        #[new]
+        fn new(period: usize) -> PyResult<Self> {
+            if period == 0 {
+                return Err(vexc("VWAP period must be > 0"));
+            }
+            Ok(PyVwap {
+                inner: Vwap::new(period),
+            })
+        }
+        fn update(&mut self, price: f64, volume: f64) {
+            self.inner.update(price, volume);
+        }
+        fn value(&self) -> Option<f64> {
+            self.inner.value()
+        }
+        fn is_ready(&self) -> bool {
+            self.inner.is_ready()
         }
     }
 
@@ -896,6 +979,9 @@ mod imp {
         m.add_class::<PyEma>()?;
         m.add_class::<PyRsi>()?;
         m.add_class::<PyAtr>()?;
+        m.add_class::<PyMacd>()?;
+        m.add_class::<PyBollinger>()?;
+        m.add_class::<PyVwap>()?;
         m.add_function(wrap_pyfunction!(run_backtest, m)?)?;
         m.add_function(wrap_pyfunction!(run_backtest_multi, m)?)?;
         m.add("__doc__", "VeloxQuant Rust core exposed to Python (PyO3).")?;

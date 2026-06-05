@@ -17,7 +17,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 pytest.importorskip("qv_py", reason="build qv_py: uvx maturin develop --features python")
 
-from qv_indicators import Atr, Ema, Rsi, Sma  # noqa: E402
+from qv_indicators import Atr, Bollinger, Ema, Macd, Resampler, Rsi, Sma, Vwap  # noqa: E402
 
 
 def test_sma_window_matches_rust():
@@ -63,10 +63,81 @@ def test_atr_update_hlc():
     assert a.value() == pytest.approx(2.0)
 
 
-@pytest.mark.parametrize("ctor", [Sma, Ema, Rsi, Atr])
+def test_macd_histogram_consistent():
+    m = Macd(3, 6, 4)
+    assert m.value() is None
+    for i in range(1, 31):
+        m.update(float(i))
+    macd, signal, hist = m.value()
+    assert hist == pytest.approx(macd - signal)
+    assert macd > 0.0  # rising series -> fast EMA leads
+
+
+def test_bollinger_known_stddev():
+    b = Bollinger(8, 1.0)  # 1-sigma
+    for v in [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]:  # mean 5, population sd 2
+        b.update(v)
+    lo, mid, up = b.value()
+    assert mid == pytest.approx(5.0)
+    assert lo == pytest.approx(3.0) and up == pytest.approx(7.0)
+
+
+def test_vwap_weights_by_volume():
+    v = Vwap(2)
+    assert v.value() is None
+    v.update(100.0, 1.0)
+    v.update(110.0, 3.0)  # 430 / 4
+    assert v.value() == pytest.approx(107.5)
+
+
+@pytest.mark.parametrize("ctor", [Sma, Ema, Rsi, Atr, Macd, Bollinger, Vwap])
 def test_period_must_be_positive(ctor):
     with pytest.raises(ValueError):
         ctor(0)
+
+
+# --------------------------------------------------------------------------------------------------
+# Multi-timeframe resampler.
+# --------------------------------------------------------------------------------------------------
+def test_resampler_aggregates_ohlcv():
+    r = Resampler(3)
+    assert r.update(1, 10.0, 12.0, 9.0, 11.0, 5.0) is None
+    assert r.update(2, 11.0, 13.0, 10.0, 12.0, 4.0) is None
+    bar = r.update(3, 12.0, 12.5, 8.0, 9.0, 6.0)  # completes the 3-bar window
+    # ts = last; open = first; high = max; low = min; close = last; volume = sum.
+    assert bar == (3, 10.0, 13.0, 8.0, 9.0, 15.0)
+    # The next window starts fresh.
+    assert r.update(4, 9.0, 9.5, 8.5, 9.2, 1.0) is None
+
+
+def test_resampler_rejects_bad_factor():
+    with pytest.raises(ValueError):
+        Resampler(0)
+
+
+def test_multi_timeframe_strategy_runs_through_kernel():
+    import qv_backtest
+    from qv_strategy import Strategy
+
+    class FiveMinSma(Strategy):
+        def __init__(self):
+            self.tf = Resampler(5)
+            self.sma = Sma(3)
+            self.bought = False
+
+        def on_bar(self, bar, ctx):
+            coarse = self.tf.update(bar.ts, bar.open, bar.high, bar.low, bar.close, bar.volume)
+            if coarse is None:
+                return
+            self.sma.update(coarse[4])  # 5-bar (coarse) close
+            if self.sma.is_ready() and coarse[4] > self.sma.value() and not self.bought:
+                ctx.submit_market("buy", 0.5)
+                self.bought = True
+
+    bars = qv_backtest.synthetic_ohlc_bars(200)
+    res = qv_backtest.run(FiveMinSma(), bars=bars)
+    assert res.orders_denied == 0
+    assert res.orders_submitted <= 1  # buys once at most
 
 
 def test_rsi_reversion_strategy_trades_through_the_kernel():
