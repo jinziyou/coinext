@@ -244,9 +244,15 @@ impl BacktestKernel {
                 self.sim.on_market(&ev);
                 self.dispatch_market(&ev);
                 self.process_outbox();
-                let ts = frontier.as_u64();
-                let eq = self.equity();
-                self.result.equity_curve.push((ts, eq));
+                // Sample the equity curve at BAR cadence only. Quote/trade ticks (when fed) move the
+                // mark intrabar but must not add sub-bar (often same-timestamp, zero-return) points
+                // that would distort the per-bar annualized metrics. Bar-only backtests are
+                // unaffected (every market event is a bar).
+                if matches!(ev, MarketEvent::Bar(_)) {
+                    let ts = frontier.as_u64();
+                    let eq = self.equity();
+                    self.result.equity_curve.push((ts, eq));
+                }
             }
         }
 

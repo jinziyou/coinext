@@ -234,6 +234,31 @@ def fetch_binance_klines(
     return [(int(k[6]) * 1_000_000, float(k[4])) for k in raw]
 
 
+def fetch_binance_agg_trades(
+    symbol: str = "BTCUSDT", limit: int = 1000, *, timeout: float = 15.0
+) -> list[tuple[int, float, float, int]]:
+    """Fetch REAL recent Binance aggregated trades (public REST, no key) as
+    ``(ts_ns, price, size, aggressor)`` with aggressor ``+1`` buy / ``-1`` sell.
+
+    Genuine per-print microstructure (each row is a real trade), suitable for ``trades=`` in
+    ``qv_backtest.run`` so ``on_trade`` fires on real prints. ``aggTrades`` are dense (many per
+    second), so ``limit`` (max 1000) covers a short window — enough to exercise trade-driven logic.
+    The Binance ``m`` flag is *buyer-is-maker*; the taker aggressor is therefore the seller when
+    ``m`` is true (-> -1) and the buyer otherwise (-> +1).
+    """
+    import json
+    import urllib.request
+
+    url = f"https://api.binance.com/api/v3/aggTrades?symbol={symbol}&limit={int(limit)}"
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 (trusted host)
+        raw = json.loads(resp.read().decode("utf-8"))
+    # Each: {"p": price, "q": qty, "T": timestamp(ms), "m": buyerIsMaker, ...}.
+    return [
+        (int(t["T"]) * 1_000_000, float(t["p"]), float(t["q"]), (-1 if t["m"] else 1))
+        for t in raw
+    ]
+
+
 __all__ = [
     "BarSpec",
     "CatalogEntry",
@@ -242,6 +267,7 @@ __all__ = [
     "DataProvider",
     "load_bars",
     "fetch_binance_klines",
+    "fetch_binance_agg_trades",
     # Parquet lake (require pyarrow)
     "DataLake",
     "SeriesCoverage",

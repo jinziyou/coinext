@@ -63,6 +63,8 @@ def run(
     maker_fee: float = 0.0002,
     taker_fee: float = 0.0004,
     queue_ahead_factor: float = 0.0,
+    quotes: list[tuple] | None = None,
+    trades: list[tuple] | None = None,
 ) -> Any:
     """Run ``strategy`` over ``bars``; return the BacktestResult.
 
@@ -72,6 +74,12 @@ def run(
     fills (a large resting order fills over several bars). ``queue_ahead_factor`` (>0) enables
     limit-order **queue position**: a passive order waits behind ~that × bar volume at a price the
     market only TOUCHES (a price trading THROUGH the level still fills).
+
+    ``quotes`` (``(ts, bid, ask, bid_size, ask_size)``) and ``trades`` (``(ts, price, size,
+    aggressor[+1 buy/-1 sell])``) are optional tick streams interleaved with the bars by timestamp;
+    they fire ``on_quote`` / ``on_trade`` and also drive the mark + resting-limit fills against tick
+    prices. Synthesize them from bars (:func:`synth_quotes`, :func:`synth_trades`) or feed real ones
+    (``qv_data.fetch_binance_agg_trades``).
     """
     return qv_py.run_backtest(
         strategy,
@@ -84,6 +92,11 @@ def run(
         maker_fee=maker_fee,
         taker_fee=taker_fee,
         queue_ahead_factor=queue_ahead_factor,
+        quotes=[
+            (int(ts), float(b), float(a), float(bs), float(az))
+            for ts, b, a, bs, az in (quotes or [])
+        ],
+        trades=[(int(ts), float(p), float(s), int(side)) for ts, p, s, side in (trades or [])],
     )
 
 
@@ -131,6 +144,29 @@ def run_multi(
     return qv_py.run_backtest_multi(
         strategy, venue, starting_balance, specs, tagged, queue_ahead_factor=queue_ahead_factor
     )
+
+
+def synth_quotes(bars: list[tuple], *, spread_bps: float = 2.0) -> list[tuple]:
+    """Synthesize a top-of-book quote per bar: bid/ask are the close ± half a ``spread_bps`` spread,
+    sizes are half the bar volume each. A coarse stand-in for real bookTicker data (which Binance
+    does not serve via REST history) — enough to exercise ``on_quote`` and quote-driven logic.
+    """
+    out: list[tuple] = []
+    for ts, _o, _h, _lo, c, vol in _to_ohlcv(bars):
+        half = c * spread_bps / 2.0 / 1e4
+        out.append((int(ts), c - half, c + half, vol / 2.0, vol / 2.0))
+    return out
+
+
+def synth_trades(bars: list[tuple]) -> list[tuple]:
+    """Synthesize one trade print per bar at the close, sized by bar volume, with the aggressor
+    inferred from the bar direction (up bar -> buy-aggressor). A coarse stand-in for real aggTrades;
+    use ``qv_data.fetch_binance_agg_trades`` for genuine per-print microstructure.
+    """
+    out: list[tuple] = []
+    for ts, o, _h, _lo, c, vol in _to_ohlcv(bars):
+        out.append((int(ts), c, vol, 1 if c >= o else -1))
+    return out
 
 
 def synthetic_bars(
@@ -184,4 +220,11 @@ def synthetic_ohlc_bars(
     return bars
 
 
-__all__ = ["run", "run_multi", "synthetic_bars", "synthetic_ohlc_bars"]
+__all__ = [
+    "run",
+    "run_multi",
+    "synth_quotes",
+    "synth_trades",
+    "synthetic_bars",
+    "synthetic_ohlc_bars",
+]
