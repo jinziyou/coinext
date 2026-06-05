@@ -63,9 +63,10 @@ pub struct RunResult {
     /// (ts_ns, equity) sampled once per processed bar/quote — the input to the tear sheet.
     pub equity_curve: Vec<(u64, f64)>,
     pub fills: u64,
-    /// Per-fill log `(ts_ns, side[+1 buy/-1 sell], qty, price)` — the parity gate compares these
-    /// against a sandbox/testnet session to bound realized-vs-simulated fill-price deviation.
-    pub fills_log: Vec<(u64, i8, f64, f64)>,
+    /// Per-fill log `(ts_ns, symbol, side[+1 buy/-1 sell], qty, price)`. The `symbol` lets analytics
+    /// reconstruct round-trip trades PER instrument (FIFO must not match across instruments); the
+    /// parity gate compares these to bound realized-vs-simulated fill-price deviation.
+    pub fills_log: Vec<(u64, String, i8, f64, f64)>,
     pub orders_submitted: u64,
     pub orders_denied: u64,
     pub starting_equity: f64,
@@ -213,6 +214,7 @@ impl BacktestKernel {
                         self.result.fills += 1;
                         self.result.fills_log.push((
                             f.ts_event.as_u64(),
+                            f.instrument_id.symbol.as_str().to_string(),
                             f.side.sign() as i8,
                             f.last_qty.as_f64(),
                             f.last_px.as_f64(),

@@ -198,7 +198,7 @@ def _cmd_testnet_gate(
     print(f"[1/4] fetched {len(bars)} real {symbol} 1m bars")
 
     bt = qv_backtest.run(SmaCross(fast=fast, slow=slow, qty=qty), symbol=symbol, bars=bars)
-    bt_fills = [(int(ts), int(s), float(q), float(px)) for ts, s, q, px in bt.fills_log]
+    bt_fills = [(int(ts), int(s), float(q), float(px)) for ts, _sym, s, q, px in bt.fills_log]
     print(f"[2/4] backtest produced {len(bt_fills)} fill(s)")
     if not bt_fills:
         print("no trades generated — widen --n or adjust --fast/--slow")

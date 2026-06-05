@@ -131,7 +131,7 @@ def screen_biases(result, *, metrics=None, trade_stats=None, bars=None) -> BiasR
     from .trades import stats_from_result
 
     equity = [(int(ts), float(eq)) for ts, eq in result.equity_curve]
-    fills = [(int(ts), int(s), float(q), float(p)) for ts, s, q, p in result.fills_log]
+    fills = [(int(ts), int(s), float(q), float(p)) for ts, _sym, s, q, p in result.fills_log]
     if metrics is None:
         metrics = compute_metrics(equity)
     if trade_stats is None:

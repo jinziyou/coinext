@@ -53,11 +53,13 @@ class SessionResult:
         """Build a :class:`SessionResult` from a ``qv_py`` ``BacktestResult``.
 
         ``BacktestResult`` exposes ``equity_curve`` (``(ts_ns, equity)``) and ``fills_log``
-        (``(ts_ns, side, qty, px)``); both are normalized to plain Python lists/tuples here.
+        (``(ts_ns, symbol, side, qty, px)``); both are normalized here. The parity gate is
+        single-venue, so the per-fill ``symbol`` is dropped (matching is on ts-bucket + side).
         """
         equity = [(int(ts), float(eq)) for ts, eq in result.equity_curve]
         fills = [
-            (int(ts), int(side), float(qty), float(px)) for ts, side, qty, px in result.fills_log
+            (int(ts), int(side), float(qty), float(px))
+            for ts, _sym, side, qty, px in result.fills_log
         ]
         return cls(equity_curve=equity, fills=fills)
 

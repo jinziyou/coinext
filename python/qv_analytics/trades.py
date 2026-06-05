@@ -1,6 +1,6 @@
 """qv_analytics.trades — round-trip trade reconstruction and trade-level statistics.
 
-A backtest's ``fills_log`` (``(ts_ns, side, qty, px)`` with ``side`` ``+1`` buy / ``-1`` sell) is a
+A backtest's ``fills_log`` (``(ts_ns, symbol, side, qty, px)``; ``side`` +1 buy / -1 sell) is a
 flat stream of executions. Most trade analytics (win rate, profit factor, average trade) are defined
 over *round-trip trades* — a position opened and later closed — not individual fills. This module
 folds the fill stream into closed :class:`Trade` round-trips using **FIFO** matching (the first lot
@@ -205,21 +205,27 @@ def compute_trade_stats(
     )
 
 
-def _exposure(fills: list[Fill], equity_curve: list[tuple[int, float]]) -> float:
-    """Fraction of bars carrying a non-flat net position (time-in-market).
+def _exposure(by_symbol: dict[str, list[Fill]], equity_curve: list[tuple[int, float]]) -> float:
+    """Fraction of bars with a non-flat position in ANY instrument (time-in-market).
 
-    Walks the bar timestamps in ``equity_curve``, applying every fill at or before each bar's
-    timestamp, and counts bars where the running net position is non-zero.
+    Walks the bar timestamps in ``equity_curve``, tracking each symbol's running net position from
+    its own fill stream, and counts a bar as "in market" if any symbol is non-flat. Per-symbol
+    netting is essential for multi-instrument runs (a BTC long and an ETH long are both exposure).
     """
     if not equity_curve:
         return 0.0
-    ordered = sorted(fills, key=lambda f: f[0])
-    i, net, in_market = 0, 0.0, 0
+    streams = {sym: sorted(f, key=lambda x: x[0]) for sym, f in by_symbol.items()}
+    idx = {sym: 0 for sym in streams}
+    net = {sym: 0.0 for sym in streams}
+    in_market = 0
     for ts, _eq in equity_curve:
-        while i < len(ordered) and ordered[i][0] <= ts:
-            net += ordered[i][1] * ordered[i][2]  # side * qty
-            i += 1
-        if abs(net) > _QTY_EPS:
+        for sym, fills in streams.items():
+            i = idx[sym]
+            while i < len(fills) and fills[i][0] <= ts:
+                net[sym] += fills[i][1] * fills[i][2]  # side * qty
+                i += 1
+            idx[sym] = i
+        if any(abs(n) > _QTY_EPS for n in net.values()):
             in_market += 1
     return in_market / len(equity_curve)
 
@@ -227,17 +233,24 @@ def _exposure(fills: list[Fill], equity_curve: list[tuple[int, float]]) -> float
 def stats_from_result(result, *, fee_rate: float = 0.0) -> TradeStats:
     """Compute :class:`TradeStats` directly from a ``qv_py`` ``BacktestResult``.
 
-    Reconstructs trades from ``result.fills_log``, then layers on ``exposure`` (from the
-    equity-curve bar grid) and ``turnover`` (gross traded notional / ``starting_equity``).
+    Round-trip trades are reconstructed **per instrument** (FIFO must never match a BTC buy against
+    an ETH sell), then aggregated; ``exposure`` (per-symbol time-in-market) and ``turnover`` (gross
+    traded notional / ``starting_equity``) are layered on. Single-instrument runs are the one-group
+    case. ``result.fills_log`` rows are ``(ts, symbol, side, qty, px)``.
     """
-    fills: list[Fill] = [
-        (int(ts), int(side), float(qty), float(px)) for ts, side, qty, px in result.fills_log
-    ]
-    trades = reconstruct_trades(fills, fee_rate=fee_rate)
+    by_symbol: dict[str, list[Fill]] = {}
+    gross_notional = 0.0
+    for ts, sym, side, qty, px in result.fills_log:
+        by_symbol.setdefault(str(sym), []).append((int(ts), int(side), float(qty), float(px)))
+        gross_notional += abs(float(qty)) * float(px)
+
+    trades: list[Trade] = []
+    for fills in by_symbol.values():
+        trades.extend(reconstruct_trades(fills, fee_rate=fee_rate))
+
     equity = [(int(ts), float(eq)) for ts, eq in result.equity_curve]
-    exposure = _exposure(fills, equity)
+    exposure = _exposure(by_symbol, equity)
     start = float(result.starting_equity)
-    gross_notional = sum(abs(qty) * px for _ts, _side, qty, px in fills)
     turnover = (gross_notional / start) if start else 0.0
     return compute_trade_stats(trades, exposure=exposure, turnover=turnover)
 

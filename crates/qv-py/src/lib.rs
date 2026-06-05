@@ -119,9 +119,10 @@ mod imp {
         pub realized_pnl: f64,
         #[pyo3(get)]
         pub equity_curve: Vec<(u64, f64)>,
-        /// Per-fill log: `(ts_ns, side[+1 buy/-1 sell], qty, price)`. Used by the parity gate.
+        /// Per-fill log: `(ts_ns, symbol, side[+1 buy/-1 sell], qty, price)`. The symbol lets
+        /// analytics reconstruct trades per instrument; the parity gate ignores it (single-venue).
         #[pyo3(get)]
-        pub fills_log: Vec<(u64, i8, f64, f64)>,
+        pub fills_log: Vec<(u64, String, i8, f64, f64)>,
     }
 
     /// Per-instrument data the adapter needs to translate a Python intent into a typed Rust order.
