@@ -440,6 +440,31 @@ mod imp {
             });
             Ok(self.next_coid())
         }
+        /// Queue a stop-LIMIT order: rests until the market crosses `trigger`, then becomes a resting
+        /// limit at `price` (fills only at `price` or better — bounded slippage vs a plain stop).
+        /// Returns its client_order_id. Raises `ValueError` for bad symbol/qty/trigger/price.
+        #[pyo3(signature = (side, qty, trigger, price, symbol=None))]
+        fn submit_stop_limit(
+            &self,
+            side: &str,
+            qty: f64,
+            trigger: f64,
+            price: f64,
+            symbol: Option<String>,
+        ) -> PyResult<String> {
+            let (_sym, pp, sp) = self.resolve(&symbol)?;
+            Quantity::from_f64(qty, sp).map_err(vexc)?;
+            Price::from_f64(trigger, pp).map_err(vexc)?;
+            Price::from_f64(price, pp).map_err(vexc)?;
+            self.outbox.borrow_mut().push(PyIntent::Submit {
+                side: side.to_string(),
+                qty,
+                limit_px: Some(price),
+                trigger: Some(trigger),
+                symbol,
+            });
+            Ok(self.next_coid())
+        }
         /// Cancel a resting order by the client_order_id returned from `submit_market`/`submit_limit`
         /// (or seen on a `Fill`/`OrderEvent`).
         fn cancel(&self, client_order_id: String) {
@@ -600,8 +625,17 @@ mod imp {
                             continue;
                         };
                         match (trigger, limit_px) {
-                            (Some(trig), _) => {
-                                // Stop-market (trigger overrides any limit price).
+                            (Some(trig), Some(px)) => {
+                                // Stop-limit: trigger + limit price.
+                                if let (Ok(t), Ok(p)) = (
+                                    Price::from_f64(trig, meta.price_precision),
+                                    Price::from_f64(px, meta.price_precision),
+                                ) {
+                                    ctx.submit_stop_limit(meta.iid.clone(), side, q, t, p);
+                                }
+                            }
+                            (Some(trig), None) => {
+                                // Stop-market.
                                 if let Ok(t) = Price::from_f64(trig, meta.price_precision) {
                                     ctx.submit_stop_market(meta.iid.clone(), side, q, t);
                                 }

@@ -186,6 +186,35 @@ def test_stop_market_fires_on_breakout():
     assert never.fills == 0
 
 
+def test_stop_limit_fills_at_its_limit_after_trigger():
+    # A sell stop-limit (trigger 99, limit 98): on the trigger it becomes a sell limit @98 and fills
+    # only when the price comes back up to 98 — never below it (bounded slippage vs a plain stop).
+    class StopLimitOnce(Strategy):
+        def __init__(self, trigger, limit):
+            self.trigger = trigger
+            self.limit = limit
+            self.done = False
+            self.fills = 0
+            self.px = None
+
+        def on_bar(self, bar, ctx):
+            if not self.done:
+                self.done = True
+                ctx.submit_stop_limit("sell", 1.0, self.trigger, self.limit)
+
+        def on_order_filled(self, fill, ctx):
+            self.fills += 1
+            self.px = fill.price
+
+    # bar0 posts; bar1 low 97 crosses the 99 stop (-> sell limit @98), high 97.5 < 98 so no fill;
+    # bar2 high 99 >= 98 -> the limit fills at 98.
+    bars = _ohlc([(100, 100, 100), (97.5, 97.5, 97), (98, 99, 98.5), (98, 99, 98.5)])
+    s = StopLimitOnce(99.0, 98.0)
+    run(s, bars=bars)
+    assert s.fills == 1
+    assert s.px == pytest.approx(98.0)
+
+
 def test_stop_can_be_canceled_before_it_triggers():
     class StopThenCancel(Strategy):
         def __init__(self):

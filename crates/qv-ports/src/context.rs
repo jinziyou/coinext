@@ -119,6 +119,34 @@ impl OrderFactory {
             ts,
         )
     }
+
+    /// A stop-LIMIT order: rests until the market crosses `trigger`, then becomes a resting LIMIT at
+    /// `price` (so it fills only at `price` or better, not at the market — bounded slippage).
+    #[allow(clippy::too_many_arguments)]
+    pub fn stop_limit(
+        &mut self,
+        instrument_id: InstrumentId,
+        side: OrderSide,
+        qty: Quantity,
+        trigger: Price,
+        price: Price,
+        ts: UnixNanos,
+    ) -> Order {
+        let id = self.next_id();
+        Order::new(
+            self.strategy_id.clone(),
+            id,
+            instrument_id,
+            side,
+            OrderType::StopLimit,
+            qty,
+            Some(price),
+            Some(trigger),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            ts,
+        )
+    }
 }
 
 /// Everything a Strategy needs from the platform, injected by the kernel. Reads go straight to
@@ -218,6 +246,22 @@ impl StrategyContext {
         let order = self
             .factory
             .stop_market(instrument_id, side, qty, trigger, ts);
+        let id = order.client_order_id.clone();
+        self.submit(order);
+        id
+    }
+    pub fn submit_stop_limit(
+        &mut self,
+        instrument_id: InstrumentId,
+        side: OrderSide,
+        qty: Quantity,
+        trigger: Price,
+        price: Price,
+    ) -> ClientOrderId {
+        let ts = self.clock.now_ns();
+        let order = self
+            .factory
+            .stop_limit(instrument_id, side, qty, trigger, price, ts);
         let id = order.client_order_id.clone();
         self.submit(order);
         id
