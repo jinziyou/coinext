@@ -67,11 +67,16 @@
   implementation as warm-up / live rather than a re-rolled copy. `from qv_indicators import Rsi` →
   `rsi.update(x); rsi.value()`; an `RsiReversion` example strategy. Values verified equal to the
   Rust crate + the existing hand-rolled `_Sma`.
+- **Market-order volume participation** (`qv-sim`): a large market order takes at most
+  `participation × bar volume` at submit; the remainder rests as an AGGRESSIVE order (taker, filled
+  at each later bar's market price, also volume-capped) instead of dumping in one bar. Reuses the
+  resting/two-phase machinery + the cached bar volume; close-only series (volume 0) fill fully, so
+  existing behavior is unchanged. Rust + Python tested.
 
 ## Next — research side (recommended order)
 
-1. **More microstructure** — per-bar market-order participation (cap aggressive fills by volume
-   too), and a quote/trade data feed so `on_quote`/`on_trade` fire in research backtests.
+1. **Quote/trade data feed** — download/synthesize quotes (bookTicker) + trades (aggTrades) and feed
+   them into the backtest event stream so `on_quote`/`on_trade` fire in research backtests.
 2. **Strategy ergonomics** — research notebooks for the screen → optimize → backtest loop; expose
    the remaining indicators / multi-timeframe helpers as strategies need them.
 
