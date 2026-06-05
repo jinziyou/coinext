@@ -1,0 +1,81 @@
+# VeloxQuant CI — verifies the Rust core workspace and the Python control plane on every push/PR.
+#
+# Two independent jobs (they share no state, run in parallel):
+#   * rust   — fmt check, clippy (warnings as errors), and the core `cargo test` suite.
+#   * python — `uv sync`, build the qv_py PyO3 extension via `maturin develop`, then ruff + pytest.
+#
+# Mirrors the local workflow in the justfile (`just lint` / `just test` / `just py-build` /
+# `just py-test`). Toolchains: stable Rust (MSRV floor 1.95 enforced by the workspace Cargo.toml's
+# `rust-version`) and Python 3.13.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: rust (core workspace)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain (rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (warnings as errors)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test (core workspace)
+        run: cargo test --workspace
+
+  python:
+    name: python (control plane)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # uv manages the venv + deps (see pyproject.toml [tool.uv]); it also provisions Python 3.13.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      # maturin needs a Rust toolchain to compile the qv_py PyO3 extension.
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Sync Python deps (research extras + dev group)
+        run: uv sync --extra research --extra config --group dev
+
+      # Build the compiled domain/runtime into the active venv so `import qv_py` works for pytest.
+      - name: Build qv_py extension (maturin develop)
+        run: uv run maturin develop --manifest-path crates/qv-py/Cargo.toml --features python
+
+      - name: Ruff lint
+        run: uv run ruff check python tests
+
+      - name: Pytest
+        run: uv run pytest

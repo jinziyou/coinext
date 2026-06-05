@@ -1,0 +1,13 @@
+[package]
+name = "qv-data-engine"
+description = "VeloxQuant data engine: cache-then-publish market data, maintain marks, aggregate bars."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+qv-core.workspace = true
+qv-model.workspace = true
+qv-cache.workspace = true
+qv-ports.workspace = true

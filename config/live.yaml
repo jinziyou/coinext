@@ -1,0 +1,50 @@
+# VeloxQuant — live overrides (merged on top of config/base.yaml).
+#
+# Environment::Live (docs/ARCHITECTURE.md §1, §7): the Kernel injects a LiveClock, the
+# BinanceDataClient, and the BinanceExecutionClient — and NOTHING ELSE changes vs backtest. The
+# standalone Rust ingestor normalizes Binance WS frames onto the Redis bus; the trader's DataEngine
+# consumes them; fills/acks arrive via the WS user-stream (fast) + a REST poll fallback; on restart
+# reconcile() replays the event log and diffs venue truth.
+#
+# Real money. API key/secret come ONLY from env/secrets (VQ__BINANCE__API_KEY / __API_SECRET),
+# never from a committed file.
+env: live
+
+venue:
+  testnet: false            # real Binance spot + USDⓈ-M perpetual endpoints
+
+data:
+  lake_root: /data          # warm-up ALWAYS from the LOCAL HistoryReader (identical to backtest)
+
+# Production risk limits. The out-of-band risk-monitor (metrics 9104) watches all PnL/positions and
+# can trip the GLOBAL kill_switch; flip this to true (or via VQ__RISK__KILL_SWITCH=true) to halt all
+# new orders atomically.
+risk:
+  max_order_notional: 50000
+  max_position_notional: 250000
+  max_gross_exposure: 1000000
+  max_orders_per_sec: 20
+  kill_switch: false
+
+# Live economics are the parity reference the SimulatedExchange is calibrated against.
+brokerage:
+  maker_fee: 0.0002
+  taker_fee: 0.0004
+  slippage_bps: 1.0
+  latency_ns: 5000000       # informational in live (the venue dictates real latency); kept for parity
+
+# Full production infra.
+redis:
+  url: redis://redis:6379/0
+
+postgres:
+  dsn: postgresql://veloxquant:veloxquant@postgres:5432/veloxquant
+
+minio:
+  endpoint: http://minio:9000
+
+otel:
+  endpoint: http://otel-collector:4317
+
+log:
+  level: info

@@ -1,0 +1,46 @@
+# VeloxQuant — Grafana datasources (provisioned as code, ARCHITECTURE.md §8).
+# Prometheus (metrics) + Loki (logs) + Tempo (traces), wired by docker-compose service name on the
+# shared `vq` network. trace_id flows through the Redis Envelope, enabling logs<->traces correlation.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      # Exemplars carry trace_id, linking a metric spike to the originating Tempo trace.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # Pull a trace from a log line's trace_id field.
+      derivedFields:
+        - name: trace_id
+          matcherRegex: "trace_id=(\\w+)"
+          url: "$${__value.raw}"
+          datasourceUid: tempo
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # Jump from a span back to its service logs / RED metrics.
+      tracesToLogsV2:
+        datasourceUid: loki
+        filterByTraceID: true
+      tracesToMetrics:
+        datasourceUid: prometheus
+      serviceMap:
+        datasourceUid: prometheus

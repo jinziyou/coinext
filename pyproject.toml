@@ -1,0 +1,50 @@
+# VeloxQuant — Python control plane (managed by uv). The Rust domain is exposed to Python by the
+# `qv_py` extension module (built with maturin from crates/qv-py); the pure-Python packages under
+# python/ build research/analytics/ops on top of it.
+[project]
+name = "veloxquant"
+version = "0.1.0"
+description = "VeloxQuant — Python control plane for the Rust+Python quant platform"
+requires-python = ">=3.13"
+readme = "README.md"
+license = { text = "MIT" }
+# Kept minimal so the core analytics/backtest path installs fast. Heavier subsystem deps live in
+# optional-dependencies below.
+dependencies = [
+    "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+research = ["polars>=1.0", "pandas>=2.0", "matplotlib>=3.8", "duckdb>=1.0", "pyarrow>=16", "optuna>=3.6"]
+config = ["pydantic>=2.7", "pyyaml>=6"]
+cli = ["typer>=0.12"]
+bus = ["redis>=5", "msgpack>=1"]
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+live = ["anyio>=4"]
+obs = ["structlog>=24", "prometheus-client>=0.20", "opentelemetry-sdk>=1.25"]
+all = [
+    "veloxquant[research,config,cli,bus,api,live,obs]",
+]
+
+[project.scripts]
+qv = "qv_cli.main:app"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.5", "maturin>=1.7"]
+
+# Scaffold-friendly: make the python/ packages importable and the compiled qv_py discoverable
+# without a full editable install, so `pytest` works against the source tree.
+[tool.pytest.ini_options]
+pythonpath = ["python", "."]
+testpaths = ["python", "tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.uv]
+package = false

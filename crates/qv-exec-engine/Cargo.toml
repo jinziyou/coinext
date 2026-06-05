@@ -1,0 +1,14 @@
+[package]
+name = "qv-exec-engine"
+description = "VeloxQuant execution engine (OMS): risk-gated order routing + event-sourced FSM driving + report folding."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+qv-core.workspace = true
+qv-model.workspace = true
+qv-cache.workspace = true
+qv-ports.workspace = true
+qv-sim.workspace = true

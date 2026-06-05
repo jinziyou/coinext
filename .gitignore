@@ -1,0 +1,47 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# maturin / pyo3 build artifacts
+*.so
+*.pyd
+
+# Node / UI
+node_modules/
+services/ui/dist/
+
+# Data lake (local) — keep sample/ tracked, ignore bulk
+/data/*
+!/data/sample/
+!/data/.gitkeep
+
+# Secrets & local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Observability/runtime state
+/deploy/**/data/
+*.db
+*.sqlite
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store

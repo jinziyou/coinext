@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>VeloxQuant — Operator Dashboard</title>
+  </head>
+  <body>
+    <!--
+      VeloxQuant operator UI (see docs/ARCHITECTURE.md §8).
+      Read-only-by-default cockpit over the `api` service (port 8000); the one
+      mutating action is the guarded kill-switch which maps to the atomic
+      kill-switch in qv-risk-engine.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

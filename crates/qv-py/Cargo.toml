@@ -1,0 +1,26 @@
+[package]
+name = "qv-py"
+description = "VeloxQuant PyO3 bindings: domain mirror + run_backtest + PyStrategyAdapter GIL dispatch shim."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "qv_py"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+qv-core.workspace = true
+qv-model.workspace = true
+qv-ports.workspace = true
+qv-cache.workspace = true
+qv-sim.workspace = true
+qv-kernel.workspace = true
+rust_decimal.workspace = true
+pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
+
+[features]
+# pyo3 is optional so the default `cargo test` builds qv-py without linking libpython.
+# maturin enables it: `uvx maturin develop --manifest-path crates/qv-py/Cargo.toml --features python`.
+python = ["dep:pyo3"]

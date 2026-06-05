@@ -1,0 +1,39 @@
+# VeloxQuant — backtest overrides (merged on top of config/base.yaml).
+#
+# Environment::Backtest (docs/ARCHITECTURE.md §1, §7): the Kernel injects a HistoricalClock, a
+# HistoryReader-backed data feed, and a SimulatedExecutionClient. This is the AUTHORITATIVE,
+# deterministic, parity-valid path. No network, no live keys, no wall clock.
+env: backtest
+
+venue:
+  # Backtest never touches a venue endpoint; testnet flag is moot but kept explicit for clarity.
+  testnet: true
+
+# Backtest reads history from the local lake; nothing is published to the cross-service bus.
+data:
+  lake_root: /data
+
+# Same risk economics as base (parity), but the kill-switch is irrelevant offline. Tighter limits
+# can be set per research run via env/CLI without touching live config.
+risk:
+  kill_switch: false
+
+# Backtest economics MUST match live (shared BrokerageModel). Inherited from base unchanged; pinned
+# here so a research sweep that overrides fees does not silently diverge from the live assumptions.
+brokerage:
+  maker_fee: 0.0002
+  taker_fee: 0.0004
+  slippage_bps: 1.0
+  latency_ns: 5000000
+
+# Offline: no infra dependencies. The in-process bus (typed Arc, zero-serialization) is used; Redis
+# is not required. Point at localhost so an accidental connection fails fast rather than hitting a
+# compose hostname that only resolves inside the stack.
+redis:
+  url: redis://localhost:6379/0
+
+otel:
+  endpoint: http://localhost:4317
+
+log:
+  level: info

@@ -1,0 +1,6 @@
+# Keeps the data-lake root tracked while the bulk of /data is gitignored.
+#
+# This is the local mount for VQ__DATA__LAKE_ROOT (default `/data`). The HistoryReader serves
+# backtest feeds AND live warm-up from here — identical in both, so indicators warm up the same way
+# (docs/ARCHITECTURE.md §7, §10). Bulk Parquet partitions are ignored by .gitignore; only this
+# placeholder and data/sample/ are committed.

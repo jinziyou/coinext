@@ -1,0 +1,80 @@
+# VeloxQuant — base configuration (defaults shared by every environment).
+#
+# Layered config, lowest precedence first:
+#   built-in defaults  <  config/base.yaml  <  config/{backtest,sandbox,live}.yaml  <  env  <  CLI flags
+#
+# The env layer uses the VQ__SECTION__KEY convention (double underscore separates nested keys),
+# e.g. `VQ__RISK__MAX_ORDERS_PER_SEC=20` overrides `risk.max_orders_per_sec` below. See
+# `.env.example` and `qv_config` (pydantic-backed loader).
+#
+# The keystone invariant (see docs/ARCHITECTURE.md §1, §5): the SAME Strategy + engines run in
+# backtest / sandbox / live. Only the Kernel-injected Clock, Cache contents, and Data/Execution
+# clients change between environments — so the `venue`, `risk`, and `brokerage` economics declared
+# here are SHARED across backtest and live (LEAN's keystone: agree on venue economics, not just
+# order flow).
+
+# Active environment: backtest | sandbox | live. The matching config/<env>.yaml overrides this file.
+env: backtest
+
+# --- Venue (reference adapter: Binance spot + USDⓈ-M perpetuals) ---
+venue:
+  name: BINANCE
+  # Which product types the data/exec clients wire up. The SimulatedExchange honors the same set.
+  markets:
+    spot: true
+    perp: true        # USDⓈ-M perpetual futures
+  # testnet=true routes the live/sandbox clients to Binance testnet endpoints. Ignored in backtest.
+  testnet: true
+  # Public market-data streams need no keys; trading (sandbox/live) does. Pulled from env/secrets,
+  # never committed here (see VQ__BINANCE__API_KEY / VQ__BINANCE__API_SECRET).
+  api_key: ""
+  api_secret: ""
+
+# --- Data lake (HistoryReader warm-up source + backtest feed; see ARCHITECTURE §7) ---
+data:
+  # Root of the local Parquet data lake. Warm-up is ALWAYS served from here (identical in backtest
+  # and live), never from a live REST call at handler time.
+  lake_root: /data
+  # Default catalog partitioning hint for qv_data (venue/symbol/interval/date).
+  catalog: parquet
+
+# --- Risk limits (defense-in-depth; the per-order RiskEngine reads these too; ARCHITECTURE §1, §6) ---
+# Notionals are in quote currency (USDT). These gate EVERY order pre-trade and back the out-of-band
+# risk-monitor's global kill-switch.
+risk:
+  max_order_notional: 50000        # reject any single order above this notional
+  max_position_notional: 250000    # reject if resulting per-instrument position notional exceeds this
+  max_gross_exposure: 1000000      # reject if total gross (sum |position notional|) exceeds this
+  max_orders_per_sec: 20           # token-bucket rate limit per strategy
+  kill_switch: false               # when true, the atomic gate denies all new orders
+
+# --- Brokerage model (fees / slippage / latency) — SHARED by sim + live (ARCHITECTURE §5) ---
+# Backtest and live agree on venue *economics*. The SimulatedExchange is parameterized by this; the
+# live client reports the venue's actual fees, which should reconcile against these assumptions.
+brokerage:
+  maker_fee: 0.0002                # 2 bps maker (fraction of notional)
+  taker_fee: 0.0004                # 4 bps taker
+  slippage_bps: 1.0                # modeled slippage in basis points (sim only)
+  latency_ns: 5000000             # simulated submit->ack/fill latency (ns); 5ms. Reports are
+                                   # scheduled at now+latency_ns in the DelayedEventQueue and
+                                   # merge-sorted on the HistoricalClock time-frontier.
+
+# --- Infrastructure ---
+redis:
+  url: redis://redis:6379/0        # Redis-Streams bus (cross-service / UI fan-out; ARCHITECTURE §6)
+
+postgres:
+  dsn: postgresql://veloxquant:veloxquant@postgres:5432/veloxquant
+
+minio:
+  endpoint: http://minio:9000      # S3-compatible object store (bulk data lake, artifacts)
+  access_key: veloxquant
+  secret_key: veloxquant-secret
+  bucket: veloxquant
+
+# --- Observability (Prometheus + Grafana + Loki + Tempo via OTel Collector; ARCHITECTURE §8) ---
+otel:
+  endpoint: http://otel-collector:4317   # OTLP/gRPC; trace_id propagates through the Redis Envelope
+
+log:
+  level: info                      # trace | debug | info | warn | error

@@ -1,0 +1,71 @@
+# VeloxQuant — Rust workspace (the hot path + shared domain, the source of truth).
+# Python mirrors this domain via PyO3 (see crates/qv-py and python/).
+[workspace]
+resolver = "2"
+members = [
+    "crates/qv-core",
+    "crates/qv-model",
+    "crates/qv-ports",
+    "crates/qv-cache",
+    "crates/qv-bus",
+    "crates/qv-indicators",
+    "crates/qv-risk-engine",
+    "crates/qv-portfolio",
+    "crates/qv-data-engine",
+    "crates/qv-exec-engine",
+    "crates/qv-sim",
+    "crates/qv-kernel",
+    "crates/qv-testkit",
+    "crates/qv-py",
+    "examples/backtest-sma",
+]
+# qv-py is a member but its pyo3 dependency is OPTIONAL and gated behind the `python` feature, so
+# the default `cargo test` builds it as an (empty) lib without linking libpython. maturin enables
+# the feature: `uvx maturin develop --manifest-path crates/qv-py/Cargo.toml --features python`.
+# The crates below pull heavy network/db deps and are kept out of the default build as stubs.
+exclude = [
+    "crates/qv-network",
+    "crates/qv-adapters/binance",
+    "crates/qv-persistence",
+    "crates/qv-ingest",
+    "crates/qv-exec-svc",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+authors = ["VeloxQuant"]
+
+# Single source of dependency versions, inherited by member crates via `.workspace = true`.
+[workspace.dependencies]
+qv-core = { path = "crates/qv-core" }
+qv-model = { path = "crates/qv-model" }
+qv-ports = { path = "crates/qv-ports" }
+qv-cache = { path = "crates/qv-cache" }
+qv-bus = { path = "crates/qv-bus" }
+qv-indicators = { path = "crates/qv-indicators" }
+qv-risk-engine = { path = "crates/qv-risk-engine" }
+qv-portfolio = { path = "crates/qv-portfolio" }
+qv-data-engine = { path = "crates/qv-data-engine" }
+qv-exec-engine = { path = "crates/qv-exec-engine" }
+qv-sim = { path = "crates/qv-sim" }
+qv-kernel = { path = "crates/qv-kernel" }
+qv-testkit = { path = "crates/qv-testkit" }
+
+rust_decimal = { version = "1", features = ["serde"] }
+rust_decimal_macros = "1"
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+fnv = "1"
+async-trait = "0.1"
+tokio = { version = "1", default-features = false, features = ["sync", "macros", "rt"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

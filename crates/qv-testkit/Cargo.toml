@@ -1,0 +1,12 @@
+[package]
+name = "qv-testkit"
+description = "VeloxQuant test kit: sample instruments + synthetic market-data generators for tests/examples."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+qv-core.workspace = true
+qv-model.workspace = true
+rust_decimal.workspace = true

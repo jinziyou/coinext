@@ -1,0 +1,20 @@
+[package]
+name = "qv-example-backtest"
+description = "Runnable example: an SMA-crossover strategy through the VeloxQuant backtest kernel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "qv-example-backtest"
+path = "src/main.rs"
+
+[dependencies]
+qv-core.workspace = true
+qv-model.workspace = true
+qv-indicators.workspace = true
+qv-kernel.workspace = true
+qv-ports.workspace = true
+qv-testkit.workspace = true
+rust_decimal.workspace = true

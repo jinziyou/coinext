@@ -1,0 +1,8 @@
+# services/trader — live trading node wrapper, one process per account (canonical metrics port 9103).
+# Mirrors the `live` + `bus` + `obs` extras in the root pyproject.toml. The compiled `qv_py`
+# extension and the qv_live / qv_strategy / qv_contracts packages are installed separately from the
+# workspace (not via this file).
+anyio>=4
+redis>=5
+msgpack>=1
+prometheus-client>=0.20

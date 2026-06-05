@@ -1,0 +1,107 @@
+# VeloxQuant — observability OVERLAY (docs/ARCHITECTURE.md §8).
+#
+# Adds the metrics/logs/traces stack on top of docker-compose.yml. The app services already emit:
+#   * Prometheus metrics (ingestor:9101, exec-svc:9102, trader:9103, risk-monitor:9104, api:8000)
+#   * OTLP traces/logs to the otel-collector (VQ__OTEL__ENDPOINT=http://otel-collector:4317)
+# The `trace_id` from the Redis Envelope propagates end-to-end (Envelope schema, ARCHITECTURE.md §6).
+#
+# Pipeline:
+#   apps --(OTLP 4317/4318)--> otel-collector --> tempo (traces) + loki (logs)
+#   prometheus --(scrape)--> apps' /metrics
+#   grafana <-- prometheus + loki + tempo (datasources + dashboards provisioned as code)
+#
+# Bring up:
+#   docker compose -f docker-compose.yml -f docker-compose.obs.yml up -d
+#
+# Ports exposed on the host for operator access:
+#   grafana 3001, prometheus 9090, loki 3100, tempo 3200, otel-collector 4317/4318
+
+name: veloxquant
+
+services:
+  # OpenTelemetry Collector — single ingestion point for app traces/logs; fans out to tempo+loki.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib
+    restart: always
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./deploy/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    depends_on:
+      - tempo
+      - loki
+    networks: [vq]
+
+  # Prometheus — scrapes the app metrics endpoints (see deploy/prometheus/prometheus.yml).
+  prometheus:
+    image: prom/prometheus
+    restart: always
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks: [vq]
+
+  # Loki — log aggregation; receives logs from the otel-collector.
+  loki:
+    image: grafana/loki
+    restart: always
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./deploy/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks: [vq]
+
+  # Tempo — distributed tracing backend; receives spans from the otel-collector.
+  tempo:
+    image: grafana/tempo
+    restart: always
+    command: ["-config.file=/etc/tempo/tempo-config.yml"]
+    volumes:
+      - ./deploy/tempo/tempo-config.yml:/etc/tempo/tempo-config.yml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+    networks: [vq]
+
+  # Grafana — dashboards-as-code. Datasources + dashboards are provisioned from deploy/grafana/.
+  grafana:
+    image: grafana/grafana
+    restart: always
+    environment:
+      GF_SECURITY_ADMIN_USER: ${VQ__GRAFANA__USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${VQ__GRAFANA__PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Enable the trace-to-logs / exemplar correlation features used by the VeloxQuant dashboard.
+      GF_FEATURE_TOGGLES_ENABLE: "traceToMetrics"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    networks: [vq]
+
+# Re-use the application network defined in docker-compose.yml so scraping works by service name.
+networks:
+  vq:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+  grafana-data:

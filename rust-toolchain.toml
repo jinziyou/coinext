@@ -1,0 +1,5 @@
+# Uses the installed `stable` toolchain (1.95.0 in this environment). The hard MSRV floor is
+# pinned via `rust-version = "1.95"` in the workspace Cargo.toml, which `cargo` enforces at build.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

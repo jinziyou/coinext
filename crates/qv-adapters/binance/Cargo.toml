@@ -1,0 +1,41 @@
+# qv-adapters-binance — the reference venue adapter (the live side of the parity seam).
+#
+# EXCLUDED from the root cargo workspace (root Cargo.toml `exclude`), so it must use EXPLICIT
+# dependency versions and path deps — NOT `.workspace = true`.
+#
+# TLS is rustls (NOT native-tls/openssl) everywhere via qv-network + reqwest/tokio-tungstenite.
+[package]
+name = "qv-adapters-binance"
+description = "VeloxQuant Binance adapter: Data/Execution/InstrumentProvider clients behind the qv-ports seam."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+authors = ["VeloxQuant"]
+
+[lib]
+# The path is `qv-adapters/binance`, so name the lib explicitly.
+name = "qv_adapters_binance"
+path = "src/lib.rs"
+
+[dependencies]
+# Path deps into the in-workspace domain crates (relative to this crate's directory).
+qv-core = { path = "../../qv-core" }
+qv-model = { path = "../../qv-model" }
+qv-ports = { path = "../../qv-ports" }
+qv-cache = { path = "../../qv-cache" }
+# Shared WS/REST framework this adapter builds on (also workspace-external).
+qv-network = { path = "../../qv-network" }
+
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rust_decimal = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+rust_decimal_macros = "1"

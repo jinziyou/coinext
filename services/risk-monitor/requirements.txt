@@ -1,0 +1,6 @@
+# services/risk-monitor — out-of-band global risk supervisor (canonical metrics port 9104).
+# Mirrors the `bus` + `obs` extras in the root pyproject.toml. The qv_* packages are installed
+# separately from the workspace (not via this file).
+redis>=5
+msgpack>=1
+prometheus-client>=0.20

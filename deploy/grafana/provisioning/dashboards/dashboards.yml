@@ -1,0 +1,16 @@
+# VeloxQuant — Grafana dashboard provider (dashboards-as-code, ARCHITECTURE.md §8).
+# Loads JSON dashboards from the mounted folder so the VeloxQuant SLO board appears on first boot.
+apiVersion: 1
+
+providers:
+  - name: veloxquant
+    orgId: 1
+    folder: VeloxQuant
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      # Matches the mount in docker-compose.obs.yml: deploy/grafana/dashboards -> /var/lib/grafana/dashboards
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

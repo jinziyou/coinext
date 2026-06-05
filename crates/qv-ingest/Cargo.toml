@@ -1,0 +1,29 @@
+# qv-ingest — the market-data ingestion daemon (the standalone Rust `ingestor` service).
+#
+# EXCLUDED from the root cargo workspace (root Cargo.toml `exclude`), so it uses EXPLICIT dependency
+# versions — NOT `.workspace = true`. It builds a real BinanceDataClient against the public combined
+# streams (no keys) and prints normalized events; the live connect path is feature-gated so the bin
+# always compiles without touching the network.
+[package]
+name = "qv-ingest"
+description = "VeloxQuant market-data ingestion daemon: Binance WS -> normalize -> data lake + Redis bus."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+authors = ["VeloxQuant"]
+
+[[bin]]
+name = "qv-ingest"
+path = "src/main.rs"
+
+[features]
+# `live` enables the real WS connect path (network). Off by default so `cargo build` is offline.
+default = []
+live = []
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+qv-adapters-binance = { path = "../qv-adapters/binance" }
+qv-model = { path = "../qv-model" }
+qv-ports = { path = "../qv-ports" }

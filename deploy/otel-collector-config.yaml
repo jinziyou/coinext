@@ -1,0 +1,68 @@
+# VeloxQuant — OpenTelemetry Collector config (docs/ARCHITECTURE.md §8).
+#
+# Single ingestion point for app telemetry. Services send OTLP to :4317 (gRPC) / :4318 (HTTP) via
+# VQ__OTEL__ENDPOINT. The collector fans out:
+#   traces -> tempo (OTLP)
+#   logs   -> loki  (OTLP-native log ingest)
+#   metrics are scraped directly by Prometheus from each service (see deploy/prometheus), but the
+#           collector can also forward OTLP metrics to Prometheus remote-write if a service emits them.
+# trace_id (from the Redis Envelope) is carried on spans/logs for cross-signal correlation.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+  # Drop telemetry under memory pressure rather than OOM the collector on a small VPS.
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 2s
+
+exporters:
+  # Traces -> Tempo (OTLP gRPC).
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Logs -> Loki (native OTLP logs endpoint).
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+
+  # Metrics -> Prometheus remote-write (for any service emitting OTLP metrics rather than /metrics).
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    tls:
+      insecure: true
+
+  debug:
+    verbosity: normal
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlp/tempo]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlphttp/loki]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [prometheusremotewrite]

@@ -1,0 +1,15 @@
+[package]
+name = "qv-ports"
+description = "VeloxQuant hexagonal ports: DataClient/ExecutionClient/Strategy/Risk/Portfolio/Bus traits + value types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+qv-core.workspace = true
+qv-model.workspace = true
+qv-cache.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+thiserror.workspace = true

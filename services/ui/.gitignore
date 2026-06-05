@@ -1,0 +1,8 @@
+# VeloxQuant UI
+node_modules/
+dist/
+*.local
+.vite/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
