@@ -160,9 +160,47 @@ class DataLake:
         start_ns: int | None = None,
         end_ns: int | None = None,
     ) -> list[tuple[int, float]]:
-        """Return ``(ts_ns, close)`` rows — the shape ``qv_backtest.run`` consumes."""
+        """Return ``(ts_ns, close)`` rows — the close-only shape ``qv_backtest.run`` consumes."""
         return [
             (r[0], r[4])
+            for r in self.read(venue, symbol, interval, start_ns=start_ns, end_ns=end_ns)
+        ]
+
+    def read_ohlc(
+        self,
+        venue: str,
+        symbol: str,
+        interval: str,
+        *,
+        start_ns: int | None = None,
+        end_ns: int | None = None,
+    ) -> list[tuple[int, float, float, float, float]]:
+        """Return ``(ts_ns, open, high, low, close)`` rows — the OHLC shape for OHLC-aware fills.
+
+        Same series as :meth:`read_closes` but keeping each bar's intrabar range, so resting limit
+        orders fill against the real high/low rather than a flattened close.
+        """
+        return [
+            (r[0], r[1], r[2], r[3], r[4])
+            for r in self.read(venue, symbol, interval, start_ns=start_ns, end_ns=end_ns)
+        ]
+
+    def read_ohlcv(
+        self,
+        venue: str,
+        symbol: str,
+        interval: str,
+        *,
+        start_ns: int | None = None,
+        end_ns: int | None = None,
+    ) -> list[tuple[int, float, float, float, float, float]]:
+        """Return ``(ts_ns, open, high, low, close, volume)`` rows — OHLCV for partial-fill realism.
+
+        Same series as :meth:`read_ohlc` but also carrying the bar's traded volume, which drives the
+        sim's volume-participation partial fills.
+        """
+        return [
+            (r[0], r[1], r[2], r[3], r[4], r[5])
             for r in self.read(venue, symbol, interval, start_ns=start_ns, end_ns=end_ns)
         ]
 

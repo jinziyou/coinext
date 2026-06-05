@@ -1,13 +1,27 @@
-"""qv_analytics — performance metrics, tear sheets, and bias detectors.
+"""qv_analytics — performance metrics, trade statistics, tear sheets, and bias detectors.
 
-Computes returns/Sharpe/Sortino/drawdown from a backtest equity curve and renders a text tear
-sheet. The lookahead/recursion bias detectors are stubs to be wired to the engine's event log.
+Computes returns/Sharpe/Sortino/drawdown from a backtest equity curve (:func:`compute_metrics`),
+reconstructs round-trip trades from the fill log for trade-level stats (:mod:`qv_analytics.trades`),
+screens for look-ahead / overfitting tells (:mod:`qv_analytics.bias`), and renders a text or
+graphical tear sheet (:func:`tear_sheet`, :func:`plot_tear_sheet`).
+
+The equity/metrics math is pure stdlib. Plotting needs ``matplotlib`` (the ``research`` extra) and
+is imported lazily, so the headline path stays dependency-free.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+
+from .bias import BiasReport, detect_lookahead_bias, detect_overfitting, screen_biases
+from .trades import (
+    Trade,
+    TradeStats,
+    compute_trade_stats,
+    reconstruct_trades,
+    stats_from_result,
+)
 
 # Minute bars: 1440/day * 365.
 _ANNUALIZATION_BARS_PER_YEAR = 525_600
@@ -72,9 +86,25 @@ def compute_metrics(
     )
 
 
-def tear_sheet(result) -> str:
-    """Render a text tear sheet from a BacktestResult (the object qv_backtest.run returns)."""
-    m = compute_metrics(list(result.equity_curve))
+def _fmt_pf(pf: float) -> str:
+    """Profit factor display (``inf`` -> ``∞``)."""
+    return "∞" if pf == float("inf") else f"{pf:.2f}"
+
+
+def tear_sheet(
+    result, *, bars: list[tuple[int, float]] | None = None, fee_rate: float = 0.0
+) -> str:
+    """Render a text tear sheet from a BacktestResult (the object ``qv_backtest.run`` returns).
+
+    Includes headline metrics, trade-level statistics (win rate, profit factor, expectancy,
+    exposure, turnover), and any bias-screen warnings. Pass ``bars`` to enable the off-grid fill
+    look-ahead check; ``fee_rate`` charges trade PnL net of fees (gross by default).
+    """
+    equity = list(result.equity_curve)
+    m = compute_metrics(equity)
+    ts = stats_from_result(result, fee_rate=fee_rate)
+    report = screen_biases(result, metrics=m, trade_stats=ts, bars=bars)
+
     lines = [
         "================ VeloxQuant tear sheet ================",
         f"bars / periods    : {m.n_periods}",
@@ -89,18 +119,46 @@ def tear_sheet(result) -> str:
         f"sharpe (ann)      : {m.sharpe:>14.3f}",
         f"sortino (ann)     : {m.sortino:>14.3f}",
         f"max drawdown      : {m.max_drawdown * 100:>13.2f}%",
-        "======================================================",
+        "---------------- trades ------------------------------",
+        f"round-trip trades : {ts.n_trades}",
+        f"win rate          : {ts.win_rate * 100:>13.2f}%  ({ts.n_wins}W / {ts.n_losses}L)",
+        f"profit factor     : {_fmt_pf(ts.profit_factor):>14}",
+        f"avg trade PnL     : {ts.avg_trade:>14.2f}",
+        f"avg win / loss    : {ts.avg_win:>9.2f} / {ts.avg_loss:.2f}",
+        f"largest win/loss  : {ts.largest_win:>9.2f} / {ts.largest_loss:.2f}",
+        f"exposure (in mkt) : {ts.exposure * 100:>13.2f}%",
+        f"turnover (x cap)  : {ts.turnover:>14.2f}",
     ]
+    if not report.clean:
+        lines.append("---------------- bias screen -------------------------")
+        for w in report.warnings:
+            lines.append(f"  ⚠ {w}")
+    lines.append("======================================================")
     return "\n".join(lines)
 
 
-def detect_lookahead_bias(equity_curve: list[tuple[int, float]]) -> list[str]:
-    """Stub: timestamps must be strictly increasing (no out-of-order = no obvious lookahead)."""
-    warnings = []
-    for (t0, _), (t1, _) in zip(equity_curve, equity_curve[1:], strict=False):
-        if t1 < t0:
-            warnings.append(f"non-monotonic timestamp: {t1} < {t0}")
-    return warnings
+# Optional plotting (matplotlib) is imported lazily so the headline path stays dependency-free.
+def plot_tear_sheet(result, *, path: str | None = None, show: bool = False):
+    """Render a 3-panel tear sheet (equity/drawdown/returns). Requires ``matplotlib``."""
+    from .plots import plot_tear_sheet as _impl
+
+    return _impl(result, path=path, show=show)
 
 
-__all__ = ["Metrics", "compute_metrics", "tear_sheet", "detect_lookahead_bias"]
+__all__ = [
+    "Metrics",
+    "compute_metrics",
+    "tear_sheet",
+    "plot_tear_sheet",
+    # trades
+    "Trade",
+    "TradeStats",
+    "reconstruct_trades",
+    "compute_trade_stats",
+    "stats_from_result",
+    # bias
+    "BiasReport",
+    "detect_lookahead_bias",
+    "detect_overfitting",
+    "screen_biases",
+]

@@ -35,15 +35,22 @@ def _cmd_backtest(
     real: bool = False,
     from_lake: bool = False,
     interval: str = "1m",
+    strategy: str = "sma",
 ) -> int:
-    """Run SmaCross through the Rust kernel and print the tear sheet. Returns an exit code.
+    """Run a strategy through the Rust kernel and print the tear sheet. Returns an exit code.
 
-    ``--from-lake`` reads the LOCAL Parquet lake (reproducible; run ``qv download`` first);
-    ``--real`` fetches a fresh 1000-bar window from Binance; otherwise uses synthetic bars.
+    ``--strategy sma`` (default) trades market orders on SMA crossovers; ``--strategy limit-maker``
+    rests LIMIT orders that fill on intrabar high/low — the OHLC-aware path (synthetic data uses an
+    OHLC series with wicks; the lake serves real OHLC). ``--from-lake`` reads the LOCAL Parquet lake
+    (reproducible; run ``qv download`` first); ``--real`` fetches a fresh window; else synthetic.
     """
     import qv_analytics
     import qv_backtest
-    from qv_strategy import SmaCross
+    from qv_strategy import LimitMaker, SmaCross
+
+    if strategy not in ("sma", "limit-maker"):
+        print(f"unknown --strategy {strategy!r} (expected 'sma' or 'limit-maker')")
+        return 1
 
     if from_lake:
         from qv_data import _HAVE_LAKE, DataLake
@@ -51,22 +58,76 @@ def _cmd_backtest(
         if not _HAVE_LAKE:
             print("pyarrow not installed — `--from-lake` needs the lake (`uv pip install pyarrow`)")
             return 1
-        bars = DataLake().read_closes("BINANCE", symbol, interval)
+        # OHLCV so resting limits fill on the real intrabar high/low and against real volume.
+        bars = DataLake().read_ohlcv("BINANCE", symbol, interval)
         if not bars:
             print(
                 f"lake empty for {symbol} {interval} — run `qv download --symbols {symbol}` first"
             )
             return 1
-        print(f"[lake] loaded {len(bars)} {symbol} {interval} bars from {DataLake().root}/bars")
+        print(f"[lake] loaded {len(bars)} {symbol} {interval} OHLC bars from the lake")
     elif real:
         from qv_data import fetch_binance_klines
 
         bars = fetch_binance_klines(symbol, interval, min(n, 1000))
         print(f"[real] fetched {len(bars)} live {symbol} {interval} bars")
+    elif strategy == "limit-maker":
+        bars = qv_backtest.synthetic_ohlc_bars(n=n)  # wicks for the resting limits to fill against
     else:
         bars = qv_backtest.synthetic_bars(n=n)
-    strategy = SmaCross(fast=fast, slow=slow)
-    result = qv_backtest.run(strategy, symbol=symbol, bars=bars)
+    strat = LimitMaker() if strategy == "limit-maker" else SmaCross(fast=fast, slow=slow)
+    result = qv_backtest.run(strat, symbol=symbol, bars=bars)
+    print(qv_analytics.tear_sheet(result, bars=bars))
+    return 0
+
+
+def _cmd_backtest_multi(
+    symbols: str = "BTCUSDT,ETHUSDT",
+    fast: int = 10,
+    slow: int = 30,
+    n: int = 400,
+    from_lake: bool = False,
+    interval: str = "1m",
+) -> int:
+    """Run a per-symbol SMA portfolio (``MultiSma``) across MANY instruments through one kernel.
+
+    ``--from-lake`` reads each symbol's real OHLC from the lake; otherwise each gets a distinct
+    synthetic series (varied period/base) so the symbols are not identical. Prints the aggregate
+    portfolio tear sheet.
+    """
+    import qv_analytics
+    import qv_backtest
+    from qv_strategy import MultiSma
+
+    syms = [s.strip() for s in symbols.split(",") if s.strip()]
+    if not syms:
+        print("no symbols given")
+        return 1
+
+    bars: dict[str, list] = {}
+    if from_lake:
+        from qv_data import _HAVE_LAKE, DataLake
+
+        if not _HAVE_LAKE:
+            print("pyarrow not installed — `--from-lake` needs the lake (`uv pip install pyarrow`)")
+            return 1
+        lake = DataLake()
+        for sym in syms:
+            rows = lake.read_ohlcv("BINANCE", sym, interval)
+            if not rows:
+                print(f"lake empty for {sym} {interval} — run `qv download --symbols {sym}` first")
+                return 1
+            bars[sym] = rows
+        print(f"[lake] loaded {len(syms)} symbols of {interval} OHLC from the lake")
+    else:
+        # Give each symbol a distinct synthetic regime so the portfolio is not N copies of one.
+        for i, sym in enumerate(syms):
+            bars[sym] = qv_backtest.synthetic_bars(
+                n=n, base=50_000.0 * (1.0 + 0.2 * i), period=40 + 7 * i
+            )
+
+    result = qv_backtest.run_multi(MultiSma(fast=fast, slow=slow), bars=bars)
+    print(f"[multi] {len(syms)} instruments: {', '.join(syms)}")
     print(qv_analytics.tear_sheet(result))
     return 0
 
@@ -205,20 +266,43 @@ def _cmd_testnet_gate(
     return 0 if verdict.passed else 1
 
 
-def _cmd_optimize(symbol: str = "BTCUSDT", trials: int = 50, splits: int = 4) -> int:
-    """Walk-forward optimize SmaCross params (requires the ``research`` extra for optuna)."""
+def _cmd_optimize(
+    symbol: str = "BTCUSDT",
+    trials: int = 50,
+    splits: int = 4,
+    mode: str = "rolling",
+    optuna: bool = False,
+    from_lake: bool = False,
+    interval: str = "1m",
+) -> int:
+    """Walk-forward optimize SmaCross params with out-of-sample validation.
+
+    Default is a pure-Python grid search (no extra deps); ``--optuna`` uses Optuna TPE over the same
+    objective (needs the ``research`` extra). Either way each evaluation runs the AUTHORITATIVE Rust
+    backtest, params are chosen IN-SAMPLE per fold and re-scored OUT-of-sample, and the report shows
+    the OOS degradation — the overfitting guard. ``--from-lake`` optimizes over real downloaded
+    history; otherwise a synthetic series.
+    """
     import qv_backtest
     from qv_analytics import compute_metrics
-    from qv_optimize import OptimizeNode
+    from qv_optimize import walk_forward_optimize
     from qv_strategy import SmaCross
 
-    bars = qv_backtest.synthetic_bars()
+    if from_lake:
+        from qv_data import _HAVE_LAKE, DataLake
 
-    def search_space(trial: Any) -> dict[str, int]:
-        return {
-            "fast": trial.suggest_int("fast", 5, 20),
-            "slow": trial.suggest_int("slow", 25, 60),
-        }
+        if not _HAVE_LAKE:
+            print("pyarrow not installed — `--from-lake` needs the lake (`uv pip install pyarrow`)")
+            return 1
+        bars = DataLake().read_closes("BINANCE", symbol, interval)
+        if not bars:
+            print(f"lake empty for {symbol} {interval} — run `qv download --symbols {symbol}`")
+            return 1
+        print(f"[lake] optimizing over {len(bars)} {symbol} {interval} bars")
+    else:
+        # A longer synthetic series so each walk-forward OOS window has room for the slow SMA to
+        # warm up and trade (short test windows would otherwise score a degenerate flat Sharpe).
+        bars = qv_backtest.synthetic_bars(n=1200)
 
     def objective(params: dict[str, Any], window: list[tuple[int, float]]) -> float:
         if params["fast"] >= params["slow"] or len(window) < 2:
@@ -226,9 +310,25 @@ def _cmd_optimize(symbol: str = "BTCUSDT", trials: int = 50, splits: int = 4) ->
         result = qv_backtest.run(SmaCross(**params), symbol=symbol, bars=window)
         return compute_metrics(list(result.equity_curve)).sharpe
 
-    node = OptimizeNode(bars=bars, search_space=search_space, objective=objective, n_splits=splits)
-    res = node.run(n_trials=trials)
-    print(f"best params: {res.best_params}  best sharpe (cv): {res.best_value:.3f}")
+    if optuna:
+
+        def search_space(trial: Any) -> dict[str, int]:
+            return {
+                "fast": trial.suggest_int("fast", 5, 20),
+                "slow": trial.suggest_int("slow", 25, 60),
+            }
+
+        report = walk_forward_optimize(
+            bars, objective, search_space=search_space, n_splits=splits, mode=mode,
+            optimizer="optuna", n_trials=trials,
+        )
+    else:
+        param_grid = {"fast": [5, 8, 11, 14, 17, 20], "slow": [25, 30, 40, 50, 60]}
+        report = walk_forward_optimize(
+            bars, objective, param_grid=param_grid, n_splits=splits, mode=mode, optimizer="grid",
+        )
+
+    print(report.render())
     return 0
 
 
@@ -324,12 +424,26 @@ def _build_typer_app():
         real: bool = False,
         from_lake: bool = False,
         interval: str = "1m",
+        strategy: str = "sma",
     ) -> None:
-        """Run SmaCross through the Rust kernel and print the tear sheet.
+        """Run a strategy through the Rust kernel and print the tear sheet.
 
-        --from-lake reads the local Parquet lake; --real fetches a fresh window; else synthetic.
+        --strategy sma|limit-maker; --from-lake reads the local Parquet lake; --real fetches a fresh
+        window; else synthetic. limit-maker rests LIMIT orders (the OHLC-aware fill path).
         """
-        raise typer.Exit(_cmd_backtest(symbol, fast, slow, n, real, from_lake, interval))
+        raise typer.Exit(_cmd_backtest(symbol, fast, slow, n, real, from_lake, interval, strategy))
+
+    @app.command("backtest-multi")
+    def backtest_multi(
+        symbols: str = "BTCUSDT,ETHUSDT",
+        fast: int = 10,
+        slow: int = 30,
+        n: int = 400,
+        from_lake: bool = False,
+        interval: str = "1m",
+    ) -> None:
+        """Run a per-symbol SMA portfolio across many instruments through one kernel."""
+        raise typer.Exit(_cmd_backtest_multi(symbols, fast, slow, n, from_lake, interval))
 
     @app.command()
     def parity(symbol: str = "BTCUSDT", fast: int = 10, slow: int = 30, n: int = 400) -> None:
@@ -349,9 +463,17 @@ def _build_typer_app():
         raise typer.Exit(_cmd_testnet_gate(symbol, fast, slow, n, qty, no_testnet))
 
     @app.command()
-    def optimize(symbol: str = "BTCUSDT", trials: int = 50, splits: int = 4) -> None:
-        """Walk-forward optimize strategy parameters (Optuna)."""
-        raise typer.Exit(_cmd_optimize(symbol, trials, splits))
+    def optimize(
+        symbol: str = "BTCUSDT",
+        trials: int = 50,
+        splits: int = 4,
+        mode: str = "rolling",
+        optuna: bool = False,
+        from_lake: bool = False,
+        interval: str = "1m",
+    ) -> None:
+        """Walk-forward optimize strategy params with OOS validation (grid by default; --optuna)."""
+        raise typer.Exit(_cmd_optimize(symbol, trials, splits, mode, optuna, from_lake, interval))
 
     @app.command()
     def download(
@@ -394,6 +516,15 @@ def _build_argparse_parser():
     p.add_argument("--real", action="store_true", help="Use REAL Binance klines (no key).")
     p.add_argument("--from-lake", action="store_true", help="Read the local Parquet lake.")
     p.add_argument("--interval", default="1m")
+    p.add_argument("--strategy", default="sma", choices=["sma", "limit-maker"])
+
+    p = sub.add_parser("backtest-multi", help="Per-symbol SMA portfolio across many instruments.")
+    p.add_argument("--symbols", default="BTCUSDT,ETHUSDT", help="comma-separated, e.g. BTC,ETH")
+    p.add_argument("--fast", type=int, default=10)
+    p.add_argument("--slow", type=int, default=30)
+    p.add_argument("--n", type=int, default=400)
+    p.add_argument("--from-lake", action="store_true", help="Read each symbol's OHLC from the lake")
+    p.add_argument("--interval", default="1m")
 
     p = sub.add_parser("parity", help="Run the pre-live promotion gate (backtest vs sandbox).")
     p.add_argument("--symbol", default="BTCUSDT")
@@ -413,10 +544,14 @@ def _build_argparse_parser():
         "--no-testnet", action="store_true", help="Dry-run: synthesize the sandbox (no key)."
     )
 
-    p = sub.add_parser("optimize", help="Walk-forward optimize (Optuna).")
+    p = sub.add_parser("optimize", help="Walk-forward optimize params with OOS validation.")
     p.add_argument("--symbol", default="BTCUSDT")
-    p.add_argument("--trials", type=int, default=50)
+    p.add_argument("--trials", type=int, default=50, help="Optuna trials per fold (--optuna only).")
     p.add_argument("--splits", type=int, default=4)
+    p.add_argument("--mode", default="rolling", choices=["rolling", "anchored"])
+    p.add_argument("--optuna", action="store_true", help="Use Optuna TPE instead of grid search.")
+    p.add_argument("--from-lake", action="store_true", help="Optimize over the local Parquet lake.")
+    p.add_argument("--interval", default="1m")
 
     p = sub.add_parser("download", help="Download REAL history into the local Parquet lake.")
     p.add_argument("--symbols", default="BTCUSDT", help="comma-separated, e.g. BTCUSDT,ETHUSDT")
@@ -442,13 +577,18 @@ def _run_argparse(argv: list[str] | None) -> int:
     ns = parser.parse_args(argv)
     dispatch = {
         "backtest": lambda: _cmd_backtest(
-            ns.symbol, ns.fast, ns.slow, ns.n, ns.real, ns.from_lake, ns.interval
+            ns.symbol, ns.fast, ns.slow, ns.n, ns.real, ns.from_lake, ns.interval, ns.strategy
+        ),
+        "backtest-multi": lambda: _cmd_backtest_multi(
+            ns.symbols, ns.fast, ns.slow, ns.n, ns.from_lake, ns.interval
         ),
         "parity": lambda: _cmd_parity(ns.symbol, ns.fast, ns.slow, ns.n),
         "testnet-gate": lambda: _cmd_testnet_gate(
             ns.symbol, ns.fast, ns.slow, ns.n, ns.qty, ns.no_testnet
         ),
-        "optimize": lambda: _cmd_optimize(ns.symbol, ns.trials, ns.splits),
+        "optimize": lambda: _cmd_optimize(
+            ns.symbol, ns.trials, ns.splits, ns.mode, ns.optuna, ns.from_lake, ns.interval
+        ),
         "download": lambda: _cmd_download(ns.symbols, ns.interval, ns.days, ns.venue),
         "live": lambda: _cmd_live(ns.env, ns.symbol),
         "reconcile": lambda: _cmd_reconcile(ns.symbol),

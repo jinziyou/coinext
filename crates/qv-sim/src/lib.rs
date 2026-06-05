@@ -19,7 +19,7 @@ use qv_model::{
 use qv_ports::ExecutionReport;
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 use std::rc::Rc;
 
 mod brokerage;
@@ -82,11 +82,19 @@ impl DelayedEventQueue {
 
 struct Resting {
     order: Order,
+    /// Quantity still to fill (decremented by each partial fill; the order is removed at zero).
+    remaining: Quantity,
+    /// The venue id allocated when the order was accepted — STABLE across partial fills (never the
+    /// Vec index, which shifts as other orders are removed).
+    venue_order_id: VenueOrderId,
 }
 
 struct SimState {
     queue: DelayedEventQueue,
     resting: Vec<Resting>,
+    /// Last seen `(low, high)` per instrument, for OHLC-aware MARKET-order slippage in `on_submit`
+    /// (which otherwise has no bar in scope).
+    last_bar_range: HashMap<InstrumentId, (Price, Price)>,
     venue_seq: u64,
     trade_seq: u64,
 }
@@ -116,6 +124,7 @@ impl SimulatedExecutionClient {
             state: RefCell::new(SimState {
                 queue: DelayedEventQueue::default(),
                 resting: Vec::new(),
+                last_bar_range: HashMap::new(),
                 venue_seq: 0,
                 trade_seq: 0,
             }),
@@ -209,17 +218,23 @@ impl SimulatedExecutionClient {
 
         if marketable {
             let (fill_px, liquidity) = match order.order_type {
-                OrderType::Market => (
-                    self.model.fill_price(
-                        &order,
-                        ref_px.unwrap_or_else(|| order.price.unwrap()),
-                        &*inst,
-                    ),
-                    LiquiditySide::Taker,
-                ),
+                OrderType::Market => {
+                    // OHLC-aware slippage: the most recent bar's (low, high) for this instrument.
+                    let bar_range = state.last_bar_range.get(&order.instrument_id).copied();
+                    (
+                        self.model.fill_price(
+                            &order,
+                            ref_px.unwrap_or_else(|| order.price.unwrap()),
+                            bar_range,
+                            &*inst,
+                        ),
+                        LiquiditySide::Taker,
+                    )
+                }
                 _ => (order.price.unwrap(), LiquiditySide::Taker),
             };
             let fill_at = now.saturating_add_ns(self.model.latency_ns(CommandKind::Submit));
+            // Marketable (aggressive) orders take liquidity immediately and fill in full.
             let fill = self.make_fill(
                 &mut state,
                 &order,
@@ -232,7 +247,13 @@ impl SimulatedExecutionClient {
             );
             state.queue.push(fill_at, fill);
         } else {
-            state.resting.push(Resting { order });
+            // Passive limit: rest with its full quantity; partial fills decrement `remaining`.
+            let remaining = order.quantity;
+            state.resting.push(Resting {
+                order,
+                remaining,
+                venue_order_id,
+            });
         }
     }
 
@@ -253,7 +274,9 @@ impl SimulatedExecutionClient {
         }
     }
 
-    /// Match resting limit orders against an incoming market event; schedule fills that cross.
+    /// Match resting limit orders against an incoming market event; schedule fills that cross,
+    /// capped per bar by the BrokerageModel's volume participation (large orders fill over several
+    /// bars). Also caches the bar's `(low, high)` for OHLC-aware market-order slippage.
     pub fn on_market(&self, ev: &MarketEvent) {
         let now = self.clock.now_ns();
         let id = ev.instrument_id().clone();
@@ -270,44 +293,71 @@ impl SimulatedExecutionClient {
         let Some((low, high, _close)) = market_px else {
             return;
         };
+        // The traded volume available to resting orders this event (only bars carry it; quotes/
+        // trades cap nothing here -> `None` means fill the full crossed remaining).
+        let bar_volume = match ev {
+            MarketEvent::Bar(b) => Some(b.volume),
+            _ => None,
+        };
 
         let mut state = self.state.borrow_mut();
-        let mut filled_idx = Vec::new();
-        // Collect crossings first (avoid borrow conflicts), then schedule.
-        let mut fills: Vec<(VenueOrderId, Order, Price)> = Vec::new();
+        // Remember the bar range for later market-order slippage.
+        if matches!(ev, MarketEvent::Bar(_)) {
+            state.last_bar_range.insert(id.clone(), (low, high));
+        }
+
+        // Phase 1: decide each crossing's fillable quantity (immutable borrow of `resting`).
+        // Tuple: (resting index, stable venue id, order clone, limit price, qty to fill this bar).
+        let mut decisions: Vec<(usize, VenueOrderId, Order, Price, Quantity)> = Vec::new();
         for (i, r) in state.resting.iter().enumerate() {
             if r.order.instrument_id != id {
                 continue;
             }
-            if let Some(limit) = r.order.price {
-                let crossed = match r.order.side {
-                    OrderSide::Buy => low <= limit,   // price dipped to/below our bid
-                    OrderSide::Sell => high >= limit, // price rose to/above our ask
-                };
-                if crossed {
-                    let void = VenueOrderId::from(format!("SIM-R-{}", i));
-                    fills.push((void, r.order.clone(), limit));
-                    filled_idx.push(i);
-                }
+            let Some(limit) = r.order.price else { continue };
+            let crossed = match r.order.side {
+                OrderSide::Buy => low <= limit,   // price dipped to/below our bid
+                OrderSide::Sell => high >= limit, // price rose to/above our ask
+            };
+            if !crossed {
+                continue;
+            }
+            let fillable = match bar_volume {
+                Some(v) => self.model.fillable_qty(r.remaining, v, &*inst),
+                None => r.remaining,
+            };
+            if fillable.is_positive() {
+                decisions.push((i, r.venue_order_id.clone(), r.order.clone(), limit, fillable));
             }
         }
-        for (void, order, limit) in fills {
+
+        // Phase 2: schedule the fills and decrement `remaining` (mutable). Iteration order is
+        // ascending resting-index, so the `seq` assigned by the queue stays deterministic.
+        let mut to_remove: Vec<usize> = Vec::new();
+        for (i, void, order, limit, fillable) in decisions {
             let at = now.saturating_add_ns(self.model.latency_ns(CommandKind::Submit));
             let fill = self.make_fill(
                 &mut state,
                 &order,
                 void,
                 limit,
-                order.quantity,
+                fillable,
                 LiquiditySide::Maker,
                 at,
                 &*inst,
             );
             state.queue.push(at, fill);
+            let r = &mut state.resting[i];
+            r.remaining = r
+                .remaining
+                .checked_sub(fillable)
+                .unwrap_or_else(|_| Quantity::zero(fillable.precision()));
+            if r.remaining.is_zero() {
+                to_remove.push(i);
+            }
         }
-        // Remove filled resting orders (highest index first).
-        filled_idx.sort_unstable();
-        for i in filled_idx.into_iter().rev() {
+        // Remove fully-filled resting orders (highest index first so indices stay valid).
+        to_remove.sort_unstable();
+        for i in to_remove.into_iter().rev() {
             state.resting.remove(i);
         }
     }
@@ -391,5 +441,245 @@ mod tests {
         assert_eq!(reports.len(), 2);
         assert!(matches!(reports[0], ExecutionReport::Accepted { .. }));
         assert!(matches!(reports[1], ExecutionReport::Fill(_)));
+    }
+
+    fn bar(iid: &InstrumentId, low: &str, high: &str, close: &str, ts: u64) -> MarketEvent {
+        use qv_model::{AggregationSource, Bar, BarAggregation, BarSpec, BarType, PriceType};
+        let p = |s: &str| Price::from_decimal(s.parse().unwrap(), 2).unwrap();
+        MarketEvent::Bar(Bar {
+            bar_type: BarType {
+                instrument_id: iid.clone(),
+                spec: BarSpec {
+                    step: 1,
+                    aggregation: BarAggregation::Minute,
+                    price_type: PriceType::Last,
+                },
+                source: AggregationSource::External,
+            },
+            open: p(close),
+            high: p(high),
+            low: p(low),
+            close: p(close),
+            volume: Quantity::from_decimal(dec!(10), 3).unwrap(),
+            ts_event: UnixNanos(ts),
+            ts_init: UnixNanos(ts),
+        })
+    }
+
+    fn limit_sim(id: &InstrumentId) -> (Rc<HistoricalClock>, SimulatedExecutionClient) {
+        let (clock, cache, _id, _inst) = setup();
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            Box::new(DefaultBrokerageModel::default()),
+        );
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        // A buy limit @ 49000 rests (ref mark is 50000, so not immediately marketable).
+        let order = factory.limit(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(1), 3).unwrap(),
+            Price::from_decimal(dec!(49000), 2).unwrap(),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            UnixNanos(0),
+        );
+        sim.on_submit(order);
+        // Drain the Accepted; the order is now resting (no fill yet).
+        let reports = sim.drain_due(UnixNanos(10_000_000));
+        assert!(reports.iter().all(|r| !matches!(r, ExecutionReport::Fill(_))));
+        (clock, sim)
+    }
+
+    #[test]
+    fn resting_buy_limit_fills_when_bar_low_crosses() {
+        let (_clock, cache, id, _inst) = setup();
+        let _ = cache;
+        let (clock, sim) = limit_sim(&id);
+        // A bar whose LOW (48000) dips below the 49000 limit, though its CLOSE (50500) stays above.
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar(&id, "48000", "50600", "50500", 1_000_000_000));
+        let reports = sim.drain_due(UnixNanos(2_000_000_000));
+        let fills: Vec<_> = reports
+            .iter()
+            .filter_map(|r| match r {
+                ExecutionReport::Fill(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills.len(), 1, "low crossed the limit -> exactly one fill");
+        assert_eq!(fills[0].last_px, Price::from_decimal(dec!(49000), 2).unwrap());
+    }
+
+    #[test]
+    fn resting_buy_limit_does_not_fill_when_low_stays_above() {
+        let (_clock, cache, id, _inst) = setup();
+        let _ = cache;
+        let (clock, sim) = limit_sim(&id);
+        // Close-only-like bar: low == close == 50500, never reaching the 49000 limit -> no fill.
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar(&id, "50500", "50600", "50500", 1_000_000_000));
+        let reports = sim.drain_due(UnixNanos(2_000_000_000));
+        assert!(
+            reports.iter().all(|r| !matches!(r, ExecutionReport::Fill(_))),
+            "low stayed above the limit -> no fill"
+        );
+    }
+
+    fn bar_vol(id: &InstrumentId, low: &str, high: &str, close: &str, vol: &str, ts: u64) -> MarketEvent {
+        use qv_model::{AggregationSource, Bar, BarAggregation, BarSpec, BarType, PriceType};
+        let p = |s: &str| Price::from_decimal(s.parse().unwrap(), 2).unwrap();
+        MarketEvent::Bar(Bar {
+            bar_type: BarType {
+                instrument_id: id.clone(),
+                spec: BarSpec {
+                    step: 1,
+                    aggregation: BarAggregation::Minute,
+                    price_type: PriceType::Last,
+                },
+                source: AggregationSource::External,
+            },
+            open: p(close),
+            high: p(high),
+            low: p(low),
+            close: p(close),
+            volume: Quantity::from_decimal(vol.parse().unwrap(), 3).unwrap(),
+            ts_event: UnixNanos(ts),
+            ts_init: UnixNanos(ts),
+        })
+    }
+
+    #[test]
+    fn resting_limit_partial_fills_over_bars_by_volume() {
+        // A buy limit for qty 2.0 against bars of volume 4.0 at participation 0.25 fills 1.0/bar,
+        // so it completes over TWO bars as two partial fills summing to exactly the order quantity.
+        let (clock, cache, id, _inst) = setup();
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            Box::new(DefaultBrokerageModel::default()), // participation_rate = 0.25
+        );
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        let order = factory.limit(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(2), 3).unwrap(),
+            Price::from_decimal(dec!(49000), 2).unwrap(),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            UnixNanos(0),
+        );
+        sim.on_submit(order);
+        let _ = sim.drain_due(UnixNanos(10_000_000)); // Accepted; now resting
+
+        let collect_fills = |reports: Vec<ExecutionReport>| -> Vec<Quantity> {
+            reports
+                .into_iter()
+                .filter_map(|r| match r {
+                    ExecutionReport::Fill(f) => Some(f.last_qty),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        // Bar 1: crosses (low 48000 <= 49000), volume 4.0 -> cap 1.0 -> one partial of 1.0.
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_vol(&id, "48000", "50600", "50500", "4", 1_000_000_000));
+        let f1 = collect_fills(sim.drain_due(UnixNanos(1_500_000_000)));
+        assert_eq!(f1.len(), 1, "first bar: one partial fill");
+        assert_eq!(f1[0], Quantity::from_decimal(dec!(1), 3).unwrap());
+
+        // Bar 2: remaining 1.0, cap 1.0 -> completes; order removed from the book.
+        clock.advance_to(UnixNanos(2_000_000_000));
+        sim.on_market(&bar_vol(&id, "48000", "50600", "50500", "4", 2_000_000_000));
+        let f2 = collect_fills(sim.drain_due(UnixNanos(2_500_000_000)));
+        assert_eq!(f2.len(), 1, "second bar: completes the order");
+        assert_eq!(f2[0], Quantity::from_decimal(dec!(1), 3).unwrap());
+
+        // Bar 3: order fully filled and removed -> no further fills.
+        clock.advance_to(UnixNanos(3_000_000_000));
+        sim.on_market(&bar_vol(&id, "48000", "50600", "50500", "4", 3_000_000_000));
+        let f3 = collect_fills(sim.drain_due(UnixNanos(3_500_000_000)));
+        assert!(f3.is_empty(), "no fills after the order is complete");
+    }
+
+    #[test]
+    fn thin_volume_cross_still_makes_progress_one_lot_minimum() {
+        // A crossing bar whose participation share (0.25 * 0.003 = 0.00075) floors below one lot
+        // (size_increment 0.001) must still fill the minimum lot — never stall a crossed order.
+        let (clock, cache, id, _inst) = setup();
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            Box::new(DefaultBrokerageModel::default()),
+        );
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        let order = factory.limit(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(0.002), 3).unwrap(),
+            Price::from_decimal(dec!(49000), 2).unwrap(),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            UnixNanos(0),
+        );
+        sim.on_submit(order);
+        let _ = sim.drain_due(UnixNanos(10_000_000));
+
+        // Bar 1: thin volume 0.003 -> fills the one-lot minimum 0.001.
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_vol(&id, "48000", "50600", "50500", "0.003", 1_000_000_000));
+        let f1: Vec<_> = sim
+            .drain_due(UnixNanos(1_500_000_000))
+            .into_iter()
+            .filter_map(|r| match r {
+                ExecutionReport::Fill(f) => Some(f.last_qty),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(f1.len(), 1, "thin bar still fills (no stall)");
+        assert_eq!(f1[0], Quantity::from_decimal(dec!(0.001), 3).unwrap());
+    }
+
+    #[test]
+    fn ohlc_market_slippage_scales_with_range_and_caps_at_extreme() {
+        let (_clock, _cache, id, inst) = setup();
+        let model = DefaultBrokerageModel::default();
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        let buy = factory.market(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(1), 3).unwrap(),
+            UnixNanos(0),
+        );
+        let refpx = Price::from_decimal(dec!(50000), 2).unwrap();
+
+        // No bar range -> pure base-bps model (1 bp on 50000 = 5.0): 50005.
+        let no_range = model.fill_price(&buy, refpx, None, &*inst);
+        assert_eq!(no_range, Price::from_decimal(dec!(50005), 2).unwrap());
+
+        // With a range, a buy slips UP (base + range component) but never above the bar high.
+        let lo = Price::from_decimal(dec!(49000), 2).unwrap();
+        let hi = Price::from_decimal(dec!(51000), 2).unwrap();
+        let ranged = model.fill_price(&buy, refpx, Some((lo, hi)), &*inst);
+        assert!(ranged > no_range, "range adds slippage: {ranged:?} !> {no_range:?}");
+        assert!(ranged <= hi, "buy fill capped at the bar high");
+
+        // A high reference near the top forces the cap to bind exactly at the high.
+        let near_top = Price::from_decimal(dec!(50950), 2).unwrap();
+        let capped = model.fill_price(&buy, near_top, Some((lo, hi)), &*inst);
+        assert_eq!(capped, hi, "buy fill price capped at the bar high");
+
+        // Close AT the high: the range cap must NOT swallow the base slippage — a buy still pays
+        // the base bps above the close (1 bp on 51000 = 5.10), i.e. just past the high.
+        let at_high = model.fill_price(&buy, hi, Some((lo, hi)), &*inst);
+        assert!(at_high > hi, "base slippage preserved even when close == high: {at_high:?}");
+        assert_eq!(at_high, Price::from_decimal(dec!(51005.10), 2).unwrap());
     }
 }

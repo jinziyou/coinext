@@ -14,7 +14,13 @@ qv_py = pytest.importorskip(
     reason="build qv_py first: see crates/qv-py (uvx maturin develop --features python)",
 )
 
-from qv_analytics import compute_metrics, detect_lookahead_bias, tear_sheet  # noqa: E402
+from qv_analytics import (  # noqa: E402
+    compute_metrics,
+    detect_lookahead_bias,
+    screen_biases,
+    stats_from_result,
+    tear_sheet,
+)
 from qv_backtest import run, synthetic_bars  # noqa: E402
 from qv_strategy import SmaCross  # noqa: E402
 
@@ -33,7 +39,70 @@ def test_python_strategy_runs_through_rust_kernel():
     assert -1.0 < m.total_return < 5.0
     assert m.max_drawdown >= 0.0
     assert detect_lookahead_bias(list(res.equity_curve)) == []
-    assert "VeloxQuant tear sheet" in tear_sheet(res)
+    assert "VeloxQuant tear sheet" in tear_sheet(res, bars=bars)
+
+
+def test_trade_stats_from_real_backtest():
+    # An SmaCross over a sine+trend series opens and closes positions -> closed round-trips.
+    bars = synthetic_bars(400)
+    res = run(SmaCross(10, 30, 0.5), bars=bars)
+    stats = stats_from_result(res)
+
+    assert stats.n_trades >= 1
+    assert stats.n_wins + stats.n_losses <= stats.n_trades
+    assert 0.0 <= stats.win_rate <= 1.0
+    assert 0.0 <= stats.exposure <= 1.0
+    assert stats.turnover > 0.0  # it traded, so notional moved
+    # Gross trade PnL should track the engine's realized PnL within fees (engine charges taker fee).
+    tol = abs(res.realized_pnl) * 0.5 + 50.0
+    assert stats.total_pnl == pytest.approx(res.realized_pnl, abs=tol)
+
+
+def test_bias_screen_on_real_backtest_is_clean():
+    bars = synthetic_bars(400)
+    res = run(SmaCross(10, 30, 0.5), bars=bars)
+    report = screen_biases(res, bars=bars)
+    # A legitimate event-driven backtest on the real (non-leaky) kernel: no structural look-ahead.
+    assert report.lookahead == []
+
+
+def test_walk_forward_optimize_through_real_backtest():
+    # Grid walk-forward over the AUTHORITATIVE Rust backtest: optimize fast/slow in-sample per fold,
+    # validate out-of-sample, and confirm the report is well-formed with a finite OOS estimate.
+    from qv_analytics import compute_metrics
+    from qv_optimize import walk_forward_optimize
+
+    bars = synthetic_bars(1200)
+
+    def objective(params, window):
+        if params["fast"] >= params["slow"] or len(window) < 2:
+            return float("-inf")
+        res = run(SmaCross(**params), bars=window)
+        return compute_metrics(list(res.equity_curve)).sharpe
+
+    report = walk_forward_optimize(
+        bars,
+        objective,
+        param_grid={"fast": [5, 10, 15], "slow": [25, 40]},
+        n_splits=3,
+        optimizer="grid",
+    )
+    assert len(report.folds) == 3
+    assert report.chosen_params["fast"] < report.chosen_params["slow"]
+    assert all(f.params["fast"] < f.params["slow"] for f in report.folds)
+    # The OOS mean is a real number (the series trades on every test window of this length).
+    assert report.oos_mean == pytest.approx(report.oos_mean)  # not NaN
+    assert "walk-forward" in report.render()
+
+
+def test_qv_kernel_run_backtest_wrapper_runs():
+    # The qv_kernel convenience wrapper must delegate to qv_backtest.run (bar normalization +
+    # symbol/venue/balance defaults), not call the native 6-wide pyfunction with raw 2-tuples.
+    import qv_kernel
+
+    res = qv_kernel.run_backtest(SmaCross(10, 30, 0.5), bars=synthetic_bars(200))
+    assert res.orders_submitted > 0
+    assert res.starting_equity == pytest.approx(100_000.0)
 
 
 def test_backtest_is_deterministic():
@@ -43,6 +112,98 @@ def test_backtest_is_deterministic():
     assert list(a.equity_curve) == list(b.equity_curve)
     assert a.final_equity == b.final_equity
     assert a.fills == b.fills
+
+
+def test_ohlc_limit_fills_on_intrabar_wick_not_close():
+    # The OHLC-aware proof: a resting buy limit @ 95 fills only because a later bar's LOW wicks to
+    # 94 — its close never leaves 100. A close-only series (high==low==close) misses the touch.
+    from qv_strategy import Strategy
+
+    class LimitOnce(Strategy):
+        def __init__(self):
+            self.done = False
+
+        def on_bar(self, bar, ctx):
+            if not self.done:
+                self.done = True
+                ctx.submit_limit("buy", 1.0, 95.0)
+
+    step, base = 60_000_000_000, 1_700_000_000_000_000_000
+    ohlc = [
+        (base + 0 * step, 100.0, 100.0, 100.0, 100.0),
+        (base + 1 * step, 100.0, 101.0, 94.0, 100.0),  # low wicks below the 95 limit
+        (base + 2 * step, 100.0, 101.0, 99.0, 100.0),
+    ]
+    close_only = [(base + i * step, 100.0) for i in range(3)]
+
+    assert run(LimitOnce(), bars=ohlc).fills == 1
+    assert run(LimitOnce(), bars=close_only).fills == 0
+
+
+def test_large_limit_partial_fills_over_bars_via_bridge():
+    # A resting buy limit of qty 5.0 vs volume-4.0 bars at participation 0.25 fills 1.0 per bar,
+    # so ONE order produces FIVE partial fills over five bars (the volume-participation model).
+    from qv_strategy import Strategy
+
+    class BigLimitOnce(Strategy):
+        def __init__(self):
+            self.done = False
+
+        def on_bar(self, bar, ctx):
+            if not self.done:
+                self.done = True
+                ctx.submit_limit("buy", 5.0, 95.0)
+
+    step, base = 60_000_000_000, 1_700_000_000_000_000_000
+    bars = [(base, 100.0, 100.0, 100.0, 100.0, 4.0)]  # submit bar: no cross (low=100 > 95)
+    for i in range(1, 8):  # crossing bars (low 94 <= 95), volume 4 -> cap 1.0/bar
+        bars.append((base + i * step, 100.0, 101.0, 94.0, 100.0, 4.0))
+
+    res = run(BigLimitOnce(), bars=bars)
+    assert res.orders_submitted == 1
+    assert res.fills == 5  # qty 5.0 / (0.25 * 4.0 = 1.0 per bar) = 5 partial fills
+
+
+def test_pybar_exposes_threaded_volume():
+    from qv_strategy import Strategy
+
+    class VolRecorder(Strategy):
+        def __init__(self):
+            self.vols: list[float] = []
+
+        def on_bar(self, bar, ctx):
+            self.vols.append(bar.volume)
+
+    step, base = 60_000_000_000, 1_700_000_000_000_000_000
+    bars = [(base + i * step, 100.0, 101.0, 99.0, 100.0, 73.0) for i in range(3)]
+    rec = VolRecorder()
+    run(rec, bars=bars)
+    assert rec.vols == [73.0, 73.0, 73.0]  # real volume reaches the strategy
+
+
+def test_limit_maker_trades_on_synthetic_ohlc():
+    from qv_backtest import synthetic_ohlc_bars
+    from qv_strategy import LimitMaker
+
+    bars = synthetic_ohlc_bars(400, wick=0.004)
+    res = run(LimitMaker(dip_bps=30, rise_bps=30, qty=0.1), bars=bars)
+    assert res.orders_submitted > 0
+    assert res.fills > 0  # the resting limits fill on intrabar wicks
+    # Only one order is outstanding at a time -> no runaway pile-up of denials.
+    assert res.orders_denied == 0
+    # The tear sheet accepts OHLC bars (the look-ahead screen must take row[0] regardless of width).
+    assert "VeloxQuant tear sheet" in tear_sheet(res, bars=bars)
+
+
+def test_to_ohlcv_normalization_and_validation():
+    from qv_backtest import _to_ohlcv
+
+    # close-only and OHLC default volume to 0 (no participation cap); OHLCV carries real volume.
+    assert _to_ohlcv([(1, 100.0)]) == [(1, 100.0, 100.0, 100.0, 100.0, 0.0)]
+    assert _to_ohlcv([(1, 99.0, 101.0, 98.0, 100.0)]) == [(1, 99.0, 101.0, 98.0, 100.0, 0.0)]
+    assert _to_ohlcv([(1, 99.0, 101.0, 98.0, 100.0, 42.0)]) == [(1, 99.0, 101.0, 98.0, 100.0, 42.0)]
+    with pytest.raises(ValueError):
+        _to_ohlcv([(1, 2, 3)])  # 3-column rows match no accepted shape
 
 
 def test_long_position_tracks_price_up():

@@ -20,6 +20,7 @@ from typing import Protocol
 
 
 class Bar(Protocol):
+    symbol: str
     open: float
     high: float
     low: float
@@ -30,8 +31,11 @@ class Bar(Protocol):
 class Ctx(Protocol):
     now: int
 
-    def position(self) -> float: ...
-    def submit_market(self, side: str, qty: float) -> None: ...
+    def position(self, symbol: str | None = None) -> float: ...
+    def submit_market(self, side: str, qty: float, symbol: str | None = None) -> None: ...
+    def submit_limit(
+        self, side: str, qty: float, price: float, symbol: str | None = None
+    ) -> None: ...
 
 
 class Strategy:
@@ -97,4 +101,79 @@ class SmaCross(Strategy):
         self.prev_fast, self.prev_slow = f, s
 
 
-__all__ = ["Strategy", "SmaCross", "Bar", "Ctx"]
+class LimitMaker(Strategy):
+    """A single-order-at-a-time maker that rests LIMIT orders (the OHLC-aware path).
+
+    When flat it rests a buy limit ``dip_bps`` below the close; once filled (position turns long) it
+    rests a sell limit ``rise_bps`` above the close; on exit it cycles back. Exactly one order is
+    outstanding at a time (guarded by the ``pending_*`` flags — no cancel API is needed and orders
+    never pile up). Because the orders REST, they fill on a later bar whose low/high wicks across
+    the price even if that bar's close does not — which OHLC-aware fills capture and close-only
+    series miss.
+    """
+
+    def __init__(self, dip_bps: float = 20.0, rise_bps: float = 20.0, qty: float = 0.1) -> None:
+        self.dip_bps = dip_bps
+        self.rise_bps = rise_bps
+        self.qty = qty
+        self.pending_buy = False
+        self.pending_sell = False
+
+    def on_bar(self, bar: Bar, ctx: Ctx) -> None:
+        if ctx.position() > 0.0:  # long -> the buy filled; rest the exit once
+            self.pending_buy = False
+            if not self.pending_sell:
+                ctx.submit_limit("sell", self.qty, bar.close * (1.0 + self.rise_bps / 1e4))
+                self.pending_sell = True
+        else:  # flat -> rest an entry once
+            self.pending_sell = False
+            if not self.pending_buy:
+                ctx.submit_limit("buy", self.qty, bar.close * (1.0 - self.dip_bps / 1e4))
+                self.pending_buy = True
+
+
+class MultiSma(Strategy):
+    """Per-symbol SMA crossover across MANY instruments through one kernel (``run_multi``).
+
+    Keeps independent fast/slow SMAs and an in-position flag per ``bar.symbol``, and targets each
+    order at that symbol via the ``symbol`` arg on ``ctx.submit_market``. Demonstrates that one
+    strategy/engine pair runs a whole portfolio — positions, signals, and orders stay isolated per
+    instrument (the same parity-valid path as the single-instrument case).
+    """
+
+    def __init__(self, fast: int = 10, slow: int = 30, qty: float = 0.5) -> None:
+        self.fast_n = fast
+        self.slow_n = slow
+        self.qty = qty
+        self._state: dict[str, dict] = {}
+
+    def on_bar(self, bar: Bar, ctx: Ctx) -> None:
+        st = self._state.get(bar.symbol)
+        if st is None:
+            st = {
+                "fast": _Sma(self.fast_n),
+                "slow": _Sma(self.slow_n),
+                "prev_fast": None,
+                "prev_slow": None,
+                "in_pos": False,
+            }
+            self._state[bar.symbol] = st
+        st["fast"].update(bar.close)
+        st["slow"].update(bar.close)
+        f, s = st["fast"].value, st["slow"].value
+        if f is None or s is None:
+            return
+        pf, ps = st["prev_fast"], st["prev_slow"]
+        if pf is not None and ps is not None:
+            cross_up = pf <= ps and f > s
+            cross_down = pf >= ps and f < s
+            if cross_up and not st["in_pos"]:
+                ctx.submit_market("buy", self.qty, bar.symbol)
+                st["in_pos"] = True
+            elif cross_down and st["in_pos"]:
+                ctx.submit_market("sell", self.qty, bar.symbol)
+                st["in_pos"] = False
+        st["prev_fast"], st["prev_slow"] = f, s
+
+
+__all__ = ["Strategy", "SmaCross", "LimitMaker", "MultiSma", "Bar", "Ctx"]

@@ -68,14 +68,18 @@ def build_kernel(config: Any, env: Environment | str = Environment.BACKTEST) -> 
     return builder(env.value, config)
 
 
-def run_backtest(strategy: Any, bars: list[tuple[int, float]], **kwargs: Any) -> Any:
+def run_backtest(strategy: Any, bars: list[tuple], **kwargs: Any) -> Any:
     """Convenience pass-through to the authoritative backtest runner.
 
-    Delegates to ``qv_py.run_backtest`` directly (the same call ``qv_backtest.run`` makes). Kept
-    here so callers that hold a Kernel-shaped mental model have a single import surface.
+    Delegates to :func:`qv_backtest.run`, which normalizes ``bars`` (close-only / OHLC / OHLCV via
+    ``_to_ohlcv``) and supplies the ``symbol``/``venue``/``starting_balance`` defaults the native
+    ``qv_py.run_backtest`` requires. Kept here so callers with a Kernel-shaped mental model have a
+    single import surface. (Calling ``qv_py.run_backtest`` directly would need 6-wide bar tuples and
+    the required positional args.)
     """
-    qv_py = _qv_py()
-    return qv_py.run_backtest(strategy, bars=bars, **kwargs)
+    from qv_backtest import run as _run
+
+    return _run(strategy, bars=bars, **kwargs)
 
 
 __all__ = ["Environment", "build_kernel", "run_backtest"]

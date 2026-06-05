@@ -18,22 +18,43 @@
   diff) + `qv testnet-gate` one-command loop (real data → backtest → testnet fills → gate).
 - **Local Parquet data lake**: paginated downloader (breaks the 1000/req limit), partitioned store
   (dedup/idempotent), HistoryReader; `qv download` / `qv backtest --from-lake` / `qv catalog`.
+- **Walk-forward optimization** (`qv_optimize`): genuine walk-forward (rolling + anchored/expanding
+  splits) that optimizes params IN-SAMPLE per fold and re-scores them OUT-of-sample, reporting
+  **OOS degradation** (the overfitting guard). Pure-Python grid search by default (no extra deps) or
+  Optuna TPE (`--optuna`); each evaluation runs the AUTHORITATIVE event-driven backtest. `qv optimize
+  [--mode rolling|anchored] [--optuna] [--from-lake]`. Unit + integration tested.
+- **Analytics depth** (`qv_analytics`): FIFO round-trip **trade reconstruction** + trade-level stats
+  (win rate, profit factor, avg/largest win-loss, expectancy, exposure, turnover); heuristic **bias
+  screens** (look-ahead: pre-data / past-span fills, non-monotonic equity; overfitting: near-perfect
+  win rate, zero-drawdown-with-gains) folded into the tear sheet; optional matplotlib **tear-sheet
+  plots** (equity / drawdown / per-bar returns). Unit + integration tested.
+- **OHLC-aware fills** (`qv-sim` + `qv-py`): the PyO3 bridge now passes real **OHLC** (not a
+  close-flattened bar), so the sim matches resting **limit** orders against each bar's high/low — a
+  limit fills on an intrabar wick its close never reached. Python `Strategy` gains `ctx.submit_limit`
+  and a `LimitMaker` example; `qv backtest --strategy limit-maker` and `DataLake.read_ohlc` exercise
+  it end-to-end. Rust (sim) + Python (bridge) tested, incl. the close-only-vs-OHLC discriminator.
+- **Multi-instrument backtests** (`qv-py` + `qv_backtest`): the bridge now runs MANY symbols through
+  ONE kernel (shared Cache/sim/risk/portfolio) via `run_backtest_multi` + `qv_backtest.run_multi`.
+  `bar.symbol` tags each event and `ctx.{submit_market,submit_limit,position}` take an optional
+  `symbol` (single-instrument calls still default it). A `MultiSma` example + `qv backtest-multi`
+  drive it; tested incl. position isolation and **portfolio == sum of standalone single runs**.
+- **Richer BrokerageModel** (`qv-sim`): (a) **volume-participation partial fills** — a resting limit
+  fills at most `participation_rate` of each bar's volume, so a large order fills across several bars
+  as multiple `PartiallyFilled` events (the FSM/Position machinery already supported this; the sim
+  now emits it, with a stable per-order venue id and re-rested residuals); (b) **OHLC-aware market
+  slippage** — market fills add an intrabar-range component on top of the base bps, capped at the
+  bar's high/low. Real **volume** is threaded through the bridge (`bar.volume`, OHLCV bars,
+  `DataLake.read_ohlcv`); `volume=0` means "no cap" (close-only series unchanged). Rust + Python
+  tested (a qty-5 limit splitting into 5 fills over 5 bars; slippage direction/cap; backward compat).
 
 ## Next — research side (recommended order)
 
-1. **Walk-forward optimization (Optuna)** — make `qv_optimize` real: TPE parameter search over the
-   AUTHORITATIVE event-driven backtest, walk-forward / CV splits, in-sample vs **out-of-sample (OOS)**
-   degradation reporting. Now that the data lake gives months of reproducible history, this is the
-   highest-value next step (and OOS validation is the main guard against overfitting).
-2. **Analytics depth** — trade-level stats (win rate, profit factor, avg trade, exposure, turnover),
-   tear-sheet **plots** (equity/drawdown/returns), and actually implement the lookahead + recursion
-   **bias detectors** (currently stubs) so every backtest is auto-screened.
-3. **Backtest fidelity** — OHLC-aware fills in `qv-sim` (use the bar high/low already stored in the
-   lake, not just close), multi-instrument backtests, richer `BrokerageModel` (queue/partial-fill).
-4. **Vectorized research screen + cross-check** — the fast, NON-authoritative `populate_*` screen for
+1. **Deeper microstructure** — limit-order **queue position** (fill only after the volume ahead of
+   you trades through) and per-bar market-order participation (cap aggressive fills by volume too).
+2. **Vectorized research screen + cross-check** — the fast, NON-authoritative `populate_*` screen for
    coarse sweeps, with the advisory `qv_parity.cross_check` drift warning vs the event-driven runner.
-5. **Strategy ergonomics** — broaden the Python `Strategy` surface beyond `on_bar` (quotes/trades/
-   timers/order events), wire indicators, notebooks for the research loop.
+3. **Strategy ergonomics** — broaden the Python `Strategy` surface further (quotes/trades/timers/
+   order events; `ctx.cancel`), wire indicators, notebooks for the research loop.
 
 ## Deferred — live / ops (start when ready to trade)
 
