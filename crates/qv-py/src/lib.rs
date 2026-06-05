@@ -141,6 +141,10 @@ mod imp {
         pub now: u64,
         signed_positions: std::collections::HashMap<String, f64>,
         default_symbol: String,
+        // Per-symbol (price_precision, size_precision), to VALIDATE a submit at queue time exactly as
+        // replay would. A submit that would be dropped on replay (unknown symbol / bad qty / bad
+        // price) must NOT mint or count an id, or every later predicted id in the handler desyncs.
+        metas: std::collections::HashMap<String, (u8, u8)>,
         // For deterministically pre-computing the client_order_id a submit WILL get on replay
         // (`{strategy_id}-{seq:020}`), so a handler can cancel an order it just submitted.
         strategy_id: String,
@@ -156,6 +160,14 @@ mod imp {
             *n += 1;
             format!("{}-{:020}", self.strategy_id, self.base_seq + *n)
         }
+        /// Resolve a symbol (default if `None`) to its (price_precision, size_precision), or raise.
+        fn resolve(&self, symbol: &Option<String>) -> PyResult<(String, u8, u8)> {
+            let sym = symbol.clone().unwrap_or_else(|| self.default_symbol.clone());
+            match self.metas.get(&sym) {
+                Some(&(pp, sp)) => Ok((sym, pp, sp)),
+                None => Err(vexc(format!("unknown symbol {sym:?}"))),
+            }
+        }
     }
 
     #[pymethods]
@@ -167,28 +179,42 @@ mod imp {
             self.signed_positions.get(key).copied().unwrap_or(0.0)
         }
         /// Queue a market order; returns its client_order_id (usable with `cancel`). `side` is
-        /// "buy"/"sell"; `symbol` defaults to the only instrument.
+        /// "buy"/"sell"; `symbol` defaults to the only instrument. Raises `ValueError` for an
+        /// unknown symbol or a qty the instrument's precision can't represent (so the predicted id
+        /// always matches the one the order actually gets).
         #[pyo3(signature = (side, qty, symbol=None))]
-        fn submit_market(&self, side: &str, qty: f64, symbol: Option<String>) -> String {
+        fn submit_market(&self, side: &str, qty: f64, symbol: Option<String>) -> PyResult<String> {
+            let (_sym, _pp, sp) = self.resolve(&symbol)?;
+            Quantity::from_f64(qty, sp).map_err(vexc)?; // same check replay does -> never drops
             self.outbox.borrow_mut().push(PyIntent::Submit {
                 side: side.to_string(),
                 qty,
                 limit_px: None,
                 symbol,
             });
-            self.next_coid()
+            Ok(self.next_coid())
         }
         /// Queue a resting limit order at `price`; returns its client_order_id. Fills when a later
         /// bar's low/high crosses it — the OHLC-aware path (matched against bar high/low, not close).
+        /// Raises `ValueError` for an unknown symbol or a qty/price the precision can't represent.
         #[pyo3(signature = (side, qty, price, symbol=None))]
-        fn submit_limit(&self, side: &str, qty: f64, price: f64, symbol: Option<String>) -> String {
+        fn submit_limit(
+            &self,
+            side: &str,
+            qty: f64,
+            price: f64,
+            symbol: Option<String>,
+        ) -> PyResult<String> {
+            let (_sym, pp, sp) = self.resolve(&symbol)?;
+            Quantity::from_f64(qty, sp).map_err(vexc)?;
+            Price::from_f64(price, pp).map_err(vexc)?;
             self.outbox.borrow_mut().push(PyIntent::Submit {
                 side: side.to_string(),
                 qty,
                 limit_px: Some(price),
                 symbol,
             });
-            self.next_coid()
+            Ok(self.next_coid())
         }
         /// Cancel a resting order by the client_order_id returned from `submit_market`/`submit_limit`
         /// (or seen on a `Fill`/`OrderEvent`).
@@ -296,6 +322,11 @@ mod imp {
             let now = ctx.now_ns().as_u64();
             let base_seq = ctx.order_factory().seq();
             let signed_positions = self.snapshot(ctx);
+            let metas: std::collections::HashMap<String, (u8, u8)> = self
+                .instruments
+                .iter()
+                .map(|(sym, m)| (sym.clone(), (m.price_precision, m.size_precision)))
+                .collect();
             let intents: Vec<PyIntent> = Python::attach(|py| {
                 let py_ctx = Py::new(
                     py,
@@ -303,6 +334,7 @@ mod imp {
                         now,
                         signed_positions,
                         default_symbol: self.default_symbol.clone(),
+                        metas,
                         strategy_id: self.strategy_id.clone(),
                         base_seq,
                         submit_count: RefCell::new(0),

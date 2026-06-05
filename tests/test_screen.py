@@ -34,11 +34,19 @@ def test_sma_matches_reference():
     np.testing.assert_allclose(sma(v, 1), v)
 
 
-def test_sma_cross_positions_long_when_fast_above_slow():
+def test_sma_cross_positions_enters_only_on_a_real_up_cross():
+    # A dip-then-rise series produces a genuine up-cross at bar 4 -> long from there (stateful).
+    closes = np.array([4.0, 3.0, 2.0, 3.0, 4.0, 5.0])
+    pos = sma_cross_positions(closes, fast=2, slow=3, qty=1.0)
+    np.testing.assert_allclose(pos, [0.0, 0.0, 0.0, 0.0, 1.0, 1.0])
+
+
+def test_sma_cross_positions_flat_when_fast_starts_above_slow():
+    # Strictly rising from the start: the fast SMA is already above the slow at the first warm bar,
+    # so there is NO up-cross to observe -> flat throughout, like SmaCross (NOT a naive f>s level).
     closes = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
     pos = sma_cross_positions(closes, fast=2, slow=3, qty=1.0)
-    # bars 0,1 not warm -> flat; from bar 2 the rising series keeps fast > slow -> long.
-    np.testing.assert_allclose(pos, [0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
+    np.testing.assert_allclose(pos, np.zeros(6))
 
 
 def test_vector_backtest_pnl_and_fills():
@@ -107,3 +115,23 @@ def test_cross_check_aligns_signals_for_realistic_minute_end_bars():
 
     warnings = cross_check_vs_event(bars, fast=10, slow=30, qty=0.5)
     assert not any("signal-timing drift" in w for w in warnings), warnings
+
+
+def test_screen_signals_match_authoritative_sma_cross():
+    # The faithful stateful proxy must enter/exit on the SAME bars as the event-driven SmaCross.
+    pytest.importorskip("qv_py", reason="build qv_py: uvx maturin develop --features python")
+    import qv_backtest
+    from qv_screen import sma_cross_positions, vector_backtest
+    from qv_strategy import SmaCross
+
+    bars = qv_backtest.synthetic_bars(400)
+    closes = np.array([c for _, c in bars])
+    vec = vector_backtest(bars, sma_cross_positions(closes, 10, 30, 0.5))
+    event = qv_backtest.run(SmaCross(10, 30, 0.5), bars=bars)
+
+    # Compare the set of (bar-bucket, side) signals — they must agree (fills count + bars).
+    step = 60_000_000_000
+    vec_sig = {(t // step, side) for t, side, _q, _p in vec.fills}
+    ev_sig = {(t // step, side) for t, _sym, side, _q, _p in event.fills_log}
+    assert vec_sig == ev_sig
+    assert len(vec.fills) == event.fills

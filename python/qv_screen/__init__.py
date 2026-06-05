@@ -57,17 +57,36 @@ def sma(values: np.ndarray, period: int) -> np.ndarray:
 def sma_cross_positions(
     closes: np.ndarray, fast: int, slow: int, qty: float = 0.5
 ) -> np.ndarray:
-    """Vectorized long/flat SMA-crossover TARGET position per bar (``qty`` when fast>slow, else 0).
+    """Vectorized long/flat SMA-crossover TARGET position per bar — a faithful proxy of
+    ``qv_strategy.SmaCross``.
 
-    Equivalent to ``qv_strategy.SmaCross`` (long while the fast SMA is above the slow): being long
-    whenever ``fast > slow`` is exactly entering on the up-cross and exiting on the down-cross. Bars
-    where either SMA is not yet warm are flat.
+    Matches the STATEFUL event-driven strategy: start flat; ENTER (``qty``) only on a strict
+    up-cross (``prev_fast <= prev_slow`` and ``fast > slow``); EXIT (``0``) only on a strict
+    down-cross (``prev_fast >= prev_slow`` and ``fast < slow``); HOLD on an exact touch
+    (``fast == slow``) and through warm-up. This is NOT the naive stateless ``fast > slow`` level —
+    that would spuriously enter at a fast-above-slow warm-up start and flip flat on a touch, so the
+    cross-check would then flag a self-inflicted divergence instead of a real screen↔runner one.
     """
     closes = np.asarray(closes, dtype=float)
     f = sma(closes, fast)
     s = sma(closes, slow)
-    long = (f > s) & ~np.isnan(f) & ~np.isnan(s)
-    return np.where(long, float(qty), 0.0)
+    warm = ~np.isnan(f) & ~np.isnan(s)
+    prev_warm = np.roll(warm, 1)
+    prev_warm[0] = False
+    pf = np.roll(f, 1)
+    ps = np.roll(s, 1)
+    both = warm & prev_warm
+    up = both & (pf <= ps) & (f > s)  # prev not-above, now strictly above -> enter
+    down = both & (pf >= ps) & (f < s)  # prev not-below, now strictly below -> exit
+
+    # Forward-fill the last cross direction (+1 enter / -1 exit); flat before the first cross.
+    state = np.zeros(len(closes))
+    state[up] = 1.0
+    state[down] = -1.0
+    last = np.where(state != 0.0, np.arange(len(closes)), 0)
+    np.maximum.accumulate(last, out=last)
+    direction = state[last]
+    return np.where(direction > 0.0, float(qty), 0.0)
 
 
 def vector_backtest(

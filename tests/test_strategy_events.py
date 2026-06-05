@@ -113,6 +113,33 @@ def test_cancel_prevents_a_resting_limit_from_filling():
     assert control.fills == 1, "without the cancel the same bars fill the limit"
 
 
+def test_invalid_submit_raises_and_keeps_id_prediction_aligned():
+    # A submit the instrument precision can't represent (NaN qty) must RAISE — not silently drop on
+    # replay, which would desync every later predicted client_order_id in the handler. After it's
+    # it, the next valid submit still gets the id its fill actually carries.
+    class TryBad(Strategy):
+        def __init__(self):
+            self.raised = False
+            self.good_id = None
+            self.fills = []
+
+        def on_bar(self, bar, ctx):
+            if self.good_id is None:
+                try:
+                    ctx.submit_market("buy", float("nan"))  # invalid -> ValueError, no id consumed
+                except ValueError:
+                    self.raised = True
+                self.good_id = ctx.submit_market("buy", 1.0)  # gets the FIRST seq, as predicted
+
+        def on_order_filled(self, fill, ctx):
+            self.fills.append(fill.client_order_id)
+
+    s = TryBad()
+    run(s, bars=[(BASE + i * STEP, 100.0) for i in range(4)])
+    assert s.raised
+    assert s.fills and s.fills[0] == s.good_id  # fill's id == predicted id (no desync)
+
+
 def test_set_timer_fires_on_timer():
     class Timed(Strategy):
         def __init__(self):
