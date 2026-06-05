@@ -351,25 +351,26 @@ impl SimulatedExecutionClient {
                 continue;
             }
             let Some(limit) = r.order.price else {
-                // AGGRESSIVE market remainder (no price): always takes liquidity at the bar's
-                // market price, capped by participation, no queue.
-                let fill_qty = match bar_volume {
-                    Some(v) => self.model.fillable_qty(r.remaining, v, &*inst),
-                    None => r.remaining,
-                };
-                if fill_qty.is_positive() {
-                    let fill_px = self
-                        .model
-                        .fill_price(&r.order, close, Some((low, high)), &*inst);
-                    decisions.push((
-                        i,
-                        r.venue_order_id.clone(),
-                        r.order.clone(),
-                        fill_px,
-                        fill_qty,
-                        None,
-                        LiquiditySide::Taker,
-                    ));
+                // AGGRESSIVE market remainder (no price): takes liquidity at the bar's market price,
+                // capped by participation, no queue. It only participates on BARS (which carry the
+                // volume to cap against); a quote/trade tick has no bar volume, so skip it rather
+                // than dumping the whole remainder in one shot (which would defeat participation).
+                if let Some(v) = bar_volume {
+                    let fill_qty = self.model.fillable_qty(r.remaining, v, &*inst);
+                    if fill_qty.is_positive() {
+                        let fill_px =
+                            self.model
+                                .fill_price(&r.order, close, Some((low, high)), &*inst);
+                        decisions.push((
+                            i,
+                            r.venue_order_id.clone(),
+                            r.order.clone(),
+                            fill_px,
+                            fill_qty,
+                            None,
+                            LiquiditySide::Taker,
+                        ));
+                    }
                 }
                 continue;
             };
