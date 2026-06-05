@@ -93,6 +93,32 @@ impl OrderFactory {
             ts,
         )
     }
+
+    /// A stop-MARKET order: rests until the market crosses `trigger` (buy: price rises to it /
+    /// sell: falls to it), then takes liquidity at the market (stop-loss / breakout entry).
+    pub fn stop_market(
+        &mut self,
+        instrument_id: InstrumentId,
+        side: OrderSide,
+        qty: Quantity,
+        trigger: Price,
+        ts: UnixNanos,
+    ) -> Order {
+        let id = self.next_id();
+        Order::new(
+            self.strategy_id.clone(),
+            id,
+            instrument_id,
+            side,
+            OrderType::StopMarket,
+            qty,
+            None,
+            Some(trigger),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            ts,
+        )
+    }
 }
 
 /// Everything a Strategy needs from the platform, injected by the kernel. Reads go straight to
@@ -177,6 +203,21 @@ impl StrategyContext {
             OrderFlags::default(),
             ts,
         );
+        let id = order.client_order_id.clone();
+        self.submit(order);
+        id
+    }
+    pub fn submit_stop_market(
+        &mut self,
+        instrument_id: InstrumentId,
+        side: OrderSide,
+        qty: Quantity,
+        trigger: Price,
+    ) -> ClientOrderId {
+        let ts = self.clock.now_ns();
+        let order = self
+            .factory
+            .stop_market(instrument_id, side, qty, trigger, ts);
         let id = order.client_order_id.clone();
         self.submit(order);
         id
