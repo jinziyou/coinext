@@ -73,13 +73,19 @@
   at each later bar's market price, also volume-capped) instead of dumping in one bar. Reuses the
   resting/two-phase machinery + the cached bar volume; close-only series (volume 0) fill fully, so
   existing behavior is unchanged. Rust + Python tested.
+- **Quote/trade tick feed** (`qv-py` + `qv_backtest` + `qv_data`): `run(..., quotes=…, trades=…)`
+  interleaves optional tick streams with the bars, so `on_quote`/`on_trade` fire AND ticks drive the
+  mark + resting-limit fills + the bid/ask reference for market orders. Synthesize from bars
+  (`synth_quotes`/`synth_trades`) or feed REAL Binance `aggTrades` (`fetch_binance_agg_trades`, no
+  key). The kernel now samples the equity curve at BAR cadence so sub-bar ticks don't distort the
+  annualized metrics. Tested incl. a real-aggTrades run and a tick-driven limit fill.
 
 ## Next — research side (recommended order)
 
-1. **Quote/trade data feed** — download/synthesize quotes (bookTicker) + trades (aggTrades) and feed
-   them into the backtest event stream so `on_quote`/`on_trade` fire in research backtests.
-2. **Strategy ergonomics** — research notebooks for the screen → optimize → backtest loop; expose
-   the remaining indicators / multi-timeframe helpers as strategies need them.
+1. **Research notebook** — an end-to-end demo (download → screen → optimize → backtest → tear-sheet)
+   over real data, stringing the features together.
+2. **Strategy ergonomics** — historical bookTicker (websocket capture) for real quotes; richer order
+   types (stop / trailing) in the sim.
 
 ## Deferred — live / ops (start when ready to trade)
 

@@ -18,8 +18,8 @@ mod imp {
     use qv_kernel::{BacktestConfig, BacktestKernel};
     use qv_model::{
         AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, Instrument,
-        InstrumentId, MarketEvent, OrderEvent, OrderSide, PositionSide, PriceType, StrategyId,
-        Symbol, Venue,
+        InstrumentId, MarketEvent, OrderEvent, OrderSide, PositionSide, PriceType, QuoteTick,
+        StrategyId, Symbol, TradeId, TradeTick, Venue,
     };
     use qv_ports::{Strategy, StrategyContext};
     use rust_decimal::prelude::FromPrimitive;
@@ -791,6 +791,51 @@ mod imp {
         }))
     }
 
+    /// Build a `QuoteTick` market event (top-of-book) — fires `on_quote` and updates the mark/mid.
+    fn build_quote_event(
+        meta: &InstrumentMeta,
+        ts: u64,
+        bid: f64,
+        ask: f64,
+        bid_size: f64,
+        ask_size: f64,
+    ) -> PyResult<MarketEvent> {
+        Ok(MarketEvent::Quote(QuoteTick {
+            instrument_id: meta.iid.clone(),
+            bid: Price::from_f64(bid, meta.price_precision).map_err(vexc)?,
+            ask: Price::from_f64(ask, meta.price_precision).map_err(vexc)?,
+            bid_size: Quantity::from_f64(bid_size.max(0.0), meta.size_precision).map_err(vexc)?,
+            ask_size: Quantity::from_f64(ask_size.max(0.0), meta.size_precision).map_err(vexc)?,
+            ts_event: UnixNanos(ts),
+            ts_init: UnixNanos(ts),
+        }))
+    }
+
+    /// Build a `TradeTick` market event (a public print) — fires `on_trade` and updates the mark.
+    /// `side` is the taker aggressor (`+1` buy / `-1` sell); `seq` makes the trade_id unique.
+    fn build_trade_event(
+        meta: &InstrumentMeta,
+        ts: u64,
+        price: f64,
+        size: f64,
+        side: i8,
+        seq: u64,
+    ) -> PyResult<MarketEvent> {
+        Ok(MarketEvent::Trade(TradeTick {
+            instrument_id: meta.iid.clone(),
+            price: Price::from_f64(price, meta.price_precision).map_err(vexc)?,
+            size: Quantity::from_f64(size.max(0.0), meta.size_precision).map_err(vexc)?,
+            aggressor: if side < 0 {
+                OrderSide::Sell
+            } else {
+                OrderSide::Buy
+            },
+            trade_id: TradeId::from(format!("T-{seq:020}")),
+            ts_event: UnixNanos(ts),
+            ts_init: UnixNanos(ts),
+        }))
+    }
+
     /// Assemble and run the kernel over `events` (kernel sorts by `ts_event`), returning the result.
     #[allow(clippy::too_many_arguments)]
     fn run_kernel(
@@ -852,7 +897,7 @@ mod imp {
     #[pyo3(signature = (
         strategy, symbol, venue, starting_balance, bars,
         price_precision=2, size_precision=3, maker_fee=0.0002, taker_fee=0.0004,
-        queue_ahead_factor=0.0,
+        queue_ahead_factor=0.0, quotes=vec![], trades=vec![],
     ))]
     pub fn run_backtest(
         strategy: Py<PyAny>,
@@ -868,6 +913,10 @@ mod imp {
         maker_fee: f64,
         taker_fee: f64,
         queue_ahead_factor: f64,
+        // Optional tick streams, interleaved with bars by ts: quotes `(ts, bid, ask, bid_size,
+        // ask_size)` fire `on_quote`; trades `(ts, price, size, aggressor[+1/-1])` fire `on_trade`.
+        quotes: Vec<(u64, f64, f64, f64, f64)>,
+        trades: Vec<(u64, f64, f64, i8)>,
     ) -> PyResult<PyResultObj> {
         let settle = Currency::new("USDT", 8).map_err(vexc)?;
         let (inst, meta) = build_pair(
@@ -879,9 +928,15 @@ mod imp {
             maker_fee,
             taker_fee,
         )?;
-        let mut events = Vec::with_capacity(bars.len());
+        let mut events = Vec::with_capacity(bars.len() + quotes.len() + trades.len());
         for (ts, open, high, low, close, volume) in bars {
             events.push(build_bar_event(&meta, ts, open, high, low, close, volume)?);
+        }
+        for (ts, bid, ask, bid_size, ask_size) in quotes {
+            events.push(build_quote_event(&meta, ts, bid, ask, bid_size, ask_size)?);
+        }
+        for (seq, (ts, price, size, side)) in trades.into_iter().enumerate() {
+            events.push(build_trade_event(&meta, ts, price, size, side, seq as u64)?);
         }
         let starting = Money::from_decimal(
             Decimal::from_f64(starting_balance).unwrap_or(Decimal::ZERO),
