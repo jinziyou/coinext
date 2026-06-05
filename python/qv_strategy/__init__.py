@@ -191,6 +191,38 @@ class LimitMaker(Strategy):
                 self.pending_buy = True
 
 
+class RsiReversion(Strategy):
+    """RSI mean-reversion: go long when RSI dips below ``low``, flat when it rises above ``high``.
+
+    Uses the SHARED Rust ``qv_indicators.Rsi`` — the identical incremental implementation the
+    native-Rust path and live warm-up use, not a re-rolled Python copy. The import is lazy (in
+    ``__init__``) so ``qv_strategy`` still imports without the compiled ``qv_py`` present.
+    """
+
+    def __init__(
+        self, period: int = 14, low: float = 30.0, high: float = 70.0, qty: float = 0.5
+    ) -> None:
+        from qv_indicators import Rsi
+
+        self.rsi = Rsi(period)
+        self.low = low
+        self.high = high
+        self.qty = qty
+        self.in_pos = False
+
+    def on_bar(self, bar: Bar, ctx: Ctx) -> None:
+        self.rsi.update(bar.close)
+        v = self.rsi.value()
+        if v is None:
+            return
+        if v < self.low and not self.in_pos:
+            ctx.submit_market("buy", self.qty)
+            self.in_pos = True
+        elif v > self.high and self.in_pos:
+            ctx.submit_market("sell", self.qty)
+            self.in_pos = False
+
+
 class MultiSma(Strategy):
     """Per-symbol SMA crossover across MANY instruments through one kernel (``run_multi``).
 
@@ -240,6 +272,7 @@ __all__ = [
     "SmaCross",
     "LimitMaker",
     "MultiSma",
+    "RsiReversion",
     "Bar",
     "Quote",
     "Trade",

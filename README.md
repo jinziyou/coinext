@@ -29,7 +29,7 @@ Rust and mirrored to Python, and a vertical slice runs **end-to-end in pure Rust
 | Hexagonal ports (Data/Exec/Strategy/Risk/Portfolio/Bus traits + value types) | `qv-ports` | ✅ implemented |
 | In-memory store | `qv-cache` | ✅ implemented |
 | In-process bus (zero-serialization hot path) | `qv-bus` | ✅ implemented + tested |
-| Streaming indicators (SMA/EMA/RSI/ATR) | `qv-indicators` | ✅ implemented + tested |
+| Streaming indicators (SMA/EMA/RSI/ATR), bridged to Python (`qv_indicators`) | `qv-indicators`, `qv-py` | ✅ implemented + tested |
 | Pre-trade risk gate + kill-switch | `qv-risk-engine` | ✅ implemented |
 | Portfolio analytics (PnL, exposure, linear/inverse perps) | `qv-portfolio` | ✅ implemented |
 | Data + execution engines (OMS, FSM driver, report folding) | `qv-data-engine`, `qv-exec-engine` | ✅ implemented |

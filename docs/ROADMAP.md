@@ -62,13 +62,18 @@
   AUTHORITATIVE event-driven runner. `qv screen [--from-lake]`. Fixed a real bucket-alignment bug
   (real bars close at `:59.999`, so event-fill latency crosses the minute boundary) by snapping both
   fill streams to the bar grid. Unit + integration tested.
+- **Streaming indicators in Python** (`qv_indicators`): the tested Rust `qv-indicators` (SMA / EMA /
+  RSI / ATR) are bridged through `qv_py`, so a Python strategy uses the IDENTICAL incremental
+  implementation as warm-up / live rather than a re-rolled copy. `from qv_indicators import Rsi` →
+  `rsi.update(x); rsi.value()`; an `RsiReversion` example strategy. Values verified equal to the
+  Rust crate + the existing hand-rolled `_Sma`.
 
 ## Next — research side (recommended order)
 
 1. **More microstructure** — per-bar market-order participation (cap aggressive fills by volume
    too), and a quote/trade data feed so `on_quote`/`on_trade` fire in research backtests.
-2. **Strategy ergonomics** — wire the streaming indicators (`qv-indicators`) into the Python surface,
-   research notebooks for the screen → optimize → backtest loop.
+2. **Strategy ergonomics** — research notebooks for the screen → optimize → backtest loop; expose
+   the remaining indicators / multi-timeframe helpers as strategies need them.
 
 ## Deferred — live / ops (start when ready to trade)
 
