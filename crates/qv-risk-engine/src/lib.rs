@@ -86,6 +86,26 @@ impl RiskEngine for RiskGate {
             }
         }
 
+        // Initial-margin gate: an order that INCREASES exposure needs `added_notional / leverage` of
+        // free equity (equity minus margin already locked up). A reducing/closing order frees margin
+        // and is always allowed through this check. `leverage = None` = fully funded buying power.
+        if let (Some(lev), Some(px)) = (self.limits.leverage, ref_px) {
+            if lev > Decimal::ZERO {
+                let cur = Self::signed_position_qty(portfolio, order);
+                let delta = Decimal::from(order.side.sign()) * order.quantity.as_decimal();
+                let added_qty = (cur + delta).abs() - cur.abs();
+                if added_qty > Decimal::ZERO {
+                    let added_notional = px.as_decimal() * added_qty * mult;
+                    let equity = portfolio.equity().amount();
+                    let used = portfolio.gross_exposure().amount() / lev;
+                    let free = equity - used;
+                    if added_notional / lev > free {
+                        return RiskDecision::Denied(InsufficientMargin);
+                    }
+                }
+            }
+        }
+
         let _ = OrderSide::Buy; // (rate-limit throttle is a live-only concern; omitted in scaffold)
         RiskDecision::Approved
     }

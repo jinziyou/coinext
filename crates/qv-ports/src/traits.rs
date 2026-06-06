@@ -83,6 +83,8 @@ pub trait Portfolio {
     fn realized_pnl(&self, id: &InstrumentId) -> Money;
     fn gross_exposure(&self) -> Money;
     fn balance(&self, ccy: &Currency) -> Money;
+    /// Total account equity in the settlement currency = balance + realized + unrealized PnL.
+    fn equity(&self) -> Money;
 }
 
 /// The ONE public user API. The SAME subclass runs in event-driven backtest, sandbox, and live.

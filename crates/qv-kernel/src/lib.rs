@@ -15,9 +15,12 @@ use qv_model::{
     OrderEvent, OrderSide, PositionSide, StrategyId, TradeId, Venue, VenueOrderId,
 };
 use qv_portfolio::PortfolioState;
-use qv_ports::{BusMsg, MessageBus, RiskLimits, Strategy, StrategyCommand, StrategyContext, Topic};
+use qv_ports::{
+    BusMsg, MessageBus, Portfolio, RiskLimits, Strategy, StrategyCommand, StrategyContext, Topic,
+};
 use qv_risk_engine::RiskGate;
 use qv_sim::{BrokerageModel, DefaultBrokerageModel, SimulatedExecutionClient};
+use rust_decimal::Decimal;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -95,6 +98,8 @@ pub struct BacktestKernel {
     /// Dated contracts to settle, sorted by `expiry_ns`; `expiry_cursor` is the next unsettled.
     expiries: Vec<(UnixNanos, InstrumentId)>,
     expiry_cursor: usize,
+    /// Maintenance margin as a fraction of gross notional (from RiskLimits); `None` = no liquidation.
+    maintenance_margin_rate: Option<Decimal>,
     starting_equity: f64,
     result: RunResult,
 }
@@ -116,6 +121,7 @@ impl BacktestKernel {
             .filter_map(|i| i.expiry_ns().map(|e| (e, i.id())))
             .collect();
         expiries.sort_by_key(|(ts, _)| *ts);
+        let maintenance_margin_rate = config.risk.maintenance_margin_rate;
 
         let clock = Rc::new(HistoricalClock::new(config.start_ns));
         let cache = Rc::new(RefCell::new(Cache::new()));
@@ -159,6 +165,7 @@ impl BacktestKernel {
             cursor: 0,
             expiries,
             expiry_cursor: 0,
+            maintenance_margin_rate,
             starting_equity,
             result: RunResult {
                 equity_curve: Vec::new(),
@@ -275,6 +282,10 @@ impl BacktestKernel {
             // 4) Settle any dated contracts expiring at/before the frontier (AFTER the market event
             // at this ts, so the final mark / underlying spot is in the cache).
             self.settle_expiries(frontier);
+
+            // 5) Mark-to-market maintenance-margin check: liquidate if equity has fallen below the
+            // maintenance requirement (only when a leverage/maintenance model is configured).
+            self.check_liquidation(frontier);
         }
 
         self.strategy.on_stop(&mut self.ctx);
@@ -390,42 +401,9 @@ impl BacktestKernel {
         };
 
         // Close the open position with a synthetic settlement fill at the settlement price.
-        if let (Some(mut pos), Some(settle_px)) = (pos, settle_px) {
-            let close_side = match pos.side {
-                PositionSide::Long => OrderSide::Sell,
-                PositionSide::Short => OrderSide::Buy,
-                PositionSide::Flat => return,
-            };
-            let qty = pos.quantity;
-            let tag = format!("{iid}-SETTLE");
-            let fill = Fill {
-                trade_id: TradeId::from(tag.as_str()),
-                client_order_id: ClientOrderId::from(tag.as_str()),
-                venue_order_id: VenueOrderId::from(tag.as_str()),
-                instrument_id: iid.clone(),
-                side: close_side,
-                last_px: settle_px,
-                last_qty: qty,
-                fee: Money::zero(inst.settlement_currency()),
-                liquidity: LiquiditySide::Taker,
-                ts_event: now,
-                ts_init: now,
-            };
-            {
-                let mut cache = self.cache.borrow_mut();
-                let _ = pos.apply_fill(&fill, &*inst);
-                cache.upsert_position(pos);
-            }
-            self.result.fills += 1;
-            self.result.fills_log.push((
-                now.as_u64(),
-                iid.symbol.as_str().to_string(),
-                close_side.sign() as i8,
-                qty.as_f64(),
-                settle_px.as_f64(),
-            ));
-            self.notify_event(&OrderEvent::Filled(fill));
-            self.process_outbox();
+        let _ = (inst, pos); // resolved above only to gate settlement; close re-reads the cache.
+        if let Some(settle_px) = settle_px {
+            self.close_position_at(iid, settle_px, now, "SETTLE");
         }
 
         // The contract is dead: cancel any of the strategy's resting orders on it.
@@ -441,6 +419,89 @@ impl BacktestKernel {
             let events = self.exec_engine.cancel(&self.sim, coid, now);
             for ev in &events {
                 self.notify_event(ev);
+            }
+        }
+    }
+
+    /// Close any open position in `iid` at price `px` with a synthetic fill (used by expiry
+    /// settlement and liquidation). `tag_suffix` distinguishes the source (`SETTLE` / `LIQ`).
+    fn close_position_at(
+        &mut self,
+        iid: &InstrumentId,
+        px: Price,
+        now: UnixNanos,
+        tag_suffix: &str,
+    ) {
+        let (inst, pos) = {
+            let cache = self.cache.borrow();
+            (cache.instrument(iid), cache.position(iid).cloned())
+        };
+        let (Some(inst), Some(mut pos)) = (inst, pos) else {
+            return;
+        };
+        let close_side = match pos.side {
+            PositionSide::Long => OrderSide::Sell,
+            PositionSide::Short => OrderSide::Buy,
+            PositionSide::Flat => return,
+        };
+        let qty = pos.quantity;
+        let tag = format!("{iid}-{tag_suffix}");
+        let fill = Fill {
+            trade_id: TradeId::from(tag.as_str()),
+            client_order_id: ClientOrderId::from(tag.as_str()),
+            venue_order_id: VenueOrderId::from(tag.as_str()),
+            instrument_id: iid.clone(),
+            side: close_side,
+            last_px: px,
+            last_qty: qty,
+            fee: Money::zero(inst.settlement_currency()),
+            liquidity: LiquiditySide::Taker,
+            ts_event: now,
+            ts_init: now,
+        };
+        {
+            let mut cache = self.cache.borrow_mut();
+            let _ = pos.apply_fill(&fill, &*inst);
+            cache.upsert_position(pos);
+        }
+        self.result.fills += 1;
+        self.result.fills_log.push((
+            now.as_u64(),
+            iid.symbol.as_str().to_string(),
+            close_side.sign() as i8,
+            qty.as_f64(),
+            px.as_f64(),
+        ));
+        self.notify_event(&OrderEvent::Filled(fill));
+        self.process_outbox();
+    }
+
+    /// Liquidate the account if mark-to-market equity has fallen below the maintenance requirement
+    /// (`gross notional × maintenance_margin_rate`): force-flatten every open position at its mark.
+    /// Runs CONTINUOUSLY each bar (it naturally no-ops once flat, since `gross` is then 0), so a
+    /// position re-opened after a prior liquidation is still protected. No-op unless a maintenance
+    /// margin rate is configured.
+    fn check_liquidation(&mut self, now: UnixNanos) {
+        let Some(rate) = self.maintenance_margin_rate else {
+            return;
+        };
+        let equity = self.portfolio.equity().amount();
+        let gross = self.portfolio.gross_exposure().amount();
+        if gross <= Decimal::ZERO || equity >= gross * rate {
+            return;
+        }
+        let iids: Vec<InstrumentId> = {
+            let cache = self.cache.borrow();
+            cache
+                .positions()
+                .filter(|p| p.side != PositionSide::Flat)
+                .map(|p| p.instrument_id.clone())
+                .collect()
+        };
+        for iid in iids {
+            let mark = self.cache.borrow().mark(&iid);
+            if let Some(mark) = mark {
+                self.close_position_at(&iid, mark, now, "LIQ");
             }
         }
     }
@@ -485,6 +546,29 @@ mod tests {
                 self.bought = true;
                 ctx.submit_market(
                     self.target.clone(),
+                    OrderSide::Buy,
+                    Quantity::from_decimal(dec!(1), 3).unwrap(),
+                );
+            }
+        }
+    }
+
+    /// Buys one contract whenever flat, up to `max_buys` times — used to prove liquidation re-arms.
+    struct BuyWhenFlat {
+        iid: InstrumentId,
+        buys: usize,
+        max_buys: usize,
+    }
+    impl Strategy for BuyWhenFlat {
+        fn on_bar(&mut self, _b: &Bar, ctx: &mut StrategyContext) {
+            let flat = ctx
+                .position(&self.iid)
+                .map(|p| p.side == PositionSide::Flat)
+                .unwrap_or(true);
+            if flat && self.buys < self.max_buys {
+                self.buys += 1;
+                ctx.submit_market(
+                    self.iid.clone(),
                     OrderSide::Buy,
                     Quantity::from_decimal(dec!(1), 3).unwrap(),
                 );
@@ -684,6 +768,102 @@ mod tests {
             "realized {}",
             res.realized_pnl
         );
+    }
+
+    #[test]
+    fn account_is_liquidated_when_equity_breaches_maintenance() {
+        // Start with 10k, buy 1 future @ ~50k (notional 50k). As the price falls the mark-to-market
+        // equity drops; at 44k, equity (~4k) < maintenance (gross 44k x 0.1 = 4.4k) -> liquidate.
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let fut = fut_inst(9_000_000_000_000_000_000); // far expiry -> no settlement during the test
+        let fut_iid = fut.id();
+        let mut config = BacktestConfig::new(
+            Venue::from("BINANCE"),
+            vec![fut],
+            usdt,
+            Money::from_decimal(dec!(10000), usdt).unwrap(),
+        );
+        config.risk.maintenance_margin_rate = Some(dec!(0.1));
+        let strat = Box::new(BuyOnceStrategy {
+            iid: fut_iid.clone(),
+            bought: false,
+        });
+        // The price dips to 44k (breaching maintenance) THEN recovers to 50k — but liquidation is
+        // irreversible, so the recovery does not save the account.
+        let events = vec![
+            bar(&fut_iid, "50000", 1_000_000_000),
+            bar(&fut_iid, "44000", 2_000_000_000), // equity ~4k < maint ~4.4k -> liquidated
+            bar(&fut_iid, "50000", 3_000_000_000), // recovers, but already flat
+        ];
+        let mut kernel = BacktestKernel::build(config, StrategyId::from("liq"), strat, events);
+        let res = kernel.run();
+        assert_eq!(res.fills, 2, "entry + liquidation close");
+        assert!(res.realized_pnl < -5000.0, "realized {}", res.realized_pnl);
+        assert!(res.final_equity < 5000.0, "final {}", res.final_equity);
+    }
+
+    #[test]
+    fn liquidation_re_arms_after_a_prior_liquidation() {
+        // After the first liquidation the strategy re-buys; the re-opened position must be liquidated
+        // AGAIN on the next breach (the old one-shot latch left it unprotected = blow-through).
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let fut = fut_inst(9_000_000_000_000_000_000);
+        let fut_iid = fut.id();
+        let mut config = BacktestConfig::new(
+            Venue::from("BINANCE"),
+            vec![fut],
+            usdt,
+            Money::from_decimal(dec!(10000), usdt).unwrap(),
+        );
+        config.risk.maintenance_margin_rate = Some(dec!(0.1));
+        let strat = Box::new(BuyWhenFlat {
+            iid: fut_iid.clone(),
+            buys: 0,
+            max_buys: 2,
+        });
+        let events = vec![
+            bar(&fut_iid, "50000", 1_000_000_000), // buy #1
+            bar(&fut_iid, "44000", 2_000_000_000), // liquidate #1
+            bar(&fut_iid, "50000", 3_000_000_000), // flat -> buy #2 (then liquidated as unaffordable)
+            bar(&fut_iid, "44000", 4_000_000_000),
+            bar(&fut_iid, "50000", 5_000_000_000),
+        ];
+        let mut kernel = BacktestKernel::build(config, StrategyId::from("liq2"), strat, events);
+        let res = kernel.run();
+        assert!(
+            res.fills >= 4,
+            "expected >=2 buys + 2 liquidations, got {} fills",
+            res.fills
+        );
+    }
+
+    #[test]
+    fn no_liquidation_without_a_maintenance_rate() {
+        // The IDENTICAL dip-then-recover, but no maintenance rate -> the position is NOT force-closed:
+        // it rides the dip and recovers, settling ~flat at expiry (vs the locked-in loss above).
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let fut = fut_inst(9_000_000_000_000_000_000); // far expiry
+        let fut_iid = fut.id();
+        let config = BacktestConfig::new(
+            Venue::from("BINANCE"),
+            vec![fut],
+            usdt,
+            Money::from_decimal(dec!(10000), usdt).unwrap(),
+        );
+        let strat = Box::new(BuyOnceStrategy {
+            iid: fut_iid.clone(),
+            bought: false,
+        });
+        let events = vec![
+            bar(&fut_iid, "50000", 1_000_000_000),
+            bar(&fut_iid, "44000", 2_000_000_000), // would breach, but no maintenance configured
+            bar(&fut_iid, "50000", 3_000_000_000), // recovers
+        ];
+        let mut kernel = BacktestKernel::build(config, StrategyId::from("noliq"), strat, events);
+        let res = kernel.run();
+        // Survived the dip, recovered, settled ~flat at expiry (only entry slippage lost).
+        assert!(res.realized_pnl > -100.0, "realized {}", res.realized_pnl);
+        assert!(res.final_equity > 9000.0, "final {}", res.final_equity);
     }
 
     #[test]
