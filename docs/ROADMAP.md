@@ -117,10 +117,15 @@
   textbook reference values, put-call parity, the greek identities, and IV round-trips (Rust +
   Python).
 
-## Next — derivatives (chosen build-out)
-
-1. **Margin / leverage / liquidation** — per-position margin on the account + risk-gate checks + sim
-   liquidation.
+- **Margin / leverage / liquidation** (`qv-ports` + `qv-risk-engine` + `qv-portfolio` + `qv-kernel`,
+  Phase 4/4): `RiskLimits` gains `leverage` + `maintenance_margin_rate`; the risk gate denies an
+  order that would need more **initial margin** (`added_notional / leverage`) than free equity
+  (`Portfolio::equity` − margin in use); the kernel runs a mark-to-market **maintenance** check after
+  each bar and **liquidates** (force-flattens every position at its mark, once) when equity falls
+  below `gross × rate`. `run(..., leverage=, maintenance_margin_rate=)`; both 0 = fully funded (the
+  default, byte-identical to before). Rust (liquidation fires / doesn't without a rate) + Python
+  (over-leveraged order denied, within-limit allowed, liquidation vs recovery) tested. **The
+  derivatives engine (instruments → expiry settlement → BS pricing/greeks → margin) is complete.**
 
 ## Next — research side
 

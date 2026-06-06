@@ -17,6 +17,7 @@ qv-data-engine.workspace = true
 qv-exec-engine.workspace = true
 qv-risk-engine.workspace = true
 qv-portfolio.workspace = true
+rust_decimal.workspace = true
 
 [dev-dependencies]
 qv-indicators.workspace = true

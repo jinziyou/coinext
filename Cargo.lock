@@ -635,6 +635,7 @@ dependencies = [
  "qv-cache",
  "qv-core",
  "qv-model",
+ "rust_decimal",
  "thiserror",
  "tokio",
 ]

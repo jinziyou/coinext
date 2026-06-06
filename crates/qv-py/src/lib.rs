@@ -1082,6 +1082,8 @@ mod imp {
         default_symbol: String,
         events: Vec<MarketEvent>,
         queue_ahead_factor: f64,
+        leverage: f64,
+        maintenance_margin_rate: f64,
     ) -> PyResultObj {
         let mut cfg = BacktestConfig::new(Venue::from(venue), instruments, settle, starting);
         // Opt-in queue-position modeling: a resting limit waits behind ~queue_ahead_factor x bar
@@ -1091,6 +1093,14 @@ mod imp {
                 queue_ahead_factor: Decimal::from_f64(queue_ahead_factor).unwrap_or(Decimal::ZERO),
                 ..qv_sim::DefaultBrokerageModel::default()
             });
+        }
+        // Opt-in margin model: leverage gates initial margin at submit; maintenance_margin_rate
+        // arms mark-to-market liquidation. Both 0 = fully funded, no liquidation (the default).
+        if leverage > 0.0 {
+            cfg.risk.leverage = Decimal::from_f64(leverage);
+        }
+        if maintenance_margin_rate > 0.0 {
+            cfg.risk.maintenance_margin_rate = Decimal::from_f64(maintenance_margin_rate);
         }
         let adapter = PyStrategyAdapter {
             obj: strategy,
@@ -1133,7 +1143,7 @@ mod imp {
         price_precision=2, size_precision=3, maker_fee=0.0002, taker_fee=0.0004,
         queue_ahead_factor=0.0, quotes=vec![], trades=vec![],
         asset_class="spot".to_string(), multiplier=1.0, strike=None, option_right=None,
-        expiry_ns=None, underlying=None,
+        expiry_ns=None, underlying=None, leverage=0.0, maintenance_margin_rate=0.0,
     ))]
     pub fn run_backtest(
         strategy: Py<PyAny>,
@@ -1162,6 +1172,10 @@ mod imp {
         option_right: Option<String>,
         expiry_ns: Option<u64>,
         underlying: Option<String>,
+        // Margin model (opt-in): `leverage` (>0) gates initial margin at submit; >0
+        // `maintenance_margin_rate` arms mark-to-market liquidation. Both 0 = fully funded.
+        leverage: f64,
+        maintenance_margin_rate: f64,
     ) -> PyResult<PyResultObj> {
         let settle = Currency::new("USDT", 8).map_err(vexc)?;
         let (inst, meta) = build_typed_instrument(
@@ -1206,6 +1220,8 @@ mod imp {
             symbol,
             events,
             queue_ahead_factor,
+            leverage,
+            maintenance_margin_rate,
         ))
     }
 
@@ -1267,6 +1283,8 @@ mod imp {
             default_symbol,
             events,
             queue_ahead_factor,
+            0.0, // leverage (margin model is single-instrument for now)
+            0.0, // maintenance_margin_rate
         ))
     }
 

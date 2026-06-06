@@ -10,6 +10,7 @@ license.workspace = true
 qv-core.workspace = true
 qv-model.workspace = true
 qv-cache.workspace = true
+rust_decimal.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 thiserror.workspace = true

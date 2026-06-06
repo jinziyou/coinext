@@ -118,6 +118,8 @@ pub enum DenyReason {
     MinNotional,
     KillSwitchEngaged,
     InstrumentHalted,
+    /// Opening/increasing the position would need more initial margin than the free equity.
+    InsufficientMargin,
 }
 
 impl std::fmt::Display for DenyReason {
@@ -135,6 +137,12 @@ pub struct RiskLimits {
     pub max_order_notional: Option<Money>,
     pub max_orders_per_sec: Option<u32>,
     pub max_gross_exposure: Option<Money>,
+    /// Max account leverage: an order increasing exposure needs `added_notional / leverage` of free
+    /// equity. `None` = fully funded (no leverage check).
+    pub leverage: Option<rust_decimal::Decimal>,
+    /// Maintenance margin as a fraction of gross notional; positions are liquidated when equity
+    /// falls below `gross × rate`. `None` = no liquidation.
+    pub maintenance_margin_rate: Option<rust_decimal::Decimal>,
 }
 
 impl RiskLimits {
@@ -146,6 +154,8 @@ impl RiskLimits {
             max_order_notional: None,
             max_orders_per_sec: None,
             max_gross_exposure: None,
+            leverage: None,
+            maintenance_margin_rate: None,
         }
     }
 }

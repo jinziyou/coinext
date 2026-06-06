@@ -76,4 +76,27 @@ impl Portfolio for PortfolioState {
             .map(|a| a.balance(ccy))
             .unwrap_or_else(|| Money::zero(*ccy))
     }
+
+    fn equity(&self) -> Money {
+        let cache = self.cache.borrow();
+        let mut total = cache
+            .account()
+            .map(|a| a.balance(&self.settle))
+            .unwrap_or_else(|| Money::zero(self.settle));
+        for pos in cache.positions() {
+            if pos.realized_pnl.currency() == self.settle {
+                total = total.checked_add(pos.realized_pnl).unwrap_or(total);
+            }
+            if let (Some(inst), Some(mark)) = (
+                cache.instrument(&pos.instrument_id),
+                cache.mark(&pos.instrument_id),
+            ) {
+                let unreal = pos.unrealized_pnl(mark, &*inst);
+                if unreal.currency() == self.settle {
+                    total = total.checked_add(unreal).unwrap_or(total);
+                }
+            }
+        }
+        total
+    }
 }

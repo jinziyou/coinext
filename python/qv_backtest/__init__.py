@@ -126,6 +126,8 @@ def run(
     quotes: list[tuple] | None = None,
     trades: list[tuple] | None = None,
     instrument: Instrument | None = None,
+    leverage: float = 0.0,
+    maintenance_margin_rate: float = 0.0,
 ) -> Any:
     """Run ``strategy`` over ``bars``; return the BacktestResult.
 
@@ -145,6 +147,11 @@ def run(
     ``instrument`` (an :class:`Instrument`) selects the asset class — spot (default), equity,
     future, or option. Derivatives scale PnL by the contract ``multiplier``; the ``bars`` are that
     instrument's own price series (e.g. an option's premium series).
+
+    ``leverage`` (>0) gates initial margin: an order that increases exposure needs
+    ``added_notional / leverage`` of free equity, else it is denied. ``maintenance_margin_rate``
+    (>0) arms mark-to-market **liquidation** — the account is force-flattened when equity falls
+    below ``gross_notional × rate``. Both default to 0 (fully funded, no liquidation).
     """
     inst = instrument or Instrument.spot()
     return qv_py.run_backtest(
@@ -164,6 +171,8 @@ def run(
         option_right=inst.option_right,
         expiry_ns=inst.expiry_ns,
         underlying=inst.underlying,
+        leverage=leverage,
+        maintenance_margin_rate=maintenance_margin_rate,
         quotes=[
             (int(ts), float(b), float(a), float(bs), float(az))
             for ts, b, a, bs, az in (quotes or [])
