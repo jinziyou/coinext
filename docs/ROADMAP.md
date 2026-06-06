@@ -99,14 +99,21 @@
   future = 10× the spot PnL, mult-100 option = 100×, equity == spot, option accessors, intrinsic
   value). **Phase 1 of 4** — expiry settlement/exercise, BS pricing+greeks, and margin follow.
 
+- **Derivatives expiry settlement + exercise** (`qv-kernel`, Phase 2/4): the kernel collects dated
+  contracts' `expiry_ns` and adds the expiry as a frontier; after the market event at that frontier,
+  each open position is closed by a synthetic settlement fill — a **future** cash-settles to its
+  final mark, an **option** settles to its intrinsic value vs the underlying's spot (`max(S−K,0)` /
+  `max(K−S,0)` × multiplier), expiring worthless if OTM (falls back to its own mark if the underlying
+  isn't fed). Resting orders on the dead contract are canceled; the settlement fires `on_order_filled`
+  + counts as a fill. Deterministic (sorted expiries, fires once each). Bar-only backtests are
+  unaffected. Rust-tested (option ITM/OTM intrinsic, future cash-settle).
+
 ## Next — derivatives (chosen build-out)
 
-1. **Expiry settlement + exercise** — kernel fires expiry events; futures settle to the mark and
-   close; options auto-exercise vs the underlying (intrinsic) or expire worthless.
-2. **Option pricing + greeks** — `qv-derivatives` Black-Scholes price + delta/gamma/vega/theta/rho +
+1. **Option pricing + greeks** — `qv-derivatives` Black-Scholes price + delta/gamma/vega/theta/rho +
    implied-vol; optional sim mode that prices options from the underlying so backtests need only the
    underlying series.
-3. **Margin / leverage / liquidation** — per-position margin on the account + risk-gate checks + sim
+2. **Margin / leverage / liquidation** — per-position margin on the account + risk-gate checks + sim
    liquidation.
 
 ## Next — research side
