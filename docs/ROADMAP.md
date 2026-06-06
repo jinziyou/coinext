@@ -108,12 +108,18 @@
   + counts as a fill. Deterministic (sorted expiries, fires once each). Bar-only backtests are
   unaffected. Rust-tested (option ITM/OTM intrinsic, future cash-settle).
 
+- **Option pricing + greeks** (`qv-derivatives` + `qv-py` + `qv_derivatives`, Phase 3/4): a new
+  pure-`f64`, zero-dep crate — Black-Scholes `price`, all five `greeks` (delta/gamma/vega/theta/rho),
+  and an `implied_vol` solver (Newton + bisection fallback), with a no-dep normal CDF (A&S erf).
+  Bridged to Python as `qv_py.bs_price`/`bs_greeks`/`implied_vol` and a `qv_derivatives` module
+  (`bs_price`/`greeks`/`implied_vol`, `right="call"/"put"`). A strategy can price options, compute
+  greeks, and back out IV from market premiums with the SAME math the core uses. Tested against
+  textbook reference values, put-call parity, the greek identities, and IV round-trips (Rust +
+  Python).
+
 ## Next — derivatives (chosen build-out)
 
-1. **Option pricing + greeks** — `qv-derivatives` Black-Scholes price + delta/gamma/vega/theta/rho +
-   implied-vol; optional sim mode that prices options from the underlying so backtests need only the
-   underlying series.
-2. **Margin / leverage / liquidation** — per-position margin on the account + risk-gate checks + sim
+1. **Margin / leverage / liquidation** — per-position margin on the account + risk-gate checks + sim
    liquidation.
 
 ## Next — research side

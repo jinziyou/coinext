@@ -555,6 +555,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "qv-derivatives"
+version = "0.1.0"
+
+[[package]]
 name = "qv-example-backtest"
 version = "0.1.0"
 dependencies = [
@@ -642,6 +646,7 @@ dependencies = [
  "pyo3",
  "qv-cache",
  "qv-core",
+ "qv-derivatives",
  "qv-indicators",
  "qv-kernel",
  "qv-model",

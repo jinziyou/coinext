@@ -14,6 +14,7 @@
 mod imp {
     use pyo3::prelude::*;
     use qv_core::{Currency, Money, Price, Quantity, UnixNanos};
+    use qv_derivatives::BsInputs;
     use qv_indicators::{Atr, Bollinger, Ema, Indicator, Macd, Rsi, Sma, Vwap};
     use qv_kernel::{BacktestConfig, BacktestKernel};
     use qv_model::{
@@ -1269,6 +1270,55 @@ mod imp {
         ))
     }
 
+    // --- Option pricing (Black–Scholes) — the SAME qv-derivatives the Rust core uses. Inputs are
+    // decimals (rate 0.05, vol 0.2, t_years 0.5); `is_call=False` for a put. ---
+
+    fn bs_inputs(spot: f64, strike: f64, t_years: f64, rate: f64, vol: f64) -> BsInputs {
+        BsInputs {
+            spot,
+            strike,
+            t_years,
+            rate,
+            vol,
+        }
+    }
+
+    /// Black–Scholes premium of a European call (`is_call=True`) or put.
+    #[pyfunction]
+    #[pyo3(signature = (spot, strike, t_years, rate, vol, is_call=true))]
+    fn bs_price(spot: f64, strike: f64, t_years: f64, rate: f64, vol: f64, is_call: bool) -> f64 {
+        qv_derivatives::price(&bs_inputs(spot, strike, t_years, rate, vol), is_call)
+    }
+
+    /// The five greeks as `(delta, gamma, vega, theta, rho)` — vega per 1.0 vol, theta per year.
+    #[pyfunction]
+    #[pyo3(signature = (spot, strike, t_years, rate, vol, is_call=true))]
+    fn bs_greeks(
+        spot: f64,
+        strike: f64,
+        t_years: f64,
+        rate: f64,
+        vol: f64,
+        is_call: bool,
+    ) -> (f64, f64, f64, f64, f64) {
+        let g = qv_derivatives::greeks(&bs_inputs(spot, strike, t_years, rate, vol), is_call);
+        (g.delta, g.gamma, g.vega, g.theta, g.rho)
+    }
+
+    /// Implied volatility that reprices `market_price`; `None` if below intrinsic / unbracketed.
+    #[pyfunction]
+    #[pyo3(signature = (market_price, spot, strike, t_years, rate, is_call=true))]
+    fn implied_vol(
+        market_price: f64,
+        spot: f64,
+        strike: f64,
+        t_years: f64,
+        rate: f64,
+        is_call: bool,
+    ) -> Option<f64> {
+        qv_derivatives::implied_vol(market_price, spot, strike, t_years, rate, is_call)
+    }
+
     /// The `qv_py` extension module.
     #[pymodule]
     fn qv_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1289,6 +1339,9 @@ mod imp {
         m.add_class::<PyVwap>()?;
         m.add_function(wrap_pyfunction!(run_backtest, m)?)?;
         m.add_function(wrap_pyfunction!(run_backtest_multi, m)?)?;
+        m.add_function(wrap_pyfunction!(bs_price, m)?)?;
+        m.add_function(wrap_pyfunction!(bs_greeks, m)?)?;
+        m.add_function(wrap_pyfunction!(implied_vol, m)?)?;
         m.add("__doc__", "VeloxQuant Rust core exposed to Python (PyO3).")?;
         Ok(())
     }
