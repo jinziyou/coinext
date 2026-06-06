@@ -34,6 +34,19 @@ impl ExecutionEngine {
             Some(i) => i,
             None => return Vec::new(),
         };
+        // A dated contract is dead once the clock reaches its expiry: deny any new order on it so a
+        // post-expiry position can't be opened that the kernel's expiry settlement would then miss.
+        if let Some(expiry) = inst.expiry_ns() {
+            if now >= expiry {
+                let ev = OrderEvent::Denied {
+                    reason: "instrument expired".to_string(),
+                    ts: now,
+                };
+                let _ = order.apply(ev.clone());
+                self.cache.borrow_mut().add_order(order);
+                return vec![ev];
+            }
+        }
         match risk.check(&order, portfolio, &*inst) {
             RiskDecision::Approved => {
                 let ev = OrderEvent::Submitted { ts: now };

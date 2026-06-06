@@ -370,7 +370,11 @@ impl BacktestKernel {
                     match (
                         inst.strike(),
                         inst.option_right(),
-                        inst.underlying().and_then(|u| cache.mark(&u)),
+                        // The underlying's spot — but never the option's OWN mark (a self-referential
+                        // underlying would read the premium as spot); fall back to own mark then.
+                        inst.underlying()
+                            .filter(|u| u != iid)
+                            .and_then(|u| cache.mark(&u)),
                     ) {
                         (Some(k), Some(right), Some(spot)) => {
                             let intr = right.intrinsic(spot.as_decimal(), k.as_decimal());
@@ -680,6 +684,32 @@ mod tests {
             "realized {}",
             res.realized_pnl
         );
+    }
+
+    #[test]
+    fn submitting_on_an_expired_contract_is_denied() {
+        // The future already expired (500ms) before the first bar (1s); a buy on it is denied, so no
+        // post-expiry position can be opened that settlement would then miss.
+        let fut = fut_inst(500_000_000);
+        let fut_iid = fut.id();
+        let strat = Box::new(BuyOnceStrategy {
+            iid: fut_iid.clone(),
+            bought: false,
+        });
+        let events = vec![
+            bar(&fut_iid, "50000", 1_000_000_000),
+            bar(&fut_iid, "51000", 2_000_000_000),
+        ];
+        let mut kernel = BacktestKernel::build(
+            cfg(vec![fut], "BINANCE"),
+            StrategyId::from("fut"),
+            strat,
+            events,
+        );
+        let res = kernel.run();
+        assert_eq!(res.orders_submitted, 1);
+        assert_eq!(res.orders_denied, 1);
+        assert_eq!(res.fills, 0, "expired-contract order must not fill");
     }
 
     #[test]
