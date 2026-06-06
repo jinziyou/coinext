@@ -100,8 +100,6 @@ pub struct BacktestKernel {
     expiry_cursor: usize,
     /// Maintenance margin as a fraction of gross notional (from RiskLimits); `None` = no liquidation.
     maintenance_margin_rate: Option<Decimal>,
-    /// Set once the account has been liquidated (force-flattened) so it fires at most once.
-    liquidated: bool,
     starting_equity: f64,
     result: RunResult,
 }
@@ -168,7 +166,6 @@ impl BacktestKernel {
             expiries,
             expiry_cursor: 0,
             maintenance_margin_rate,
-            liquidated: false,
             starting_equity,
             result: RunResult {
                 equity_curve: Vec::new(),
@@ -481,20 +478,18 @@ impl BacktestKernel {
 
     /// Liquidate the account if mark-to-market equity has fallen below the maintenance requirement
     /// (`gross notional × maintenance_margin_rate`): force-flatten every open position at its mark.
-    /// Fires at most once. No-op unless a maintenance margin rate is configured.
+    /// Runs CONTINUOUSLY each bar (it naturally no-ops once flat, since `gross` is then 0), so a
+    /// position re-opened after a prior liquidation is still protected. No-op unless a maintenance
+    /// margin rate is configured.
     fn check_liquidation(&mut self, now: UnixNanos) {
         let Some(rate) = self.maintenance_margin_rate else {
             return;
         };
-        if self.liquidated {
-            return;
-        }
         let equity = self.portfolio.equity().amount();
         let gross = self.portfolio.gross_exposure().amount();
         if gross <= Decimal::ZERO || equity >= gross * rate {
             return;
         }
-        self.liquidated = true;
         let iids: Vec<InstrumentId> = {
             let cache = self.cache.borrow();
             cache
@@ -551,6 +546,29 @@ mod tests {
                 self.bought = true;
                 ctx.submit_market(
                     self.target.clone(),
+                    OrderSide::Buy,
+                    Quantity::from_decimal(dec!(1), 3).unwrap(),
+                );
+            }
+        }
+    }
+
+    /// Buys one contract whenever flat, up to `max_buys` times — used to prove liquidation re-arms.
+    struct BuyWhenFlat {
+        iid: InstrumentId,
+        buys: usize,
+        max_buys: usize,
+    }
+    impl Strategy for BuyWhenFlat {
+        fn on_bar(&mut self, _b: &Bar, ctx: &mut StrategyContext) {
+            let flat = ctx
+                .position(&self.iid)
+                .map(|p| p.side == PositionSide::Flat)
+                .unwrap_or(true);
+            if flat && self.buys < self.max_buys {
+                self.buys += 1;
+                ctx.submit_market(
+                    self.iid.clone(),
                     OrderSide::Buy,
                     Quantity::from_decimal(dec!(1), 3).unwrap(),
                 );
@@ -782,6 +800,41 @@ mod tests {
         assert_eq!(res.fills, 2, "entry + liquidation close");
         assert!(res.realized_pnl < -5000.0, "realized {}", res.realized_pnl);
         assert!(res.final_equity < 5000.0, "final {}", res.final_equity);
+    }
+
+    #[test]
+    fn liquidation_re_arms_after_a_prior_liquidation() {
+        // After the first liquidation the strategy re-buys; the re-opened position must be liquidated
+        // AGAIN on the next breach (the old one-shot latch left it unprotected = blow-through).
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let fut = fut_inst(9_000_000_000_000_000_000);
+        let fut_iid = fut.id();
+        let mut config = BacktestConfig::new(
+            Venue::from("BINANCE"),
+            vec![fut],
+            usdt,
+            Money::from_decimal(dec!(10000), usdt).unwrap(),
+        );
+        config.risk.maintenance_margin_rate = Some(dec!(0.1));
+        let strat = Box::new(BuyWhenFlat {
+            iid: fut_iid.clone(),
+            buys: 0,
+            max_buys: 2,
+        });
+        let events = vec![
+            bar(&fut_iid, "50000", 1_000_000_000), // buy #1
+            bar(&fut_iid, "44000", 2_000_000_000), // liquidate #1
+            bar(&fut_iid, "50000", 3_000_000_000), // flat -> buy #2 (then liquidated as unaffordable)
+            bar(&fut_iid, "44000", 4_000_000_000),
+            bar(&fut_iid, "50000", 5_000_000_000),
+        ];
+        let mut kernel = BacktestKernel::build(config, StrategyId::from("liq2"), strat, events);
+        let res = kernel.run();
+        assert!(
+            res.fills >= 4,
+            "expected >=2 buys + 2 liquidations, got {} fills",
+            res.fills
+        );
     }
 
     #[test]
