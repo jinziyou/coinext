@@ -58,15 +58,35 @@ def test_future_pnl_scales_with_multiplier():
 def test_option_contract_trades_with_multiplier():
     bars = _rising_bars()
     spot_pnl = bt.run(BuyHold(), bars=bars).final_equity - 100_000.0
+    # Distinct option symbol so its underlying ("BTCUSDT") isn't the option itself; with no
+    # underlying feed in this single-instrument run, expiry settles to the option's own mark -> the
+    # multiplier relationship is preserved (settled PnL == the mark-to-market PnL, scaled 100x).
     opt = bt.run(
         BuyHold(),
         bars=bars,
+        symbol="BTC-C-50000",
         instrument=bt.Instrument.option(
             strike=50_000, right="call", expiry_ns=EXPIRY, underlying="BTCUSDT", multiplier=100.0
         ),
     )
     assert opt.orders_denied == 0
     assert (opt.final_equity - 100_000.0) == pytest.approx(spot_pnl * 100.0, rel=1e-6)
+
+
+def test_future_settles_at_expiry():
+    # A future expiring within the run cash-settles: the open position closes (one extra fill) at
+    # the final mark, and the prior unrealized gain becomes realized.
+    base, step = BASE, STEP
+    bars = [(base + i * step, 100.0 + i) for i in range(6)]  # 100 -> 105
+    expiry = base + 6 * step + 1  # just past the last bar
+    res = bt.run(
+        BuyHold(),
+        bars=bars,
+        instrument=bt.Instrument.future(multiplier=10.0, expiry_ns=expiry, underlying="SPX"),
+    )
+    assert res.orders_submitted == 1
+    assert res.fills == 2  # the entry + the settlement fill
+    assert res.realized_pnl > 0  # settled to mark 105 above the ~100 entry, x10 multiplier
 
 
 def test_equity_trades_like_spot():

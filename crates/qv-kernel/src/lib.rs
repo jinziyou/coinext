@@ -7,10 +7,13 @@
 
 use qv_bus::InProcBus;
 use qv_cache::Cache;
-use qv_core::{Clock, Currency, HistoricalClock, Money, UnixNanos};
+use qv_core::{Clock, Currency, HistoricalClock, Money, Price, UnixNanos};
 use qv_data_engine::DataEngine;
 use qv_exec_engine::ExecutionEngine;
-use qv_model::{Instrument, MarketEvent, OrderEvent, StrategyId, Venue};
+use qv_model::{
+    AssetClass, ClientOrderId, Fill, Instrument, InstrumentId, LiquiditySide, MarketEvent,
+    OrderEvent, OrderSide, PositionSide, StrategyId, TradeId, Venue, VenueOrderId,
+};
 use qv_portfolio::PortfolioState;
 use qv_ports::{BusMsg, MessageBus, RiskLimits, Strategy, StrategyCommand, StrategyContext, Topic};
 use qv_risk_engine::RiskGate;
@@ -89,6 +92,9 @@ pub struct BacktestKernel {
     ctx: StrategyContext,
     events: Vec<MarketEvent>,
     cursor: usize,
+    /// Dated contracts to settle, sorted by `expiry_ns`; `expiry_cursor` is the next unsettled.
+    expiries: Vec<(UnixNanos, InstrumentId)>,
+    expiry_cursor: usize,
     starting_equity: f64,
     result: RunResult,
 }
@@ -102,6 +108,14 @@ impl BacktestKernel {
         mut events: Vec<MarketEvent>,
     ) -> Self {
         events.sort_by_key(|e| e.ts_event());
+
+        // Dated contracts (futures / options) settle at their expiry; collect + sort the schedule.
+        let mut expiries: Vec<(UnixNanos, InstrumentId)> = config
+            .instruments
+            .iter()
+            .filter_map(|i| i.expiry_ns().map(|e| (e, i.id())))
+            .collect();
+        expiries.sort_by_key(|(ts, _)| *ts);
 
         let clock = Rc::new(HistoricalClock::new(config.start_ns));
         let cache = Rc::new(RefCell::new(Cache::new()));
@@ -143,6 +157,8 @@ impl BacktestKernel {
             ctx,
             events,
             cursor: 0,
+            expiries,
+            expiry_cursor: 0,
             starting_equity,
             result: RunResult {
                 equity_curve: Vec::new(),
@@ -196,8 +212,9 @@ impl BacktestKernel {
             let next_market = self.events.get(self.cursor).map(|e| e.ts_event());
             let next_sim = self.sim.peek_due();
             let next_timer = self.clock.peek_next_timer();
+            let next_expiry = self.expiries.get(self.expiry_cursor).map(|(ts, _)| *ts);
 
-            let frontier = [next_market, next_sim, next_timer]
+            let frontier = [next_market, next_sim, next_timer, next_expiry]
                 .into_iter()
                 .flatten()
                 .min();
@@ -254,6 +271,10 @@ impl BacktestKernel {
                     self.result.equity_curve.push((ts, eq));
                 }
             }
+
+            // 4) Settle any dated contracts expiring at/before the frontier (AFTER the market event
+            // at this ts, so the final mark / underlying spot is in the cache).
+            self.settle_expiries(frontier);
         }
 
         self.strategy.on_stop(&mut self.ctx);
@@ -319,6 +340,106 @@ impl BacktestKernel {
             }
         }
     }
+
+    /// Settle every dated contract whose expiry is at/before `frontier` and not yet settled.
+    fn settle_expiries(&mut self, frontier: UnixNanos) {
+        while let Some((ts, iid)) = self.expiries.get(self.expiry_cursor).cloned() {
+            if ts > frontier {
+                break;
+            }
+            self.expiry_cursor += 1;
+            self.settle_contract(&iid, frontier);
+        }
+    }
+
+    /// Settle one expiring contract: close any open position at its settlement price (a future cash-
+    /// settles to its final mark; an option settles to its intrinsic value vs the underlying spot,
+    /// expiring worthless if out-of-the-money), then cancel any resting orders on the dead contract.
+    fn settle_contract(&mut self, iid: &InstrumentId, now: UnixNanos) {
+        // Resolve the instrument, its open position, and the settlement price (immutable borrow).
+        let (inst, pos, settle_px) = {
+            let cache = self.cache.borrow();
+            let Some(inst) = cache.instrument(iid) else {
+                return;
+            };
+            let pos = cache.position(iid).cloned();
+            let settle_px = match inst.asset_class() {
+                AssetClass::Option => {
+                    // Intrinsic from the underlying's spot at expiry; fall back to the option's own
+                    // last mark only if the underlying price is unavailable.
+                    match (
+                        inst.strike(),
+                        inst.option_right(),
+                        inst.underlying().and_then(|u| cache.mark(&u)),
+                    ) {
+                        (Some(k), Some(right), Some(spot)) => {
+                            let intr = right.intrinsic(spot.as_decimal(), k.as_decimal());
+                            Price::from_decimal(intr, inst.price_precision()).ok()
+                        }
+                        _ => cache.mark(iid),
+                    }
+                }
+                // Futures (and any other dated contract) cash-settle to their final mark.
+                _ => cache.mark(iid),
+            };
+            (inst, pos, settle_px)
+        };
+
+        // Close the open position with a synthetic settlement fill at the settlement price.
+        if let (Some(mut pos), Some(settle_px)) = (pos, settle_px) {
+            let close_side = match pos.side {
+                PositionSide::Long => OrderSide::Sell,
+                PositionSide::Short => OrderSide::Buy,
+                PositionSide::Flat => return,
+            };
+            let qty = pos.quantity;
+            let tag = format!("{iid}-SETTLE");
+            let fill = Fill {
+                trade_id: TradeId::from(tag.as_str()),
+                client_order_id: ClientOrderId::from(tag.as_str()),
+                venue_order_id: VenueOrderId::from(tag.as_str()),
+                instrument_id: iid.clone(),
+                side: close_side,
+                last_px: settle_px,
+                last_qty: qty,
+                fee: Money::zero(inst.settlement_currency()),
+                liquidity: LiquiditySide::Taker,
+                ts_event: now,
+                ts_init: now,
+            };
+            {
+                let mut cache = self.cache.borrow_mut();
+                let _ = pos.apply_fill(&fill, &*inst);
+                cache.upsert_position(pos);
+            }
+            self.result.fills += 1;
+            self.result.fills_log.push((
+                now.as_u64(),
+                iid.symbol.as_str().to_string(),
+                close_side.sign() as i8,
+                qty.as_f64(),
+                settle_px.as_f64(),
+            ));
+            self.notify_event(&OrderEvent::Filled(fill));
+            self.process_outbox();
+        }
+
+        // The contract is dead: cancel any of the strategy's resting orders on it.
+        let open: Vec<ClientOrderId> = {
+            let cache = self.cache.borrow();
+            cache
+                .orders()
+                .filter(|o| &o.instrument_id == iid && !o.status.is_terminal())
+                .map(|o| o.client_order_id.clone())
+                .collect()
+        };
+        for coid in open {
+            let events = self.exec_engine.cancel(&self.sim, coid, now);
+            for ev in &events {
+                self.notify_event(ev);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -326,8 +447,8 @@ mod tests {
     use super::*;
     use qv_core::{Price, Quantity};
     use qv_model::{
-        AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, InstrumentId,
-        OrderSide, PriceType,
+        AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, FuturesContract,
+        InstrumentId, OptionContract, OptionRight, OrderSide, PriceType,
     };
     use rust_decimal_macros::dec;
 
@@ -346,6 +467,80 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Buys one contract of a SPECIFIC instrument on that instrument's first bar (so its mark is set
+    /// before the market order, even when other instruments share the timestamp).
+    struct BuyContractOnce {
+        target: InstrumentId,
+        bought: bool,
+    }
+    impl Strategy for BuyContractOnce {
+        fn on_bar(&mut self, b: &Bar, ctx: &mut StrategyContext) {
+            if !self.bought && b.bar_type.instrument_id == self.target {
+                self.bought = true;
+                ctx.submit_market(
+                    self.target.clone(),
+                    OrderSide::Buy,
+                    Quantity::from_decimal(dec!(1), 3).unwrap(),
+                );
+            }
+        }
+    }
+
+    fn opt_inst(
+        strike: &str,
+        right: OptionRight,
+        expiry: u64,
+        under: InstrumentId,
+    ) -> Arc<dyn Instrument> {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        Arc::new(OptionContract {
+            id: InstrumentId::parse("BTCC.DERIBIT").unwrap(),
+            underlying: under,
+            quote: usdt,
+            settlement: usdt,
+            price_precision: 2,
+            size_precision: 3,
+            price_increment: Price::from_decimal(dec!(0.01), 2).unwrap(),
+            size_increment: Quantity::from_decimal(dec!(0.001), 3).unwrap(),
+            min_notional: None,
+            multiplier: Quantity::from_raw(1, 0).unwrap(),
+            maker_fee: dec!(0), // zero fees so settlement PnL is exact
+            taker_fee: dec!(0),
+            strike: Price::from_decimal(strike.parse().unwrap(), 2).unwrap(),
+            right,
+            expiry_ns: UnixNanos(expiry),
+        })
+    }
+
+    fn fut_inst(expiry: u64) -> Arc<dyn Instrument> {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        Arc::new(FuturesContract {
+            id: InstrumentId::parse("BTCF.BINANCE").unwrap(),
+            underlying: None,
+            quote: usdt,
+            settlement: usdt,
+            price_precision: 2,
+            size_precision: 3,
+            price_increment: Price::from_decimal(dec!(0.01), 2).unwrap(),
+            size_increment: Quantity::from_decimal(dec!(0.001), 3).unwrap(),
+            min_notional: None,
+            multiplier: Quantity::from_raw(1, 0).unwrap(),
+            maker_fee: dec!(0),
+            taker_fee: dec!(0),
+            expiry_ns: UnixNanos(expiry),
+        })
+    }
+
+    fn cfg(insts: Vec<Arc<dyn Instrument>>, venue: &str) -> BacktestConfig {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        BacktestConfig::new(
+            Venue::from(venue),
+            insts,
+            usdt,
+            Money::from_decimal(dec!(100000), usdt).unwrap(),
+        )
     }
 
     fn inst() -> Arc<dyn Instrument> {
@@ -419,5 +614,100 @@ mod tests {
             res.starting_equity
         );
         assert!(!res.equity_curve.is_empty());
+    }
+
+    #[test]
+    fn option_settles_to_intrinsic_at_expiry_itm() {
+        // Buy a 50000 call @ premium 1000; underlying at expiry is 54000 -> intrinsic 4000.
+        let under = inst(); // BTCUSDT.BINANCE
+        let under_iid = under.id();
+        let opt = opt_inst("50000", OptionRight::Call, 2_500_000_000, under_iid.clone());
+        let opt_iid = opt.id();
+        let strat = Box::new(BuyContractOnce {
+            target: opt_iid.clone(),
+            bought: false,
+        });
+        let events = vec![
+            bar(&opt_iid, "1000", 1_000_000_000), // premium; strategy buys here
+            bar(&under_iid, "52000", 1_000_000_000),
+            bar(&opt_iid, "1500", 2_000_000_000),
+            bar(&under_iid, "54000", 2_000_000_000), // last underlying mark before the 2.5e9 expiry
+            bar(&under_iid, "55000", 3_000_000_000), // after expiry (option already settled)
+        ];
+        let mut kernel = BacktestKernel::build(
+            cfg(vec![opt, under], "DERIBIT"),
+            StrategyId::from("opt"),
+            strat,
+            events,
+        );
+        let res = kernel.run();
+        assert_eq!(res.fills, 2, "one buy + one settlement fill");
+        // Settled at intrinsic 4000, bought at ~1000 (zero fees) -> realized ~3000.
+        assert!(
+            (res.realized_pnl - 3000.0).abs() < 1.0,
+            "realized {}",
+            res.realized_pnl
+        );
+    }
+
+    #[test]
+    fn option_expires_worthless_when_out_of_the_money() {
+        // Buy a 50000 call @ premium 1000; underlying stays at 48000 -> intrinsic 0 -> lose premium.
+        let under = inst();
+        let under_iid = under.id();
+        let opt = opt_inst("50000", OptionRight::Call, 2_500_000_000, under_iid.clone());
+        let opt_iid = opt.id();
+        let strat = Box::new(BuyContractOnce {
+            target: opt_iid.clone(),
+            bought: false,
+        });
+        let events = vec![
+            bar(&opt_iid, "1000", 1_000_000_000),
+            bar(&under_iid, "48000", 1_000_000_000),
+            bar(&under_iid, "48000", 2_000_000_000),
+        ];
+        let mut kernel = BacktestKernel::build(
+            cfg(vec![opt, under], "DERIBIT"),
+            StrategyId::from("opt"),
+            strat,
+            events,
+        );
+        let res = kernel.run();
+        assert_eq!(res.fills, 2);
+        // Settled worthless (0), bought at ~1000 -> realized ~ -1000.
+        assert!(
+            (res.realized_pnl + 1000.0).abs() < 1.0,
+            "realized {}",
+            res.realized_pnl
+        );
+    }
+
+    #[test]
+    fn future_cash_settles_to_mark_at_expiry() {
+        // Buy a future @ 50000, price rises to 52000 by expiry -> cash-settle realizes ~2000.
+        let fut = fut_inst(2_500_000_000);
+        let fut_iid = fut.id();
+        let strat = Box::new(BuyOnceStrategy {
+            iid: fut_iid.clone(),
+            bought: false,
+        });
+        let events = vec![
+            bar(&fut_iid, "50000", 1_000_000_000),
+            bar(&fut_iid, "52000", 2_000_000_000), // last mark before the 2.5e9 expiry
+        ];
+        let mut kernel = BacktestKernel::build(
+            cfg(vec![fut], "BINANCE"),
+            StrategyId::from("fut"),
+            strat,
+            events,
+        );
+        let res = kernel.run();
+        assert_eq!(res.fills, 2, "one buy + one settlement fill");
+        // Settled at mark 52000; bought at ~50000 plus entry slippage -> realized just under 2000.
+        assert!(
+            (1990.0..2000.0).contains(&res.realized_pnl),
+            "realized {}",
+            res.realized_pnl
+        );
     }
 }
