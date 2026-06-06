@@ -9,7 +9,67 @@ parity-valid.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass(frozen=True)
+class Instrument:
+    """The instrument a backtest trades. The ``bars``/ticks ARE this instrument's own price series.
+
+    Defaults to a spot pair (backward compatible). Use the constructors for derivatives — PnL scales
+    by ``multiplier``, and the contract metadata (``strike``/``option_right``/``expiry_ns``/
+    ``underlying``) is carried for the expiry-settlement and pricing phases. Examples::
+
+        Instrument.equity()
+        Instrument.future(multiplier=10.0, expiry_ns=ts, underlying="BTCUSDT")
+        Instrument.option(strike=50_000, right="call", expiry_ns=ts, multiplier=1.0,
+                          underlying="BTCUSDT")
+    """
+
+    asset_class: str = "spot"
+    multiplier: float = 1.0
+    strike: float | None = None
+    option_right: str | None = None  # "call" / "put"
+    expiry_ns: int | None = None
+    underlying: str | None = None
+
+    @classmethod
+    def spot(cls) -> Instrument:
+        return cls()
+
+    @classmethod
+    def equity(cls) -> Instrument:
+        return cls(asset_class="equity")
+
+    @classmethod
+    def future(
+        cls, *, multiplier: float = 1.0, expiry_ns: int, underlying: str | None = None
+    ) -> Instrument:
+        return cls(
+            asset_class="future", multiplier=multiplier, expiry_ns=expiry_ns, underlying=underlying
+        )
+
+    @classmethod
+    def option(
+        cls,
+        *,
+        strike: float,
+        right: str,
+        expiry_ns: int,
+        underlying: str,
+        multiplier: float = 1.0,
+    ) -> Instrument:
+        if right.lower() not in ("call", "put", "c", "p"):
+            raise ValueError("option right must be 'call' or 'put'")
+        return cls(
+            asset_class="option",
+            multiplier=multiplier,
+            strike=strike,
+            option_right=right,
+            expiry_ns=expiry_ns,
+            underlying=underlying,
+        )
 
 try:
     import qv_py  # the compiled Rust extension (maturin develop)
@@ -65,6 +125,7 @@ def run(
     queue_ahead_factor: float = 0.0,
     quotes: list[tuple] | None = None,
     trades: list[tuple] | None = None,
+    instrument: Instrument | None = None,
 ) -> Any:
     """Run ``strategy`` over ``bars``; return the BacktestResult.
 
@@ -80,7 +141,12 @@ def run(
     they fire ``on_quote`` / ``on_trade`` and also drive the mark + resting-limit fills against tick
     prices. Synthesize them from bars (:func:`synth_quotes`, :func:`synth_trades`) or feed real ones
     (``qv_data.fetch_binance_agg_trades``).
+
+    ``instrument`` (an :class:`Instrument`) selects the asset class — spot (default), equity,
+    future, or option. Derivatives scale PnL by the contract ``multiplier``; the ``bars`` are that
+    instrument's own price series (e.g. an option's premium series).
     """
+    inst = instrument or Instrument.spot()
     return qv_py.run_backtest(
         strategy,
         symbol,
@@ -92,6 +158,12 @@ def run(
         maker_fee=maker_fee,
         taker_fee=taker_fee,
         queue_ahead_factor=queue_ahead_factor,
+        asset_class=inst.asset_class,
+        multiplier=inst.multiplier,
+        strike=inst.strike,
+        option_right=inst.option_right,
+        expiry_ns=inst.expiry_ns,
+        underlying=inst.underlying,
         quotes=[
             (int(ts), float(b), float(a), float(bs), float(az))
             for ts, b, a, bs, az in (quotes or [])
@@ -221,6 +293,7 @@ def synthetic_ohlc_bars(
 
 
 __all__ = [
+    "Instrument",
     "run",
     "run_multi",
     "synth_quotes",

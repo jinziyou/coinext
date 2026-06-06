@@ -89,7 +89,27 @@
   key). The kernel now samples the equity curve at BAR cadence so sub-bar ticks don't distort the
   annualized metrics. Tested incl. a real-aggTrades run and a tick-driven limit fill.
 
-## Next — research side (recommended order)
+- **Derivatives instrument foundation** (`qv-model` + `qv-py` + `qv_backtest`): three new concrete
+  `Instrument` types — `Equity` (linear, mult 1), `FuturesContract` (linear + `expiry_ns` +
+  underlying), `OptionContract` (`strike`/`right`/`expiry_ns`/`underlying`/contract `multiplier`) —
+  plus `AssetClass::Option` + `OptionRight` and default-`None` trait accessors (`expiry_ns`/`strike`/
+  `option_right`/`underlying`) so spot/perp are unchanged. PnL already scales by `multiplier`/
+  `is_inverse`, so all three trade through the SAME kernel as priced instruments. Python:
+  `qv_backtest.Instrument.{equity,future,option}(...)` + `run(..., instrument=...)`. Tested (mult-10
+  future = 10× the spot PnL, mult-100 option = 100×, equity == spot, option accessors, intrinsic
+  value). **Phase 1 of 4** — expiry settlement/exercise, BS pricing+greeks, and margin follow.
+
+## Next — derivatives (chosen build-out)
+
+1. **Expiry settlement + exercise** — kernel fires expiry events; futures settle to the mark and
+   close; options auto-exercise vs the underlying (intrinsic) or expire worthless.
+2. **Option pricing + greeks** — `qv-derivatives` Black-Scholes price + delta/gamma/vega/theta/rho +
+   implied-vol; optional sim mode that prices options from the underlying so backtests need only the
+   underlying series.
+3. **Margin / leverage / liquidation** — per-position margin on the account + risk-gate checks + sim
+   liquidation.
+
+## Next — research side
 
 1. **Research notebook** — an end-to-end demo (download → screen → optimize → backtest → tear-sheet)
    over real data, stringing the features together.

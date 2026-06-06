@@ -9,6 +9,30 @@ pub enum AssetClass {
     Perp,
     Future,
     Equity,
+    Option,
+}
+
+/// Call vs put — the exercise direction of an option contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OptionRight {
+    Call,
+    Put,
+}
+
+impl OptionRight {
+    /// Intrinsic value per unit of underlying at spot `s` and strike `k`: `max(s-k,0)` for a call,
+    /// `max(k-s,0)` for a put (never negative).
+    pub fn intrinsic(
+        self,
+        spot: rust_decimal::Decimal,
+        strike: rust_decimal::Decimal,
+    ) -> rust_decimal::Decimal {
+        let v = match self {
+            OptionRight::Call => spot - strike,
+            OptionRight::Put => strike - spot,
+        };
+        v.max(rust_decimal::Decimal::ZERO)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

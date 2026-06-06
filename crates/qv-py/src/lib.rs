@@ -17,9 +17,10 @@ mod imp {
     use qv_indicators::{Atr, Bollinger, Ema, Indicator, Macd, Rsi, Sma, Vwap};
     use qv_kernel::{BacktestConfig, BacktestKernel};
     use qv_model::{
-        AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, Instrument,
-        InstrumentId, MarketEvent, OrderEvent, OrderSide, PositionSide, PriceType, QuoteTick,
-        StrategyId, Symbol, TradeId, TradeTick, Venue,
+        AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, Equity,
+        FuturesContract, Instrument, InstrumentId, MarketEvent, OptionContract, OptionRight,
+        OrderEvent, OrderSide, PositionSide, PriceType, QuoteTick, StrategyId, Symbol, TradeId,
+        TradeTick, Venue,
     };
     use qv_ports::{Strategy, StrategyContext};
     use rust_decimal::prelude::FromPrimitive;
@@ -866,6 +867,131 @@ mod imp {
         ))
     }
 
+    /// Resolve an underlying string (`"BTCUSDT"` or `"BTCUSDT.BINANCE"`) to an `InstrumentId`,
+    /// defaulting the venue to this contract's `venue` when only a bare symbol is given.
+    fn resolve_underlying(u: &str, venue: &str) -> InstrumentId {
+        if u.contains('.') {
+            InstrumentId::parse(u)
+                .unwrap_or_else(|| InstrumentId::new(Symbol::from(u), Venue::from(venue)))
+        } else {
+            InstrumentId::new(Symbol::from(u), Venue::from(venue))
+        }
+    }
+
+    /// Build a typed instrument by `asset_class` (`spot`/`equity`/`future`/`option`). Derivatives
+    /// carry a contract `multiplier` (PnL scales by it) plus the metadata later phases read at expiry
+    /// (futures: `expiry_ns`; options: `strike`/`right`/`expiry_ns`/`underlying`). `spot` is the
+    /// backward-compatible default — identical to `build_pair`.
+    #[allow(clippy::too_many_arguments)]
+    fn build_typed_instrument(
+        symbol: &str,
+        venue: &str,
+        settle: Currency,
+        price_precision: u8,
+        size_precision: u8,
+        maker_fee: f64,
+        taker_fee: f64,
+        asset_class: &str,
+        multiplier: f64,
+        strike: Option<f64>,
+        option_right: Option<String>,
+        expiry_ns: Option<u64>,
+        underlying: Option<String>,
+    ) -> PyResult<(Arc<dyn Instrument>, InstrumentMeta)> {
+        if asset_class.eq_ignore_ascii_case("spot") {
+            return build_pair(
+                symbol,
+                venue,
+                settle,
+                price_precision,
+                size_precision,
+                maker_fee,
+                taker_fee,
+            );
+        }
+        let iid = InstrumentId::new(Symbol::from(symbol), Venue::from(venue));
+        let pinc = Price::from_raw(1, price_precision).map_err(vexc)?;
+        let sinc = Quantity::from_raw(1, size_precision).map_err(vexc)?;
+        let mk = Decimal::from_f64(maker_fee).unwrap_or(Decimal::ZERO);
+        let tk = Decimal::from_f64(taker_fee).unwrap_or(Decimal::ZERO);
+        let mult = Quantity::from_f64(multiplier.max(0.0), 8).map_err(vexc)?;
+        let meta = InstrumentMeta {
+            iid: iid.clone(),
+            price_precision,
+            size_precision,
+        };
+        let inst: Arc<dyn Instrument> = match asset_class.to_ascii_lowercase().as_str() {
+            "equity" => Arc::new(Equity {
+                id: iid,
+                currency: settle,
+                price_precision,
+                size_precision,
+                price_increment: pinc,
+                size_increment: sinc,
+                min_notional: None,
+                maker_fee: mk,
+                taker_fee: tk,
+            }),
+            "future" | "futures" => {
+                let expiry = expiry_ns.ok_or_else(|| vexc("future requires expiry_ns"))?;
+                Arc::new(FuturesContract {
+                    id: iid,
+                    underlying: underlying.as_deref().map(|u| resolve_underlying(u, venue)),
+                    quote: settle,
+                    settlement: settle,
+                    price_precision,
+                    size_precision,
+                    price_increment: pinc,
+                    size_increment: sinc,
+                    min_notional: None,
+                    multiplier: mult,
+                    maker_fee: mk,
+                    taker_fee: tk,
+                    expiry_ns: UnixNanos(expiry),
+                })
+            }
+            "option" | "call" | "put" => {
+                let strike = strike.ok_or_else(|| vexc("option requires strike"))?;
+                let expiry = expiry_ns.ok_or_else(|| vexc("option requires expiry_ns"))?;
+                // `right` may come from the asset_class itself ("call"/"put") or option_right.
+                let right_str = if asset_class.eq_ignore_ascii_case("option") {
+                    option_right.ok_or_else(|| vexc("option requires right ('call'/'put')"))?
+                } else {
+                    asset_class.to_string()
+                };
+                let right = match right_str.to_ascii_lowercase().as_str() {
+                    "call" | "c" => OptionRight::Call,
+                    "put" | "p" => OptionRight::Put,
+                    other => {
+                        return Err(vexc(format!(
+                            "option right must be call/put, got '{other}'"
+                        )))
+                    }
+                };
+                let und = underlying.ok_or_else(|| vexc("option requires underlying"))?;
+                Arc::new(OptionContract {
+                    id: iid,
+                    underlying: resolve_underlying(&und, venue),
+                    quote: settle,
+                    settlement: settle,
+                    price_precision,
+                    size_precision,
+                    price_increment: pinc,
+                    size_increment: sinc,
+                    min_notional: None,
+                    multiplier: mult,
+                    maker_fee: mk,
+                    taker_fee: tk,
+                    strike: Price::from_f64(strike, price_precision).map_err(vexc)?,
+                    right,
+                    expiry_ns: UnixNanos(expiry),
+                })
+            }
+            other => return Err(vexc(format!("unknown asset_class '{other}'"))),
+        };
+        Ok((inst, meta))
+    }
+
     /// Build one OHLCV `Bar` market event for the given instrument. `volume` drives the sim's
     /// volume-participation partial fills (a `0` volume means "no cap" — fill resting orders fully).
     fn build_bar_event(
@@ -1005,6 +1131,8 @@ mod imp {
         strategy, symbol, venue, starting_balance, bars,
         price_precision=2, size_precision=3, maker_fee=0.0002, taker_fee=0.0004,
         queue_ahead_factor=0.0, quotes=vec![], trades=vec![],
+        asset_class="spot".to_string(), multiplier=1.0, strike=None, option_right=None,
+        expiry_ns=None, underlying=None,
     ))]
     pub fn run_backtest(
         strategy: Py<PyAny>,
@@ -1024,9 +1152,18 @@ mod imp {
         // ask_size)` fire `on_quote`; trades `(ts, price, size, aggressor[+1/-1])` fire `on_trade`.
         quotes: Vec<(u64, f64, f64, f64, f64)>,
         trades: Vec<(u64, f64, f64, i8)>,
+        // Instrument kind: spot (default) / equity / future / option. Derivatives scale PnL by
+        // `multiplier`; futures need `expiry_ns`; options need `strike`/`option_right`/`expiry_ns`/
+        // `underlying`. The traded `bars`/ticks ARE that instrument's own price series.
+        asset_class: String,
+        multiplier: f64,
+        strike: Option<f64>,
+        option_right: Option<String>,
+        expiry_ns: Option<u64>,
+        underlying: Option<String>,
     ) -> PyResult<PyResultObj> {
         let settle = Currency::new("USDT", 8).map_err(vexc)?;
-        let (inst, meta) = build_pair(
+        let (inst, meta) = build_typed_instrument(
             &symbol,
             &venue,
             settle,
@@ -1034,6 +1171,12 @@ mod imp {
             size_precision,
             maker_fee,
             taker_fee,
+            &asset_class,
+            multiplier,
+            strike,
+            option_right,
+            expiry_ns,
+            underlying,
         )?;
         let mut events = Vec::with_capacity(bars.len() + quotes.len() + trades.len());
         for (ts, open, high, low, close, volume) in bars {
