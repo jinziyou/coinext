@@ -9,6 +9,7 @@ members = [
     "crates/qv-cache",
     "crates/qv-bus",
     "crates/qv-indicators",
+    "crates/qv-derivatives",
     "crates/qv-risk-engine",
     "crates/qv-portfolio",
     "crates/qv-data-engine",
@@ -46,6 +47,7 @@ qv-ports = { path = "crates/qv-ports" }
 qv-cache = { path = "crates/qv-cache" }
 qv-bus = { path = "crates/qv-bus" }
 qv-indicators = { path = "crates/qv-indicators" }
+qv-derivatives = { path = "crates/qv-derivatives" }
 qv-risk-engine = { path = "crates/qv-risk-engine" }
 qv-portfolio = { path = "crates/qv-portfolio" }
 qv-data-engine = { path = "crates/qv-data-engine" }
