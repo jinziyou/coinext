@@ -322,8 +322,9 @@ function KillSwitchPanel() {
     >
       <div className="killswitch">
         <p className="muted">
-          Trips the atomic global kill-switch in <code>coinext-risk-engine</code> via
-          the exec-svc control plane. While engaged, all order routing is denied.
+          Publishes a <code>CtrlKillSwitch</code> on the Redis control stream,
+          honored by the in-core <code>coinext-risk-engine</code> and the
+          risk-monitor. While engaged, all order routing is denied.
         </p>
 
         {engaged && (state.data?.reason || state.data?.engaged_by) ? (

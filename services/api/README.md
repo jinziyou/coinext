@@ -15,7 +15,9 @@ live telemetry from the Redis-Streams bus, and exposes operator controls.
 | GET    | `/positions`          | Open positions (stub → live Cache snapshot / positions table).          |
 | GET    | `/fills`              | Recent fills (stub → coinext-persistence OrderEvent store).                   |
 | GET    | `/catalog`            | Data-lake catalog of instruments/datasets (stub → coinext_data DataLake).    |
+| GET    | `/latency`            | Latency SLO histogram snapshot in ns (stub → Prometheus scrape).        |
 | POST   | `/backtest`           | Run an authoritative `coinext_strategy.SmaCross` backtest; returns metrics.  |
+| GET    | `/control/killswitch` | Current global kill-switch state (api's local projection).             |
 | POST   | `/control/killswitch` | Engage/release the platform-wide kill-switch (`CtrlKillSwitch` on bus). |
 | WS     | `/ws/live`            | Stream stub position/PnL updates (→ Redis bus consumer).                |
 

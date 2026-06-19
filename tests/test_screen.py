@@ -6,16 +6,8 @@ AUTHORITATIVE event-driven runner and so needs the compiled extension (importors
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
-
-_PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
-if str(_PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PYTHON_ROOT))
-
 from coinext_screen import (  # noqa: E402
     sma,
     sma_cross_positions,
@@ -89,7 +81,9 @@ def test_to_session_shape():
 # Integration: cross-check the screen against the AUTHORITATIVE event-driven runner.
 # --------------------------------------------------------------------------------------------------
 def test_cross_check_vs_event_runs_and_is_advisory():
-    pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
+    pytest.importorskip(
+        "coinext_py", reason="build coinext_py: uvx maturin develop --features python"
+    )
     import coinext_backtest
     from coinext_screen import cross_check_vs_event
 
@@ -104,7 +98,9 @@ def test_cross_check_aligns_signals_for_realistic_minute_end_bars():
     # Real Binance bars close at :59.999; the event fill at bar_ts + latency crosses the minute
     # boundary while the vector fill sits at bar_ts. Snapping to the bar grid restores signal
     # agreement, so no "signal-timing drift" warning remains (only the expected PnL/return drift).
-    pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
+    pytest.importorskip(
+        "coinext_py", reason="build coinext_py: uvx maturin develop --features python"
+    )
     import coinext_backtest
     from coinext_screen import cross_check_vs_event
 
@@ -119,7 +115,9 @@ def test_cross_check_aligns_signals_for_realistic_minute_end_bars():
 
 def test_screen_signals_match_authoritative_sma_cross():
     # The faithful stateful proxy must enter/exit on the SAME bars as the event-driven SmaCross.
-    pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
+    pytest.importorskip(
+        "coinext_py", reason="build coinext_py: uvx maturin develop --features python"
+    )
     import coinext_backtest
     from coinext_screen import sma_cross_positions, vector_backtest
     from coinext_strategy import SmaCross

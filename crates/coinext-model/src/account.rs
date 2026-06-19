@@ -9,6 +9,7 @@ use std::collections::HashMap;
 pub struct AccountState {
     pub account_id: AccountId,
     pub balances: HashMap<Currency, Money>,
+    /// Reserved: locked margin. The kernel currently derives maintenance margin from positions and does not populate this.
     pub margin_used: Money,
 }
 

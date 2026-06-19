@@ -18,8 +18,8 @@ impl DataEngine {
         DataEngine { cache }
     }
 
-    /// Update the Cache from a market event, then publish it. Returns the (topic, msg) so the
-    /// kernel can also drive the in-proc bus if one is wired.
+    /// Update the Cache from a market event, then publish it on `bus` (cache-then-publish, so
+    /// strategy handlers read fresh state).
     pub fn process(&self, ev: &MarketEvent, bus: &dyn MessageBus) {
         {
             let mut cache = self.cache.borrow_mut();

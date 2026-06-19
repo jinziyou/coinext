@@ -58,7 +58,10 @@ class TradingNode:
 
         Identical mechanism to backtest warm-up — this is the parity guarantee for indicator state.
         """
-        from coinext_data import BarSpec, HistoryReader  # local import: keeps coinext_data optional at import
+        from coinext_data import (  # local import: keeps coinext_data optional at import
+            BarSpec,
+            HistoryReader,
+        )
 
         reader = HistoryReader()
         spec = BarSpec(symbol=self.config.symbol)

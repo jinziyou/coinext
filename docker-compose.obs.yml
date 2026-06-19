@@ -42,6 +42,8 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=15d"
+      # Accept remote-write (POST /api/v1/write) from Tempo's metrics_generator + the OTel collector (off by default).
+      - "--web.enable-remote-write-receiver"
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -81,7 +83,7 @@ services:
       GF_SECURITY_ADMIN_USER: ${COINEXT__GRAFANA__USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${COINEXT__GRAFANA__PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      # Enable the trace-to-logs / exemplar correlation features used by the Coinext dashboard.
+      # legacy trace→metrics service-graph toggle (trace-to-logs / exemplar correlation are GA, no toggle needed).
       GF_FEATURE_TOGGLES_ENABLE: "traceToMetrics"
     volumes:
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro

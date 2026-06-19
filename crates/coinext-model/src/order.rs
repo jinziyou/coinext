@@ -23,7 +23,8 @@ use coinext_core::{ModelError, Price, Quantity, UnixNanos};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-/// Execution flags affecting fills/fees and risk.
+/// Execution flags carried on the order (post_only / reduce_only / display_qty).
+/// Reserved — not yet consumed by the matching/fee/risk path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct OrderFlags {
     pub post_only: bool,

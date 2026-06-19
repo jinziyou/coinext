@@ -12,7 +12,6 @@
 
 #[cfg(feature = "python")]
 mod imp {
-    use pyo3::prelude::*;
     use coinext_core::{Currency, Money, Price, Quantity, UnixNanos};
     use coinext_derivatives::BsInputs;
     use coinext_indicators::{Atr, Bollinger, Ema, Indicator, Macd, Rsi, Sma, Vwap};
@@ -24,6 +23,7 @@ mod imp {
         TradeTick, Venue,
     };
     use coinext_ports::{Strategy, StrategyContext};
+    use pyo3::prelude::*;
     use rust_decimal::prelude::FromPrimitive;
     use rust_decimal::Decimal;
     use std::cell::RefCell;

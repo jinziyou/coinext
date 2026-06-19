@@ -41,15 +41,15 @@ class TraderConfig:
     """Per-account live-trading configuration, resolved from ``COINEXT__*`` env (see ``.env.example``)."""
 
     account_id: str = "default"
-    env: str = "live"            # backtest | sandbox | live (this wrapper is for sandbox/live)
+    env: str = "live"  # backtest | sandbox | live (this wrapper is for sandbox/live)
     symbol: str = "BTCUSDT"
     venue: str = "BINANCE"
-    strategy: str = "SmaCross"   # name resolved against coinext_strategy
+    strategy: str = "SmaCross"  # name resolved against coinext_strategy
     redis_url: str = "redis://redis:6379/0"
     metrics_port: int = 9103
 
     @classmethod
-    def from_env(cls) -> "TraderConfig":
+    def from_env(cls) -> TraderConfig:
         return cls(
             account_id=os.environ.get("COINEXT__TRADER__ACCOUNT_ID", cls.account_id),
             env=os.environ.get("COINEXT__ENV", cls.env),
@@ -57,7 +57,9 @@ class TraderConfig:
             venue=os.environ.get("COINEXT__TRADER__VENUE", cls.venue),
             strategy=os.environ.get("COINEXT__TRADER__STRATEGY", cls.strategy),
             redis_url=os.environ.get("COINEXT__REDIS__URL", cls.redis_url),
-            metrics_port=int(os.environ.get("COINEXT__TRADER__METRICS_PORT", str(cls.metrics_port))),
+            metrics_port=int(
+                os.environ.get("COINEXT__TRADER__METRICS_PORT", str(cls.metrics_port))
+            ),
         )
 
 

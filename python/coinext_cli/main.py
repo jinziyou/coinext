@@ -2,15 +2,21 @@
 
 Subcommands map onto the control-plane packages:
 
-* ``backtest``  → run the AUTHORITATIVE ``coinext_backtest`` runner with ``coinext_strategy.SmaCross`` and
-  print ``coinext_analytics.tear_sheet`` (the canonical end-to-end demo).
-* ``parity``    → run the pre-live promotion gate (``coinext_parity.run_gate``): backtest SmaCross vs a
+* ``backtest``       → run the AUTHORITATIVE ``coinext_backtest`` runner with ``coinext_strategy.SmaCross``
+  and print ``coinext_analytics.tear_sheet`` (the canonical end-to-end demo).
+* ``backtest-multi`` → run a per-symbol SMA portfolio (``coinext_strategy.MultiSma``) across many
+  instruments through one kernel (``coinext_backtest.run_multi``) and print the aggregate tear sheet.
+* ``parity``         → run the pre-live promotion gate (``coinext_parity.run_gate``): backtest SmaCross vs a
   slightly-perturbed sandbox session and print ``render_verdict`` (the demo acceptance gate).
-* ``optimize``  → Optuna walk-forward search (``coinext_optimize``).
-* ``download``  → fetch venue history into the data lake (``coinext_data``).
-* ``live``      → start the live/sandbox ``TradingNode`` (``coinext_live``).
-* ``reconcile`` → reconcile-on-restart against venue truth (``coinext_live.reconcile``).
-* ``catalog``   → inspect the data lake (``coinext_data.DataCatalog``).
+* ``testnet-gate``   → the one-command closed loop: real klines → backtest → REAL Binance testnet fills →
+  ``coinext_parity`` gate (``--no-testnet`` dry-runs the orchestration without keys).
+* ``optimize``       → Optuna walk-forward search (``coinext_optimize``).
+* ``screen``         → FAST vectorized SMA-cross sweep (``coinext_screen``, non-authoritative) cross-checked
+  against the event-driven runner.
+* ``download``       → fetch venue history into the data lake (``coinext_data``).
+* ``live``           → start the live/sandbox ``TradingNode`` (``coinext_live``).
+* ``reconcile``      → reconcile-on-restart against venue truth (``coinext_live.reconcile``).
+* ``catalog``        → inspect the data lake (``coinext_data.DataCatalog``).
 
 Typer is used when installed (rich help + the ``coinext`` console script ``coinext_cli.main:app``). Without
 it, an ``argparse`` driver provides the same subcommands so ``python -m coinext_cli.main`` always runs.
@@ -72,7 +78,9 @@ def _cmd_backtest(
         bars = fetch_binance_klines(symbol, interval, min(n, 1000))
         print(f"[real] fetched {len(bars)} live {symbol} {interval} bars")
     elif strategy == "limit-maker":
-        bars = coinext_backtest.synthetic_ohlc_bars(n=n)  # wicks for the resting limits to fill against
+        bars = coinext_backtest.synthetic_ohlc_bars(
+            n=n
+        )  # wicks for the resting limits to fill against
     else:
         bars = coinext_backtest.synthetic_bars(n=n)
     strat = LimitMaker() if strategy == "limit-maker" else SmaCross(fast=fast, slow=slow)
@@ -115,7 +123,9 @@ def _cmd_backtest_multi(
         for sym in syms:
             rows = lake.read_ohlcv("BINANCE", sym, interval)
             if not rows:
-                print(f"lake empty for {sym} {interval} — run `coinext download --symbols {sym}` first")
+                print(
+                    f"lake empty for {sym} {interval} — run `coinext download --symbols {sym}` first"
+                )
                 return 1
             bars[sym] = rows
         print(f"[lake] loaded {len(syms)} symbols of {interval} OHLC from the lake")
@@ -209,7 +219,8 @@ def _cmd_testnet_gate(
         print("[3/4] --no-testnet: synthesized sandbox fills (+1.5 bps)")
     else:
         if not (
-            os.environ.get("COINEXT__BINANCE__API_KEY") and os.environ.get("COINEXT__BINANCE__API_SECRET")
+            os.environ.get("COINEXT__BINANCE__API_KEY")
+            and os.environ.get("COINEXT__BINANCE__API_SECRET")
         ):
             print(
                 "[3/4] missing COINEXT__BINANCE__API_KEY/SECRET — get spot testnet keys at "
@@ -319,13 +330,23 @@ def _cmd_optimize(
             }
 
         report = walk_forward_optimize(
-            bars, objective, search_space=search_space, n_splits=splits, mode=mode,
-            optimizer="optuna", n_trials=trials,
+            bars,
+            objective,
+            search_space=search_space,
+            n_splits=splits,
+            mode=mode,
+            optimizer="optuna",
+            n_trials=trials,
         )
     else:
         param_grid = {"fast": [5, 8, 11, 14, 17, 20], "slow": [25, 30, 40, 50, 60]}
         report = walk_forward_optimize(
-            bars, objective, param_grid=param_grid, n_splits=splits, mode=mode, optimizer="grid",
+            bars,
+            objective,
+            param_grid=param_grid,
+            n_splits=splits,
+            mode=mode,
+            optimizer="grid",
         )
 
     print(report.render())
@@ -377,7 +398,9 @@ def _cmd_screen(
     else:
         print("  no material drift — the screen tracks the event-driven runner here.")
     print("=============================================================")
-    print("Confirm survivors with: coinext backtest --fast <f> --slow <s> (the parity-valid runner)")
+    print(
+        "Confirm survivors with: coinext backtest --fast <f> --slow <s> (the parity-valid runner)"
+    )
     return 0
 
 
@@ -560,7 +583,8 @@ def _build_argparse_parser():
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="coinext", description="Coinext control-plane CLI (argparse fallback; install 'typer')."
+        prog="coinext",
+        description="Coinext control-plane CLI (argparse fallback; install 'typer').",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

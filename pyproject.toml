@@ -45,6 +45,9 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B"]
+# `ruff format` owns code width (line-length above); E501 here would only fire on prose
+# comments/docstrings it never reflows, so we don't hand-wrap them.
+ignore = ["E501"]
 
 [tool.uv]
 package = false

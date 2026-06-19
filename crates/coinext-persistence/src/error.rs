@@ -29,8 +29,3 @@ pub enum PersistError {
 
 /// Convenience alias used throughout the crate.
 pub type PersistResult<T> = Result<T, PersistError>;
-
-/// Backwards-compatible alias — earlier scaffold code referred to `PersistenceError`/
-/// `PersistenceResult`; keep them pointing at the canonical names so downstream `use`s keep working.
-pub type PersistenceError = PersistError;
-pub type PersistenceResult<T> = PersistResult<T>;

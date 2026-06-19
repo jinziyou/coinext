@@ -3,8 +3,11 @@
 The AUTHORITATIVE pre-trade gate is the Rust ``coinext-risk-engine`` (a synchronous gate + atomic
 kill-switch, ARCHITECTURE.md §8). This package is the Python-side facade: it owns the *config* the
 Rust gate reads (``COINEXT__RISK__*``) and a defense-in-depth **protections pipeline** modelled on
-Freqtrade's protections (StoplossGuard / MaxDrawdown / CooldownPeriod) that the out-of-band
-``risk-monitor`` service evaluates and can use to trip the global kill-switch.
+Freqtrade's protections (StoplossGuard / MaxDrawdown / CooldownPeriod). The INTENDED design is for
+the out-of-band ``risk-monitor`` service to evaluate this pipeline over portfolio snapshots and trip
+the global kill-switch on a breach; today that wiring does not exist — ``services/risk-monitor``
+re-implements its own supervisor and does not import this package, so the pipeline here is currently
+unused scaffolding for that design.
 
 These protections are advisory/operational — they never replace the in-engine per-order gate; they
 add portfolio-level circuit breakers on top of it.
@@ -141,8 +144,10 @@ class CooldownPeriod(Protection):
 class ProtectionsPipeline:
     """Evaluates all protections and aggregates a global ``should_halt`` decision.
 
-    The ``risk-monitor`` runs this over portfolio snapshots from the bus; if any protection trips it
-    can flip ``RiskLimits.kill_switch`` (the Rust engine reads it atomically). ARCHITECTURE.md §8.
+    The INTENDED wiring is for the ``risk-monitor`` to run this over portfolio snapshots from the bus
+    and, if any protection trips, flip ``RiskLimits.kill_switch`` (the Rust engine reads it
+    atomically — ARCHITECTURE.md §8). That wiring is not in place yet: ``services/risk-monitor``
+    presently re-implements its own supervisor and does not call this, so this is scaffolding.
     """
 
     def __init__(self, cfg: ProtectionConfig | None = None) -> None:

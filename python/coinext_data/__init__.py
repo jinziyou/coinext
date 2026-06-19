@@ -1,9 +1,10 @@
 """coinext_data — the data-lake catalog, history reader, and live data provider.
 
 The data lake is a partitioned **Parquet** store on the local FS or S3/MinIO
-(``COINEXT__DATA__LAKE_ROOT``, ``COINEXT__MINIO__*``). Partition layout (planned)::
+(``COINEXT__DATA__LAKE_ROOT``, ``COINEXT__MINIO__*``). Partition layout (Hive-style dirs + per-month
+file shards, as implemented in ``lake.py``)::
 
-    {lake_root}/bars/venue={v}/symbol={s}/interval={i}/year={yyyy}/month={mm}/*.parquet
+    {lake_root}/bars/venue={v}/symbol={s}/interval={i}/{YYYYMM}.parquet
 
 Three roles, per ARCHITECTURE.md §7:
 
@@ -29,13 +30,11 @@ from dataclasses import dataclass
 # even when pyarrow is absent — only the lake-backed features then raise a clear error on use.
 try:
     from .download import download_klines, download_to_lake, interval_to_ms
-    from .lake import BAR_SCHEMA, BarRow, DataLake, SeriesCoverage
+    from .lake import DataLake, SeriesCoverage
 
     _HAVE_LAKE = True
 except ImportError:  # pyarrow not installed
     _HAVE_LAKE = False
-    BAR_SCHEMA = None  # type: ignore[assignment]
-    BarRow = tuple  # type: ignore[assignment,misc]
 
     def _need_pyarrow(*_a, **_k):  # noqa: ANN002, ANN003
         raise ImportError("the data lake needs pyarrow: `uv pip install pyarrow`")
@@ -69,9 +68,9 @@ class CatalogEntry:
 class DataCatalog:
     """Discovery/metadata over the Parquet data lake.
 
-    Resolves a :class:`BarSpec` to on-disk partitions and (eventually) summarizes coverage so the
-    CLI ``catalog`` command can report what's available. The current implementation only computes
-    paths and probes existence; range/row stats are TODO (DuckDB ``PRAGMA`` / Parquet footers).
+    Resolves a :class:`BarSpec` to on-disk partitions and summarizes coverage (range/row stats) so
+    callers can report what's available. ``entry()`` reads coverage from the Parquet lake when
+    pyarrow is present; otherwise it returns paths only.
     """
 
     def __init__(self, lake_root: str | None = None) -> None:
@@ -254,8 +253,7 @@ def fetch_binance_agg_trades(
         raw = json.loads(resp.read().decode("utf-8"))
     # Each: {"p": price, "q": qty, "T": timestamp(ms), "m": buyerIsMaker, ...}.
     return [
-        (int(t["T"]) * 1_000_000, float(t["p"]), float(t["q"]), (-1 if t["m"] else 1))
-        for t in raw
+        (int(t["T"]) * 1_000_000, float(t["p"]), float(t["q"]), (-1 if t["m"] else 1)) for t in raw
     ]
 
 

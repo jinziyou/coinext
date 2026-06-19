@@ -10,10 +10,8 @@
 
 use async_trait::async_trait;
 use coinext_core::{Currency, Money, Price, Quantity};
-use coinext_model::{CurrencyPair, Instrument, InstrumentId, Symbol, Venue};
-use coinext_network::{
-    Credentials, NetError, RateLimiter, RestClient, RestConfig, RestRequest,
-};
+use coinext_model::{CurrencyPair, Instrument, InstrumentId, Symbol};
+use coinext_network::{Credentials, RateLimiter, RestClient, RestConfig, RestRequest};
 use coinext_ports::{InstrumentProvider, PortError, PortResult};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
@@ -45,7 +43,7 @@ impl BinanceInstrumentProvider {
             RateLimiter::per_minute(1200),
             Credentials::default(),
         )
-        .map_err(net_to_port)?;
+        .map_err(crate::net_to_port)?;
         Ok(BinanceInstrumentProvider {
             config,
             rest,
@@ -61,7 +59,7 @@ impl InstrumentProvider for BinanceInstrumentProvider {
             .rest
             .send(RestRequest::get("/api/v3/exchangeInfo", 20))
             .await
-            .map_err(net_to_port)?;
+            .map_err(crate::net_to_port)?;
         let instruments = parse_exchange_info(&resp.body)
             .map_err(|e| PortError::Io(format!("exchangeInfo parse: {e}")))?;
         let mut cache = self.cache.write().expect("cache lock");
@@ -80,7 +78,7 @@ impl InstrumentProvider for BinanceInstrumentProvider {
             .rest
             .send(RestRequest::get("/api/v3/exchangeInfo", 20).with_param("symbol", id.symbol.as_str()))
             .await
-            .map_err(net_to_port)?;
+            .map_err(crate::net_to_port)?;
         let instruments = parse_exchange_info(&resp.body)
             .map_err(|e| PortError::Io(format!("exchangeInfo parse: {e}")))?;
         let mut cache = self.cache.write().expect("cache lock");
@@ -95,14 +93,6 @@ impl InstrumentProvider for BinanceInstrumentProvider {
 
     fn find(&self, id: &InstrumentId) -> Option<Arc<dyn Instrument>> {
         self.cache.read().expect("cache lock").get(id).cloned()
-    }
-}
-
-/// Map a `coinext-network` transport error into a `coinext-ports` error at the adapter boundary.
-fn net_to_port(e: NetError) -> PortError {
-    match e {
-        NetError::Http { status, body } => PortError::Io(format!("http {status}: {body}")),
-        other => PortError::Io(other.to_string()),
     }
 }
 
@@ -123,7 +113,7 @@ pub fn parse_exchange_info(json: &str) -> Result<Vec<Arc<dyn Instrument>>, Strin
         .and_then(|s| s.as_array())
         .ok_or_else(|| "missing `symbols` array".to_string())?;
 
-    let venue = Venue::from("BINANCE");
+    let venue = crate::venue();
     let maker_fee = Decimal::from_str(DEFAULT_MAKER_FEE).unwrap();
     let taker_fee = Decimal::from_str(DEFAULT_TAKER_FEE).unwrap();
 

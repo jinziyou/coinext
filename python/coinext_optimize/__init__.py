@@ -156,7 +156,7 @@ class FoldResult:
 
     fold: int
     params: dict[str, Any]
-    is_score: float   # in-sample score of `params` on the train window
+    is_score: float  # in-sample score of `params` on the train window
     oos_score: float  # out-of-sample score of `params` on the test window
     n_train: int
     n_test: int
@@ -239,11 +239,18 @@ def walk_forward_optimize(
     def _optimize(window: list[tuple[int, float]]) -> tuple[dict[str, Any], float]:
         if optimizer == "grid":
             params, score = grid_search(
-                param_grid, objective, window, direction=direction  # type: ignore[arg-type]
+                param_grid,
+                objective,
+                window,
+                direction=direction,  # type: ignore[arg-type]
             )
         else:
             params, score = _optuna_search(
-                search_space, objective, window, n_trials=n_trials, direction=direction  # type: ignore[arg-type]
+                search_space,
+                objective,
+                window,
+                n_trials=n_trials,
+                direction=direction,  # type: ignore[arg-type]
             )
         history.append((params, score))
         return params, score
@@ -335,8 +342,7 @@ class OptimizeNode:
             import optuna  # type: ignore
         except ImportError as exc:  # pragma: no cover - optional dep
             raise ImportError(
-                "optuna not installed. Install the research extra: "
-                "pip install 'coinext[research]'"
+                "optuna not installed. Install the research extra: pip install 'coinext[research]'"
             ) from exc
 
         history: list[tuple[dict[str, Any], float]] = []

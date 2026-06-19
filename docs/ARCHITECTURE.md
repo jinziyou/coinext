@@ -33,8 +33,8 @@ The root [`ARCHITECTURE.md`](../ARCHITECTURE.md) covers:
 10. `coinext_strategy` + `coinext_backtest` (authoritative runner + advisory screen). ✅
 11. `coinext_analytics` (metrics + bias detectors). ✅
 12. `coinext_optimize` (walk-forward, grid/Optuna). ✅
-13. `coinext-network` + `coinext-adapters/binance`. 🚧 stub
-14. `coinext-persistence` + reconciliation. 🚧 stub
+13. `coinext-network` + `coinext-adapters/binance` (order-modify unsupported). ✅
+14. `coinext-persistence` + reconciliation. ✅
 15. Python bus client + standalone services. 🚧 scaffolded
 16. Observability wiring. 🚧 scaffolded
 17. `coinext_live` + api + ui + risk-monitor. 🚧 scaffolded

@@ -2,9 +2,10 @@
 
 The AUTHORITATIVE portfolio (balances, realized/unrealized PnL, exposure) lives in Rust
 (``coinext-portfolio``), sourced from the Cache marks (ARCHITECTURE.md §3, §7). This package is a read
-facade for Python services (``api``, ``risk-monitor``, analytics): it exposes the SAME shape so
-Python code can reason about positions/PnL without re-deriving them, whether the data comes from
-``coinext_py`` in-process or from the Redis bus out-of-process.
+facade defined ahead of being wired — no service imports it yet (``api``, ``risk-monitor``, analytics
+are the INTENDED consumers): it exposes the SAME shape so Python code can reason about positions/PnL
+without re-deriving them, whether the data comes from ``coinext_py`` in-process or from the Redis bus
+out-of-process.
 
 All money/size values keep the integer-backed domain semantics; here they surface as plain floats
 for display/aggregation only (never used for matching — ARCHITECTURE.md §4).

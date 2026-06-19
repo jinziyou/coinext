@@ -7,14 +7,7 @@ submit_*. Requires the compiled coinext_py extension.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-_PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
-if str(_PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PYTHON_ROOT))
 
 pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
 
@@ -115,8 +108,8 @@ def test_cancel_prevents_a_resting_limit_from_filling():
 
 def test_invalid_submit_raises_and_keeps_id_prediction_aligned():
     # A submit the instrument precision can't represent (NaN qty) must RAISE — not silently drop on
-    # replay, which would desync every later predicted client_order_id in the handler. After it's
-    # it, the next valid submit still gets the id its fill actually carries.
+    # replay, which would desync every later predicted client_order_id in the handler. After the
+    # rejected submit, the next valid submit still gets the id its fill actually carries.
     class TryBad(Strategy):
         def __init__(self):
             self.raised = False

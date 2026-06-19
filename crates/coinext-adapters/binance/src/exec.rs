@@ -412,7 +412,7 @@ fn build_fill(v: &serde_json::Value, client_id: ClientOrderId) -> Result<Fill, S
         trade_id,
         client_order_id: client_id,
         venue_order_id,
-        instrument_id: InstrumentId::new(Symbol::from(symbol), Venue::from("BINANCE")),
+        instrument_id: InstrumentId::new(Symbol::from(symbol), crate::venue()),
         side,
         last_px,
         last_qty,

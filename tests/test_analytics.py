@@ -7,15 +7,7 @@ without the compiled ``coinext_py`` extension. A separate integration test in
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-_PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
-if str(_PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PYTHON_ROOT))
-
 from coinext_analytics.bias import detect_lookahead_bias, detect_overfitting  # noqa: E402
 from coinext_analytics.trades import (  # noqa: E402
     compute_trade_stats,
@@ -143,19 +135,19 @@ def test_stats_from_result_reconstructs_trades_per_instrument():
         starting_equity: float = 100_000.0
 
     fills_log = [
-        (_ts(0), "AAA", +1, 1.0, 100.0),     # AAA long @100
+        (_ts(0), "AAA", +1, 1.0, 100.0),  # AAA long @100
         (_ts(1), "BBB", +1, 1.0, 10_000.0),  # BBB long @10000
         (_ts(2), "BBB", -1, 1.0, 10_100.0),  # close BBB: +100  (blind FIFO -> AAA lot -> +10000!)
-        (_ts(3), "AAA", -1, 1.0, 110.0),     # close AAA: +10   (blind FIFO -> BBB lot -> -9890!)
+        (_ts(3), "AAA", -1, 1.0, 110.0),  # close AAA: +10   (blind FIFO -> BBB lot -> -9890!)
     ]
     eq = [(_ts(i), 100_000.0) for i in range(5)]
     stats = stats_from_result(_R(eq, fills_log))
 
     assert stats.n_trades == 2
-    assert stats.n_wins == 2 and stats.n_losses == 0   # blind matching would give 1W/1L
-    assert stats.total_pnl == pytest.approx(110.0)     # PnL is conserved either way
-    assert stats.largest_win == pytest.approx(100.0)   # blind matching would be ~10000
-    assert stats.largest_win < 1_000.0                 # rules out cross-instrument matching
+    assert stats.n_wins == 2 and stats.n_losses == 0  # blind matching would give 1W/1L
+    assert stats.total_pnl == pytest.approx(110.0)  # PnL is conserved either way
+    assert stats.largest_win == pytest.approx(100.0)  # blind matching would be ~10000
+    assert stats.largest_win < 1_000.0  # rules out cross-instrument matching
 
 
 def test_trade_stats_empty_and_all_wins():

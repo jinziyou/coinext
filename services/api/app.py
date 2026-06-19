@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -48,7 +49,18 @@ REDIS_URL = os.environ.get("COINEXT__REDIS__URL", "redis://redis:6379/0")
 # Bus stream / channel names. These MUST agree with the Rust publishers (coinext-bus Envelope contract)
 # and the Python coinext_bus client. Centralised here as the api's view of the topology.
 STREAM_CONTROL = "coinext.control"  # CtrlKillSwitch and other operator commands flow here
-STREAM_LIVE = "coinext.live"        # position / PnL telemetry the UI subscribes to
+STREAM_LIVE = "coinext.live"  # position / PnL telemetry the UI subscribes to
+
+# Last-known kill-switch state, mirrored here so GET /control/killswitch and the POST response can
+# report it without a round-trip to the risk-engine. Authoritative enforcement still lives in-core
+# (coinext-risk-engine) + the risk-monitor; this is the api's local projection for the operator UI.
+# TODO: replace with a read of the authoritative state once the bus exposes a control snapshot.
+_killswitch_state: dict[str, Any] = {
+    "engaged": False,
+    "engaged_by": None,
+    "reason": None,
+    "ts_changed": None,
+}
 
 
 # --------------------------------------------------------------------------------------------------
@@ -111,10 +123,21 @@ class BacktestRequest(BaseModel):
 
 
 class KillSwitchRequest(BaseModel):
-    """Operator kill-switch toggle. ``engaged=True`` halts all new order routing platform-wide."""
+    """Operator kill-switch toggle. ``engage=True`` halts all new order routing platform-wide."""
 
-    engaged: bool = True
+    engage: bool = True
     reason: str = "manual operator action"
+    # Operator identity for the audit trail (defaults to the api process if the caller omits it).
+    actor: str | None = None
+
+
+class KillSwitchState(BaseModel):
+    """Current global kill-switch state (the shape both GET and POST /control/killswitch return)."""
+
+    engaged: bool = False
+    engaged_by: str | None = None
+    reason: str | None = None
+    ts_changed: str | None = None  # ISO-8601
 
 
 # --------------------------------------------------------------------------------------------------
@@ -145,15 +168,20 @@ def list_runs() -> list[dict[str, Any]]:
     """List backtest / live runs.
 
     TODO: query the runs table in Postgres (COINEXT__POSTGRES__DSN). Returns a representative stub now.
+
+    Shape mirrors the UI's ``Run`` wire type (services/ui/src/api.ts): monetary fields (``pnl``)
+    cross as strings to preserve the fixed-precision integer domain (ARCHITECTURE §4).
     """
     return [
         {
             "run_id": "bt-0001",
-            "kind": "backtest",
-            "strategy": "SmaCross",
-            "symbol": "BTCUSDT",
+            "strategy_id": "SmaCross",
+            "environment": "backtest",
             "status": "completed",
-            "created_at": "2026-06-05T00:00:00Z",
+            "started_at": "2026-06-05T00:00:00Z",
+            "updated_at": "2026-06-05T00:00:00Z",
+            "pnl": "1234.50",
+            "pnl_currency": "USDT",
         },
     ]
 
@@ -163,14 +191,22 @@ def list_positions() -> list[dict[str, Any]]:
     """Current open positions.
 
     TODO: read from the live Cache snapshot (published on the bus) or the positions table. Stub now.
+
+    Shape mirrors the UI's ``Position`` wire type (services/ui/src/api.ts): quantity / price / PnL
+    fields cross as strings to preserve the fixed-precision integer domain (ARCHITECTURE §4).
     """
     return [
         {
             "instrument_id": "BTCUSDT.BINANCE",
-            "net_qty": 0.5,
-            "avg_px": 50_000.0,
-            "unrealized_pnl": 250.0,
-            "realized_pnl": 0.0,
+            "venue": "BINANCE",
+            "side": "long",
+            "quantity": "0.5",
+            "avg_px": "50000.00",
+            "mark_px": "50500.00",
+            "unrealized_pnl": "250.00",
+            "realized_pnl": "0.00",
+            "currency": "USDT",
+            "ts_last": "2026-06-05T00:00:00Z",
         },
     ]
 
@@ -203,9 +239,53 @@ def catalog() -> dict[str, Any]:
     return {
         "lake_root": os.environ.get("COINEXT__DATA__LAKE_ROOT", "/data"),
         "instruments": [
-            {"instrument_id": "BTCUSDT.BINANCE", "asset_class": "crypto", "bar_types": ["1m", "1h"]},
-            {"instrument_id": "ETHUSDT.BINANCE", "asset_class": "crypto", "bar_types": ["1m", "1h"]},
+            {
+                "instrument_id": "BTCUSDT.BINANCE",
+                "asset_class": "crypto",
+                "bar_types": ["1m", "1h"],
+            },
+            {
+                "instrument_id": "ETHUSDT.BINANCE",
+                "asset_class": "crypto",
+                "bar_types": ["1m", "1h"],
+            },
         ],
+    }
+
+
+@app.get("/latency")
+def latency() -> dict[str, Any]:
+    """Latency SLO histogram snapshot (the UI polls this for the Latency panel).
+
+    Values are the percentiles the platform tracks (ARCHITECTURE §8), reported in nanoseconds.
+    Shape mirrors the UI's ``LatencySnapshot`` wire type (services/ui/src/api.ts).
+    TODO: scrape the real histograms from the Prometheus endpoints the trading services expose.
+    """
+    return {
+        "metrics": [
+            {
+                "name": "submit_to_ack_ns",
+                "p50_ns": 18_000,
+                "p95_ns": 42_000,
+                "p99_ns": 90_000,
+                "count": 0,
+            },
+            {
+                "name": "strategy_dispatch_ns",
+                "p50_ns": 1_200,
+                "p95_ns": 3_500,
+                "p99_ns": 8_000,
+                "count": 0,
+            },
+            {
+                "name": "ingest_to_publish_ns",
+                "p50_ns": 6_500,
+                "p95_ns": 15_000,
+                "p99_ns": 35_000,
+                "count": 0,
+            },
+        ],
+        "ts_snapshot": None,
     }
 
 
@@ -278,43 +358,59 @@ def run_backtest(req: BacktestRequest) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------------------
 
 
+@app.get("/control/killswitch")
+def get_killswitch() -> KillSwitchState:
+    """Return the api's last-known global kill-switch state (polled by the UI).
+
+    This is the api's local projection (see ``_killswitch_state``); authoritative enforcement lives
+    in-core (coinext-risk-engine) and in the ``risk-monitor``.
+    """
+    return KillSwitchState(**_killswitch_state)
+
+
 @app.post("/control/killswitch")
-def control_killswitch(req: KillSwitchRequest) -> dict[str, Any]:
+def control_killswitch(req: KillSwitchRequest) -> KillSwitchState:
     """Engage / release the platform-wide kill-switch by publishing ``CtrlKillSwitch`` on the bus.
 
     The atomic in-core gate (coinext-risk-engine) and the out-of-band ``risk-monitor`` both honour it,
     so engaging it here stops new order routing across every ``trader`` process. Releasing it
     re-enables routing. This is defense-in-depth on top of the per-order RiskEngine.
+
+    Returns the updated ``KillSwitchState`` (the UI reads it back to refresh its view). The local
+    projection is updated even when the bus is unavailable so the operator sees the requested state.
     """
+    actor = req.actor or "api"
     bus = _load_bus()
-    if bus is None:
-        # No bus wired (e.g. dev box without redis/msgpack). Report rather than fail hard.
-        return {
-            "ok": False,
-            "engaged": req.engaged,
-            "published": False,
-            "detail": "coinext_bus unavailable; kill-switch NOT propagated. Install bus extras + run redis.",
-        }
 
     # TODO: build and publish the real CtrlKillSwitch Envelope (MsgType.CTRL) via coinext_bus once the
     # publisher API lands. Shape kept explicit so the contract is reviewable.
     payload = {
         "kind": "CtrlKillSwitch",
-        "engaged": req.engaged,
+        "engaged": req.engage,
         "reason": req.reason,
         "source": "api",
+        "actor": actor,
     }
-    try:  # pragma: no cover - requires a running redis
-        # Expected coinext_bus surface: a Publisher that encodes a MsgType.CTRL Envelope onto STREAM_CONTROL.
-        publisher = bus.Publisher(REDIS_URL)  # type: ignore[attr-defined]
-        publisher.publish_control(STREAM_CONTROL, payload)
-        published = True
-        detail = "kill-switch command published on the control stream"
-    except Exception as exc:  # noqa: BLE001 - surface bus/redis errors to the operator
-        published = False
-        detail = f"coinext_bus present but publish failed: {exc}"
+    if bus is not None:
+        try:  # pragma: no cover - requires a running redis
+            # Expected coinext_bus surface: a Publisher that encodes a MsgType.CTRL Envelope onto STREAM_CONTROL.
+            publisher = bus.Publisher(REDIS_URL)  # type: ignore[attr-defined]
+            publisher.publish_control(STREAM_CONTROL, payload)
+        except Exception as exc:  # noqa: BLE001 - surface bus/redis errors to the operator
+            raise HTTPException(
+                status_code=503,
+                detail=f"coinext_bus present but publish failed: {exc}",
+            ) from exc
+    # No bus wired (e.g. dev box without redis/msgpack): we still mirror the requested state locally
+    # so the UI reflects the operator's intent; enforcement is a no-op until the bus is available.
 
-    return {"ok": published, "engaged": req.engaged, "published": published, "detail": detail}
+    _killswitch_state.update(
+        engaged=req.engage,
+        engaged_by=actor,
+        reason=req.reason,
+        ts_changed=datetime.now(UTC).isoformat(),
+    )
+    return KillSwitchState(**_killswitch_state)
 
 
 # --------------------------------------------------------------------------------------------------

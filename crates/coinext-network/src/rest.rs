@@ -182,8 +182,6 @@ impl RestClient {
         self.rate_limiter.acquire(req.weight).await?;
 
         let mut attempt: u32 = 0;
-        #[allow(unused_assignments)]
-        let mut last_err = String::new();
         loop {
             let now_ms = now_unix_ms();
             let query = self.build_query_string(&req, now_ms)?;
@@ -233,23 +231,15 @@ impl RestClient {
                     if !retryable || attempt >= self.config.max_retries {
                         return Err(NetError::Http { status, body });
                     }
-                    last_err = format!("http {status}: {body}");
                 }
                 Err(e) => {
                     if attempt >= self.config.max_retries {
                         return Err(NetError::Transport(e.to_string()));
                     }
-                    last_err = e.to_string();
                 }
             }
 
             attempt += 1;
-            if attempt > self.config.max_retries {
-                return Err(NetError::RetriesExhausted {
-                    attempts: attempt,
-                    last: last_err,
-                });
-            }
             // Exponential backoff: base * 2^(attempt-1).
             let backoff = self
                 .config

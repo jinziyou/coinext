@@ -54,9 +54,7 @@ def sma(values: np.ndarray, period: int) -> np.ndarray:
     return out
 
 
-def sma_cross_positions(
-    closes: np.ndarray, fast: int, slow: int, qty: float = 0.5
-) -> np.ndarray:
+def sma_cross_positions(closes: np.ndarray, fast: int, slow: int, qty: float = 0.5) -> np.ndarray:
     """Vectorized long/flat SMA-crossover TARGET position per bar — a faithful proxy of
     ``coinext_strategy.SmaCross``.
 
@@ -181,9 +179,7 @@ def sweep_sma_cross(
             if fast >= slow:
                 continue
             pos = sma_cross_positions(close, fast, slow, qty)
-            res = vector_backtest(
-                bars, pos, starting_balance=starting_balance, fee_rate=fee_rate
-            )
+            res = vector_backtest(bars, pos, starting_balance=starting_balance, fee_rate=fee_rate)
             n_trades = sum(1 for _ts, side, _q, _p in res.fills if side > 0)  # entries
             rows.append(
                 ScreenRow(

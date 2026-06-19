@@ -112,11 +112,13 @@ pub enum RiskDecision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DenyReason {
     MaxPositionExceeded,
-    MaxNotionalExceeded,
+    MaxGrossExposureExceeded,
     MaxOrderNotional,
+    /// Reserved for live; rate-limit throttling is not enforced in the deterministic scaffold.
     OrderRateThrottled,
     MinNotional,
     KillSwitchEngaged,
+    /// Reserved for live; instrument halts are not modeled in the deterministic scaffold.
     InstrumentHalted,
     /// Opening/increasing the position would need more initial margin than the free equity.
     InsufficientMargin,
@@ -133,8 +135,10 @@ impl std::fmt::Display for DenyReason {
 #[derive(Debug, Clone)]
 pub struct RiskLimits {
     pub max_position_qty: Option<Quantity>,
+    /// Reserved: per-position notional cap; not yet consumed by the risk gate.
     pub max_position_notional: Option<Money>,
     pub max_order_notional: Option<Money>,
+    /// Reserved for live; the rate-limit throttle is not enforced in the deterministic scaffold.
     pub max_orders_per_sec: Option<u32>,
     pub max_gross_exposure: Option<Money>,
     /// Max account leverage: an order increasing exposure needs `added_notional / leverage` of free

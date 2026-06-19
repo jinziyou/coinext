@@ -10,7 +10,10 @@ The handler signature mirrors what the Rust adapter calls:
     def on_bar(self, bar, ctx) -> None: ...
 
 where ``bar`` exposes ``open/high/low/close/ts`` and ``ctx`` exposes ``now``, ``position()`` (signed
-size for the instrument), and ``submit_market(side, qty)``.
+size for the instrument), the ``submit_*`` order helpers (``submit_market(side, qty)`` and the
+resting ``submit_limit``/``submit_stop``/``submit_stop_limit``/``submit_trailing`` variants),
+``cancel``, and ``set_timer`` (the example here shows an abbreviated subset — see the ``Ctx``
+Protocol below for the full surface).
 """
 
 from __future__ import annotations

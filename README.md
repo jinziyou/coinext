@@ -40,7 +40,8 @@ Rust and mirrored to Python, and a vertical slice runs **end-to-end in pure Rust
 | Research control plane (backtest, data lake, parity gate, vectorized screen) | `python/coinext_{backtest,data,parity,screen}` | ✅ implemented + tested |
 | Analytics (trade stats, bias screens, tear sheet + plots) | `python/coinext_analytics` | ✅ implemented + tested |
 | Walk-forward optimization (rolling/anchored, OOS degradation, grid/Optuna) | `python/coinext_optimize` | ✅ implemented + tested |
-| Binance adapter, network, persistence, ingest/exec services | `coinext-adapters/*`, `coinext-network`, … | 🚧 interface stubs |
+| Binance adapter (Data/Instrument/Execution ports; order-modify unsupported), WS/REST network framework, append-only persistence + Parquet | `coinext-adapters/binance`, `coinext-network`, `coinext-persistence` | ✅ implemented + tested |
+| Ingest/exec service daemons + live wiring | `coinext-ingest`, `coinext-exec-svc` | 🚧 interface stubs |
 | FastAPI control plane + React dashboard + docker-compose + observability | `services/*`, `deploy/*` | 🚧 scaffolded |
 
 ## Quick start (Rust core)

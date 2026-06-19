@@ -14,7 +14,7 @@ test:
 # Format + lint the Rust code
 lint:
     cargo fmt --all
-    cargo clippy --all-targets -- -D warnings
+    cargo clippy --all-targets --all-features -- -D warnings
 
 # Run the example SMA-crossover backtest
 backtest:
@@ -28,7 +28,7 @@ build-release:
 
 # Create the venv and install the control-plane deps (research extras + dev tools)
 py-setup:
-    uv sync --extra research --group dev
+    uv sync --extra research --extra config --group dev
 
 # Build the coinext_py PyO3 extension into the active venv (editable)
 py-build:
@@ -67,6 +67,6 @@ compose-check:
 
 # --- Everything ---
 
-# Full local verification: rust tests + python tests + compose lint
+# Full local verification: rust tests + compose lint
 verify: test compose-check
     @echo "core verified"

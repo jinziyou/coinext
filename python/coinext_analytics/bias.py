@@ -78,7 +78,7 @@ def detect_lookahead_bias(
 
 
 def detect_overfitting(metrics, trade_stats) -> list[str]:
-    """"Too-good-to-be-true" screen over computed :class:`Metrics` + :class:`TradeStats`.
+    """ "Too-good-to-be-true" screen over computed :class:`Metrics` + :class:`TradeStats`.
 
     Flags a near-perfect win rate over enough trades and a positive return with exactly zero
     drawdown while trading — both annualization-invariant tells of look-ahead leakage or overfit.

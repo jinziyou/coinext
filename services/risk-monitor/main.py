@@ -51,16 +51,18 @@ def _env_float(key: str, default: float) -> float:
 class RiskLimits:
     """Account-wide limits. Sourced from ``COINEXT__RISK__*`` env (see ``.env.example``)."""
 
-    max_drawdown_pct: float = 0.20          # trip if equity falls 20% below its session peak
+    max_drawdown_pct: float = 0.20  # trip if equity falls 20% below its session peak
     max_gross_exposure: float = 1_000_000.0  # sum of |notional| across all instruments
-    max_net_exposure: float = 500_000.0      # |signed notional| (directional)
-    max_loss_of_day: float = 50_000.0        # absolute PnL loss since session start
+    max_net_exposure: float = 500_000.0  # |signed notional| (directional)
+    max_loss_of_day: float = 50_000.0  # absolute PnL loss since session start
 
     @classmethod
-    def from_env(cls) -> "RiskLimits":
+    def from_env(cls) -> RiskLimits:
         return cls(
             max_drawdown_pct=_env_float("COINEXT__RISK__MAX_DRAWDOWN_PCT", cls.max_drawdown_pct),
-            max_gross_exposure=_env_float("COINEXT__RISK__MAX_GROSS_EXPOSURE", cls.max_gross_exposure),
+            max_gross_exposure=_env_float(
+                "COINEXT__RISK__MAX_GROSS_EXPOSURE", cls.max_gross_exposure
+            ),
             max_net_exposure=_env_float("COINEXT__RISK__MAX_NET_EXPOSURE", cls.max_net_exposure),
             max_loss_of_day=_env_float("COINEXT__RISK__MAX_LOSS_OF_DAY", cls.max_loss_of_day),
         )
@@ -165,8 +167,8 @@ class RiskSupervisor:
 # --------------------------------------------------------------------------------------------------
 
 REDIS_URL = os.environ.get("COINEXT__REDIS__URL", "redis://redis:6379/0")
-STREAM_TELEMETRY = "coinext.live"     # position / PnL telemetry consumed here
-STREAM_CONTROL = "coinext.control"    # CtrlKillSwitch published here on a breach
+STREAM_TELEMETRY = "coinext.live"  # position / PnL telemetry consumed here
+STREAM_CONTROL = "coinext.control"  # CtrlKillSwitch published here on a breach
 METRICS_PORT = int(os.environ.get("COINEXT__RISK_MONITOR__METRICS_PORT", "9104"))
 
 
