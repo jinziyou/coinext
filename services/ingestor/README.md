@@ -2,25 +2,25 @@
 
 This service directory is a **deployment wrapper only — it contains no application code.** The
 ingestor is a **Rust binary**: its source is the [`coinext-ingest`](../../crates/coinext-ingest) crate (status:
-stub — ARCHITECTURE.md §3, build order step 15).
+stub — [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §3, build order step 15).
 
 ## What it does
 
-The ingestor is the live-data front door (ARCHITECTURE.md §7, Live). It:
+The ingestor is the live-data front door (ARCHITECTURE.md §4, Live). It:
 
 1. connects to the venue WebSocket market-data streams (Binance, via `coinext-network` + the
    `coinext-adapters/binance` Data client),
 2. **normalizes** raw venue frames into the canonical `coinext-model` market-data types (quote / trade /
    bar / book delta),
 3. **republishes** them on the Redis-Streams bus as versioned MessagePack `Envelope`s (the
-   `coinext-bus` cross-service contract — ARCHITECTURE.md §6),
+   `coinext-bus` cross-service contract — ARCHITECTURE.md §3),
 
 so that every `trader` process's DataEngine consumes one normalized, fan-out-able feed instead of
-each node holding its own venue socket. The SLO histogram `ingest_to_publish_ns` (ARCHITECTURE.md §8)
+each node holding its own venue socket. The SLO histogram `ingest_to_publish_ns` (ARCHITECTURE.md §7)
 is measured here.
 
 > Note: a node's strategy **warm-up** is served from the LOCAL HistoryReader, never from this live
-> feed (ARCHITECTURE.md §7, §10) — the ingestor supplies the *real-time* tail only.
+> feed (ARCHITECTURE.md §4, §6) — the ingestor supplies the *real-time* tail only.
 
 ## Canonical service / port
 

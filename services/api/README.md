@@ -2,8 +2,8 @@
 
 A FastAPI app (`app.py`, exposing `app = FastAPI(...)`) that is the HTTP/WebSocket control plane the
 UI and operators talk to. It is **not** on the hot path — the deterministic Rust core (`coinext_py`) runs
-inside the `trader` / `ingestor` / `exec-svc` processes (see [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md)
-§6–§8). This service reads state, triggers authoritative backtests through the Rust kernel, fans out
+inside the `trader` / `ingestor` / `exec-svc` processes (see [`ARCHITECTURE.md`](../../ARCHITECTURE.md)
+§3 and §7). This service reads state, triggers authoritative backtests through the Rust kernel, fans out
 live telemetry from the Redis-Streams bus, and exposes operator controls.
 
 ## Endpoints
@@ -20,7 +20,7 @@ live telemetry from the Redis-Streams bus, and exposes operator controls.
 | WS     | `/ws/live`            | Stream stub position/PnL updates (→ Redis bus consumer).                |
 
 `/backtest` drives a Python `Strategy` through the **same** Rust engines + `SimulatedExecutionClient`
-the live path uses (ARCHITECTURE.md §1, §7), so the result is parity-valid — not a vectorized screen.
+the live path uses (ARCHITECTURE.md §1, §4), so the result is parity-valid — not a vectorized screen.
 
 ## Service / port (canonical)
 

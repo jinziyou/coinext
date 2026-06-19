@@ -1,7 +1,8 @@
 # Coinext Roadmap
 
-> 当前阶段：**研究优先，暂不实盘**。下面按「现状 → 研究侧后续 → 实盘/运维（待启动）→ 开放问题」组织。
-> 详见 [`ARCHITECTURE.md`](ARCHITECTURE.md)（§9 build order、§11 open questions）与 [`TESTNET.md`](TESTNET.md)。
+> Current phase: **research-first, no live trading yet.** Organized as: done → next (research side)
+> → deferred (live/ops) → open questions. See the root [`ARCHITECTURE.md`](../ARCHITECTURE.md), the
+> build order + open questions in [`ARCHITECTURE.md`](ARCHITECTURE.md), and [`TESTNET.md`](TESTNET.md).
 
 ## Done — verified
 
@@ -136,7 +137,7 @@
 
 ## Deferred — live / ops (start when ready to trade)
 
-Intentionally parked while the focus is research (see ARCHITECTURE.md §7):
+Intentionally parked while the focus is research (see [`ARCHITECTURE.md`](../ARCHITECTURE.md) §4, §7):
 
 - **Live `TradingNode` (Rust)** — assemble the continuously-running live/sandbox loop: async WS/REST
   I/O feeding the synchronous deterministic core over tokio MPSC, LiveClock + Binance clients +
@@ -154,7 +155,7 @@ Intentionally parked while the focus is research (see ARCHITECTURE.md §7):
 
 ## Open questions
 
-Tracked in [`ARCHITECTURE.md` §11](ARCHITECTURE.md): multi-node sharding & ordered replay; per-event
+Tracked in [`ARCHITECTURE.md` (open questions)](ARCHITECTURE.md): multi-node sharding & ordered replay; per-event
 Strategy compute budget beyond the GIL baseline; concrete cross-check / sandbox-parity thresholds per
 asset class; BrokerageModel fidelity ceiling; data-lake retention/downsampling; reconciliation edge
 cases; SeqCursor namespacing across accounts; asset-class roadmap (inverse perps, futures, options).

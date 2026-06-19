@@ -1,8 +1,9 @@
 # Testnet end-to-end runbook
 
-> 把平台接到 Binance 真实行情 + testnet 纸面执行，并用一致性门做上线前比对。
 > Wire the platform to real Binance market data + Binance **spot testnet** paper execution, and run
-> the backtest↔sandbox parity gate before any live capital.
+> the backtest↔sandbox parity gate before any live capital. See the root
+> [`ARCHITECTURE.md`](../ARCHITECTURE.md) for the parity invariant and the
+> [`tests/parity/README.md`](../tests/parity/README.md) for the gate internals.
 
 ## The sandbox design
 
@@ -114,7 +115,7 @@ A separate **advisory** `cross_check` warns on vectorized-vs-event drift but nev
 ## Going to live (later)
 
 Flip `COINEXT__BINANCE__TESTNET=false` and supply **mainnet** keys with **withdrawal disabled** + an **IP
-allowlist**; store secrets in SOPS/Vault (see ARCHITECTURE.md §11 open questions). The out-of-band
+allowlist**; store secrets in SOPS/Vault (see [`ARCHITECTURE.md`](ARCHITECTURE.md) open questions). The out-of-band
 `risk-monitor` watches PnL/positions and can trip the global kill-switch; the per-order `RiskEngine`
 gate runs synchronously on every order in backtest, sandbox, and live alike.
 ```

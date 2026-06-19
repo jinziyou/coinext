@@ -9,7 +9,7 @@ something to read without downloading gigabytes. The full lake (under `COINEXT__
 
 The `HistoryReader` (`coinext_data`, [stub]) serves **both** the backtest data feed **and** live warm-up
 from the lake — identical in both environments, so streaming indicators (`coinext-indicators`) warm up
-the same way in backtest and live (`docs/ARCHITECTURE.md` §7, §10). This sample directory is where a
+the same way in backtest and live ([`ARCHITECTURE.md`](../../ARCHITECTURE.md) §4, §6). This sample directory is where a
 minimal fixture lives so that contract holds end-to-end before any real ingestion runs.
 
 ## Layout (catalog convention)

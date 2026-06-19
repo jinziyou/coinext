@@ -3,7 +3,7 @@
 A standalone Python process (`main.py`) that is the **second, out-of-band** line of risk defense.
 The first line is the per-order `coinext-risk-engine` gate *inside* each trading node's core; this service
 watches **all** PnL / position / fill telemetry on the Redis-Streams bus and enforces **account-wide**
-limits the in-core gate cannot see in isolation (ARCHITECTURE.md §7, §8):
+limits the in-core gate cannot see in isolation ([`ARCHITECTURE.md`](../../ARCHITECTURE.md) §4, §7):
 
 - **max drawdown** — peak-to-trough equity decline across the account,
 - **gross / net exposure** — sum of abs(notional) and signed notional across instruments,

@@ -2,8 +2,8 @@
 
 Thin deployment wrappers around the Coinext core. The load-bearing logic lives in the Rust crates
 (`crates/`) and the Python control-plane packages (`python/`); these directories just package a unit
-for deployment (one Dockerfile each, under `deploy/docker/`). See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)
-§7–§8.
+for deployment (one Dockerfile each, under `deploy/docker/`). See [`ARCHITECTURE.md`](../ARCHITECTURE.md)
+§4 (data flow) and §7 (deployment).
 
 | Service        | Dir                  | Kind                  | Build                                 | Ports                  |
 |----------------|----------------------|-----------------------|---------------------------------------|------------------------|

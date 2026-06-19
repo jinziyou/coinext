@@ -1,7 +1,7 @@
 # tests/parity/ — the parity test plan
 
 Coinext's single most important property is **backtest↔live parity** (see
-`docs/ARCHITECTURE.md` §1, §5): ONE Strategy API, ONE set of engines, ONE deterministic core. Only
+[`ARCHITECTURE.md`](../../ARCHITECTURE.md) §1, §6): ONE Strategy API, ONE set of engines, ONE deterministic core. Only
 the Kernel-injected **Clock**, **Cache** contents, and **Data/Execution clients** differ between
 `Backtest` / `Sandbox` / `Live`. These tests are the guardrails that keep that promise true.
 
@@ -16,7 +16,7 @@ reduced to a `coinext_parity.SessionResult` (an `equity_curve` of `(ts_ns, equit
 The authoritative runner is the **event-driven** `coinext_backtest.run` (through the Rust kernel: Risk +
 Exec + BrokerageModel + SimulatedExecutionClient). A separate **vectorized** `populate_*` research
 screen exists for fast parameter sweeps but is **explicitly non-authoritative** — it skips the
-Risk/Exec/Brokerage path, so it can never validate a strategy for promotion (§1, §10).
+Risk/Exec/Brokerage path, so it can never validate a strategy for promotion (ARCHITECTURE.md §1, §5).
 
 The cross-check runs the SAME strategy logic both ways over the SAME bars and measures **drift**:
 
@@ -36,14 +36,14 @@ strategy is invalid. Covered by `test_parity_gate.py::test_cross_check_*`.
 
 ## 2. Sandbox-vs-backtest acceptance gate (hard, promotion gate)
 
-This is the promotion gate before live (build order step 18, §11). Run the SAME strategy with the
+This is the promotion gate before live (build order step 18; see `docs/ARCHITECTURE.md`). Run the SAME strategy with the
 SAME `RunConfig` and the SAME local-HistoryReader warm-up in two environments:
 
 - **Backtest** — `HistoricalClock` + `SimulatedExecutionClient` (deterministic).
 - **Sandbox** — `LiveClock` + live market data + the **testnet** execution variant of the
   `ExecutionClient` port (real timing, paper fills).
 
-Because the BrokerageModel economics are **shared** (§5), the two should agree closely.
+Because the BrokerageModel economics are **shared** (ARCHITECTURE.md §6), the two should agree closely.
 
 **This gate is MANDATORY and HARD: a strategy may go live ONLY if it passes.** `coinext_parity.run_gate`
 is the seam — it runs the authoritative event-driven backtest for a fresh strategy instance over the
@@ -65,7 +65,7 @@ align to the nanosecond):
 - **`return_diff`** — `|final_return_backtest - final_return_sandbox|`.
 
 The **acceptance criterion** (`coinext_parity.AcceptanceCriterion`, the mandatory pre-live thresholds —
-start tight, widen with evidence per §11) defaults to:
+start tight, widen with evidence — see `docs/ARCHITECTURE.md` open questions) defaults to:
 
 | condition | default | meaning |
 |---|---|---|

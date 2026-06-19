@@ -1,0 +1,5 @@
+# Line-ending policy: Git stores text as LF and checks it out as LF on all platforms.
+# Prevents the whole tree from showing as modified on CRLF (Windows) checkouts.
+# Shell scripts forced to LF (CRLF breaks bash with `$'\r'` errors).
+* text=auto eol=lf
+*.sh text eol=lf

@@ -4,13 +4,13 @@ A thin Python wrapper (`main.py`) that builds a single [`coinext_live`](../../py
 for **one account** and runs it. All load-bearing logic lives in the Rust core + `coinext_live`; this
 process just selects the account, wires the strategy, and drives the run loop.
 
-**One process per account** (ARCHITECTURE.md §7, §11): each set of API keys / sub-account gets its
+**One process per account** ([`ARCHITECTURE.md`](../../ARCHITECTURE.md) §4; see also `docs/ARCHITECTURE.md` open questions): each set of API keys / sub-account gets its
 own trader process. This isolates blast radius, preserves the deterministic single-threaded core per
 node, and sidesteps cross-account SeqCursor namespacing. Scale out = more trader processes,
 coordinated only via the Redis bus.
 
 The live node injects a `LiveClock` + Binance Data/Exec clients behind **byte-identical ports** — the
-same engines, risk gate, and strategy code as backtest (the parity invariant, §1). Market data
+same engines, risk gate, and strategy code as backtest (the parity invariant, ARCHITECTURE.md §1). Market data
 arrives normalized from the standalone `ingestor`; warm-up is served from the **local HistoryReader**
 (never live REST), so indicators match backtest exactly.
 

@@ -1,8 +1,8 @@
 # coinext-adapters — venue adapters (the live side of the parity seam)
 
 This directory holds the per-venue adapters. Each adapter is a small crate that implements the
-hexagonal ports defined in `coinext-ports` for one venue. Per `docs/ARCHITECTURE.md` §5, the
-`ExecutionClient` port is **the single seam where backtest vs live differ** — everything above it
+hexagonal ports defined in `coinext-ports` for one venue. Per [`ARCHITECTURE.md`](../../ARCHITECTURE.md)
+§6, the `ExecutionClient` port is **the single seam where backtest vs live differ** — everything above it
 (OMS, Risk, Portfolio, Strategy) is byte-for-byte identical across environments.
 
 ## The adapter pattern
@@ -24,10 +24,10 @@ Key properties every adapter must preserve:
   is identical across environments.
 - **Idempotent submit.** `ClientOrderId` is assigned once by the OrderFactory and passed straight
   through to the venue (e.g. `newClientOrderId`), so retries never double-submit and `reconcile()`
-  can diff venue truth against the local event log by id on restart (§5, §7).
+  can diff venue truth against the local event log by id on restart (ARCHITECTURE.md §4, §6).
 - **Warm-up from the local HistoryReader, never live REST.** `request_bars` does NOT hit a venue
   klines endpoint at handler time — warm-up is served from the local data lake in both backtest and
-  live, so indicators are byte-identical across environments (§7).
+  live, so indicators are byte-identical across environments (ARCHITECTURE.md §6).
 - **Shared economics.** Instrument fees/increments feed the SAME `BrokerageModel` the simulator
   uses, so backtest and live agree on venue economics, not just order flow.
 

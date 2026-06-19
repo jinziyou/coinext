@@ -4,7 +4,7 @@ A minimal Vite + React + TypeScript operator cockpit for Coinext. It is a
 **read-only-by-default** dashboard over the `api` service (FastAPI), with one
 guarded mutating action: the global **kill-switch**.
 
-See `docs/ARCHITECTURE.md` §8 (observability & deployment) for where this fits.
+See [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §7 (deployment forms & observability) for where this fits.
 
 ## Panels
 
@@ -17,7 +17,7 @@ See `docs/ARCHITECTURE.md` §8 (observability & deployment) for where this fits.
 | Kill-Switch          | `GET/POST /control/killswitch` | guarded confirm dialog; trips `coinext-risk-engine` |
 
 All monetary / quantity / price fields cross the wire as **strings** to preserve
-the fixed-precision integer domain (no `f64`; see ARCHITECTURE §4). The UI treats
+the fixed-precision integer domain (no `f64`; see ARCHITECTURE.md §2, §6). The UI treats
 them as opaque display strings and does not do float math on them.
 
 ## Run locally

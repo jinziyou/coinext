@@ -1,7 +1,7 @@
 # Coinext — Deployment
 
 Dockerized multi-service stack for a single VPS, with `prod` / `dev` / `obs` compose profiles
-(docs/ARCHITECTURE.md §8). The topology preserves the parity invariant: the SAME engines run
+([`ARCHITECTURE.md`](../ARCHITECTURE.md) §7). The topology preserves the parity invariant: the SAME engines run
 everywhere; only the Kernel-injected Clock / Cache / clients differ between backtest, sandbox, and
 live (selected via `COINEXT__ENV` and the Binance section of `.env`).
 
@@ -120,5 +120,5 @@ SLO histograms surfaced on the dashboard: `strategy_dispatch_ns`, `submit_to_ack
 - The Python service entrypoints (`coinext_live`, `coinext_api`, `coinext_risk.monitor`) and the UI source
   (`services/ui/`) are scaffolded by their respective areas; the Dockerfiles reference the agreed
   module/entrypoint names.
-- Secrets management (SOPS/Vault) is an open question (ARCHITECTURE.md §11); for now secrets come
+- Secrets management (SOPS/Vault) is an open question (`docs/ARCHITECTURE.md`); for now secrets come
   from `.env` (git-ignored).
