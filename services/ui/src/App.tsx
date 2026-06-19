@@ -26,6 +26,7 @@ import {
   type Position,
   type Run,
 } from "./api";
+import { CoinextMark } from "./CoinextMark";
 
 // --- formatting helpers (display-only; never used for domain math) ----------
 
@@ -396,7 +397,7 @@ export function App() {
     <div className="app">
       <header className="app-head">
         <div className="brand">
-          <span className="brand-mark">CX</span>
+          <CoinextMark className="brand-glyph" />
           <span className="brand-name">Coinext</span>
           <span className="brand-sub">operator dashboard</span>
         </div>

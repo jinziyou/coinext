@@ -56,18 +56,16 @@ body {
 
 .brand {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 9px;
 }
 
-.brand-mark {
-  font-family: var(--mono);
-  font-weight: 700;
-  color: #0b0e14;
-  background: var(--accent);
-  padding: 2px 7px;
-  border-radius: 5px;
-  font-size: 13px;
+/* coinext logo glyph: C ring inherits text color (currentColor), chevron is teal. */
+.brand-glyph {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  color: var(--fg);
 }
 
 .brand-name {
