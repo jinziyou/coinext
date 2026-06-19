@@ -176,7 +176,7 @@ def _resample(curve: list[tuple[int, float]], n: int) -> list[float]:
     out: list[float] = []
     for i in range(n):
         # Map output index i in [0, n) onto a source index in [0, m).
-        src = i * m // n if n > 0 else 0
+        src = i * m // n
         if src >= m:
             src = m - 1
         out.append(curve[src][1])

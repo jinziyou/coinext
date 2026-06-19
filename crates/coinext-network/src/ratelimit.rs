@@ -57,8 +57,8 @@ impl RateLimiter {
     }
 
     /// Acquire `cost` weight cells, awaiting replenishment if the bucket is short. A `cost` larger
-    /// than the bucket capacity can never be satisfied, so it fails fast with [`NetError::Auth`]-
-    /// adjacent `RateLimited` rather than deadlocking.
+    /// than the bucket capacity can never be satisfied, so it fails fast with
+    /// [`NetError::RateLimited`] rather than deadlocking.
     pub async fn acquire(&self, cost: u32) -> NetResult<()> {
         let n = match NonZeroU32::new(cost) {
             Some(n) => n,

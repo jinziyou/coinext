@@ -139,6 +139,7 @@ pub struct CryptoPerpetual {
     pub taker_fee: Decimal,
     pub is_inverse: bool,
     /// Funding charge interval in nanoseconds (e.g. 8h).
+    /// Reserved: funding interval; not yet consumed by any engine (pairs with Position::apply_funding).
     pub funding_interval_ns: u64,
 }
 

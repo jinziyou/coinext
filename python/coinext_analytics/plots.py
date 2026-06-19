@@ -32,8 +32,7 @@ def plot_tear_sheet(result, *, path: str | None = None, show: bool = False):
         import matplotlib.pyplot as plt
     except ImportError as exc:  # pragma: no cover - optional dep
         raise ImportError(
-            "matplotlib not installed. Install the research extra: "
-            "pip install 'coinext[research]'"
+            "matplotlib not installed. Install the research extra: pip install 'coinext[research]'"
         ) from exc
 
     from . import _returns  # reuse the canonical per-bar return computation

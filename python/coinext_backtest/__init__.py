@@ -71,6 +71,7 @@ class Instrument:
             underlying=underlying,
         )
 
+
 try:
     import coinext_py  # the compiled Rust extension (maturin develop)
 except ImportError as exc:  # pragma: no cover - surfaced as a clear setup error
@@ -289,9 +290,18 @@ def synthetic_ohlc_bars(
     one bar; a large order relative to it partial-fills over several). ``open`` is the previous
     bar's close (the first bar opens at its own close). No RNG.
     """
-    closes = [c for _, c in synthetic_bars(n, base=base, amplitude=amplitude, period=period,
-                                           trend_per_bar=trend_per_bar, start_ns=start_ns,
-                                           step_ns=step_ns)]
+    closes = [
+        c
+        for _, c in synthetic_bars(
+            n,
+            base=base,
+            amplitude=amplitude,
+            period=period,
+            trend_per_bar=trend_per_bar,
+            start_ns=start_ns,
+            step_ns=step_ns,
+        )
+    ]
     bars: list[tuple[int, float, float, float, float, float]] = []
     for i, close in enumerate(closes):
         open_ = closes[i - 1] if i > 0 else close

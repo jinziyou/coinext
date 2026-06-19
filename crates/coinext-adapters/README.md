@@ -37,9 +37,10 @@ heartbeat, retry/backoff, auth signing, weight limiting) so each adapter only en
 
 ## Crates
 
-- [`binance/`](./binance) — the **reference adapter** (`coinext-adapters-binance`). Currently a stub:
-  ports are implemented with `PortError::Unsupported` bodies and the WS depth-diff resync + idempotent
-  submit plans are documented inline as TODOs.
+- [`binance/`](./binance) — the **reference adapter** (`coinext-adapters-binance`). The Data,
+  Instrument, and Execution ports are implemented and unit-tested (WS market data verified live); only
+  order **modify** returns `PortError::Unsupported` (cancel-replace is a TODO). The WS depth-diff
+  resync hardening is tracked inline.
 
 ## Adding a new venue
 

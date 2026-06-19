@@ -32,7 +32,7 @@
 - **OHLC-aware fills** (`coinext-sim` + `coinext-py`): the PyO3 bridge now passes real **OHLC** (not a
   close-flattened bar), so the sim matches resting **limit** orders against each bar's high/low — a
   limit fills on an intrabar wick its close never reached. Python `Strategy` gains `ctx.submit_limit`
-  and a `LimitMaker` example; `coinext backtest --strategy limit-maker` and `DataLake.read_ohlc` exercise
+  and a `LimitMaker` example; `coinext backtest --strategy limit-maker` and `DataLake.read_ohlcv` exercise
   it end-to-end. Rust (sim) + Python (bridge) tested, incl. the close-only-vs-OHLC discriminator.
 - **Multi-instrument backtests** (`coinext-py` + `coinext_backtest`): the bridge now runs MANY symbols through
   ONE kernel (shared Cache/sim/risk/portfolio) via `run_backtest_multi` + `coinext_backtest.run_multi`.
@@ -130,8 +130,10 @@
 
 ## Next — research side
 
-1. **Research notebook** — an end-to-end demo (download → screen → optimize → backtest → tear-sheet)
-   over real data, stringing the features together.
+1. **Research notebook over real data** — the end-to-end demo (screen → optimize → backtest →
+   indicators → portfolio → ticks) ships as a runnable script (`notebooks/research_loop.py`, tested by
+   `tests/test_notebook.py`); it runs on synthetic data by default. Remaining gap: download → run the
+   loop over the real lake (`USE_LAKE = True`) by default.
 2. **Strategy ergonomics** — historical bookTicker (websocket capture) for real quotes (the last
    research-side data gap; `on_quote` currently runs on synthetic or tick-derived quotes).
 

@@ -3,7 +3,9 @@
 //! serializes a MessagePack `Envelope` for cross-service / UI fan-out.
 
 use coinext_core::TimerEvent;
-use coinext_model::{Bar, BarType, Fill, InstrumentId, OrderEvent, QuoteTick, StrategyId, TradeTick};
+use coinext_model::{
+    Bar, BarType, Fill, InstrumentId, OrderEvent, QuoteTick, StrategyId, TradeTick,
+};
 use std::sync::Arc;
 
 /// Typed in-process bus payload (no serialization).

@@ -20,10 +20,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "exactOptionalPropertyTypes": false,
-
-    /* Vite injects import.meta.env typings */
-    "types": ["vite/client"]
+    "exactOptionalPropertyTypes": false
   },
   "include": ["src"]
 }

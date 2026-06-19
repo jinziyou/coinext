@@ -41,7 +41,7 @@ mod event_store;
 mod parquet;
 
 pub use cursor::{InMemorySeqCursor, SeqCursor, SqliteSeqCursor};
-pub use error::{PersistError, PersistResult, PersistenceError, PersistenceResult};
+pub use error::{PersistError, PersistResult};
 pub use event_store::{EventStore, NullEventStore, SqliteEventStore};
 #[cfg(feature = "parquet")]
 pub use parquet::ParquetWriter;

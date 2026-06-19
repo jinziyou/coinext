@@ -7,16 +7,7 @@ so it requires the compiled ``coinext_py`` extension (``importorskip``).
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-# Make the control-plane packages importable when pytest is run from the repo root without setting
-# PYTHONPATH (mirrors how the other suites resolve coinext_* packages).
-_PYTHON_ROOT = Path(__file__).resolve().parents[2] / "python"
-if str(_PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PYTHON_ROOT))
 
 # The gate's run_gate path needs the compiled kernel; skip the whole module if it isn't built.
 pytest.importorskip("coinext_py")

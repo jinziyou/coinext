@@ -4,7 +4,7 @@
 //! risk-shaped behavior is reproducible.
 
 use coinext_cache::Cache;
-use coinext_model::{Instrument, Order, OrderSide, PositionSide};
+use coinext_model::{Instrument, Order, PositionSide};
 use coinext_ports::{DenyReason, Portfolio, RiskDecision, RiskEngine, RiskLimits};
 use rust_decimal::Decimal;
 use std::cell::RefCell;
@@ -70,9 +70,12 @@ impl RiskEngine for RiskGate {
             }
         }
 
+        // Signed current position and the order's signed delta — shared by the position-qty and
+        // initial-margin (leverage) checks below.
+        let cur = Self::signed_position_qty(portfolio, order);
+        let delta = Decimal::from(order.side.sign()) * order.quantity.as_decimal();
+
         if let Some(maxq) = &self.limits.max_position_qty {
-            let cur = Self::signed_position_qty(portfolio, order);
-            let delta = Decimal::from(order.side.sign()) * order.quantity.as_decimal();
             let prospective = (cur + delta).abs();
             if prospective > maxq.as_decimal() {
                 return RiskDecision::Denied(MaxPositionExceeded);
@@ -82,7 +85,7 @@ impl RiskEngine for RiskGate {
         if let Some(maxg) = &self.limits.max_gross_exposure {
             let gross = portfolio.gross_exposure();
             if gross.currency() == maxg.currency() && gross.amount() > maxg.amount() {
-                return RiskDecision::Denied(MaxNotionalExceeded);
+                return RiskDecision::Denied(MaxGrossExposureExceeded);
             }
         }
 
@@ -91,8 +94,6 @@ impl RiskEngine for RiskGate {
         // and is always allowed through this check. `leverage = None` = fully funded buying power.
         if let (Some(lev), Some(px)) = (self.limits.leverage, ref_px) {
             if lev > Decimal::ZERO {
-                let cur = Self::signed_position_qty(portfolio, order);
-                let delta = Decimal::from(order.side.sign()) * order.quantity.as_decimal();
                 let added_qty = (cur + delta).abs() - cur.abs();
                 if added_qty > Decimal::ZERO {
                     let added_notional = px.as_decimal() * added_qty * mult;
@@ -106,7 +107,7 @@ impl RiskEngine for RiskGate {
             }
         }
 
-        let _ = OrderSide::Buy; // (rate-limit throttle is a live-only concern; omitted in scaffold)
+        // (rate-limit throttle is a live-only concern; omitted in scaffold)
         RiskDecision::Approved
     }
 

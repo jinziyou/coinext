@@ -1,11 +1,11 @@
 //! `coinext-cache` — the central in-memory object store. A single read/write interface, identical
-//! across backtest and live, with integer-keyed `O(1)` lookups. The mark source for Portfolio
+//! across backtest and live, with id-keyed `O(1)` hash lookups. The mark source for Portfolio
 //! unrealized PnL. (In live it can be Redis-backed for crash recovery; the scaffold is in-memory.)
 
-use fnv::FnvHashMap;
 use coinext_model::{
     AccountState, ClientOrderId, Instrument, InstrumentId, Order, Position, Price, QuoteTick,
 };
+use fnv::FnvHashMap;
 use std::sync::Arc;
 
 #[derive(Default)]

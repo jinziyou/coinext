@@ -7,15 +7,8 @@ extension or Optuna. A separate integration test in ``tests/parity`` drives the 
 from __future__ import annotations
 
 import math
-import sys
-from pathlib import Path
 
 import pytest
-
-_PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
-if str(_PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PYTHON_ROOT))
-
 from coinext_optimize import (  # noqa: E402
     grid_search,
     walk_forward_optimize,
@@ -135,6 +128,4 @@ def test_walk_forward_optimize_validates_args():
     with pytest.raises(ValueError):
         walk_forward_optimize(BARS, lambda p, w: 0.0, optimizer="optuna")  # no search_space
     with pytest.raises(ValueError):
-        walk_forward_optimize(
-            BARS, lambda p, w: 0.0, param_grid={"x": [1]}, optimizer="bogus"
-        )
+        walk_forward_optimize(BARS, lambda p, w: 0.0, param_grid={"x": [1]}, optimizer="bogus")

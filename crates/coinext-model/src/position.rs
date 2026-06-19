@@ -1,6 +1,7 @@
 //! Net position aggregating fills; tracks average entry and realized/unrealized PnL with
 //! instrument precision. Linear vs inverse perp PnL is handled per the instrument family
-//! (`is_inverse()`); funding is applied as a realized-PnL adjustment at funding intervals.
+//! (`is_inverse()`); `apply_funding()` applies a funding charge as a realized-PnL adjustment —
+//! intended to be driven by the kernel at funding intervals, but not yet wired in.
 //! The mark is supplied by the caller (the Portfolio sources it from the Cache).
 
 use crate::enums::PositionSide;

@@ -27,10 +27,6 @@ pub enum NetError {
     #[error("auth error: {0}")]
     Auth(String),
 
-    /// Exhausted the retry budget without a successful response.
-    #[error("retries exhausted after {attempts} attempts: {last}")]
-    RetriesExhausted { attempts: u32, last: String },
-
     /// Request timed out.
     #[error("timed out after {0} ms")]
     Timeout(u64),

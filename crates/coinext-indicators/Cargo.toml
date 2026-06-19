@@ -1,5 +1,6 @@
 [package]
 name = "coinext-indicators"
+description = "Coinext streaming incremental technical indicators (SMA/EMA/RSI/ATR/MACD/Bollinger/VWAP)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

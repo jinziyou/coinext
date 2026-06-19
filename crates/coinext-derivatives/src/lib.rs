@@ -161,9 +161,12 @@ pub fn implied_vol(
             break;
         }
     }
-    // Bisection on [1e-6, 5.0] as a robust fallback.
+    // Bisection on [1e-6, 5.0] as a robust fallback. `f_lo` is cached and only recomputed when `lo`
+    // moves, so each iteration costs one Black–Scholes eval instead of three.
     let (mut lo, mut hi) = (1e-6_f64, 5.0_f64);
-    if (price(&mk(lo), is_call) - market_price) * (price(&mk(hi), is_call) - market_price) > 0.0 {
+    let mut f_lo = price(&mk(lo), is_call) - market_price;
+    let f_hi = price(&mk(hi), is_call) - market_price;
+    if f_lo * f_hi > 0.0 {
         return None; // not bracketed
     }
     for _ in 0..200 {
@@ -172,10 +175,11 @@ pub fn implied_vol(
         if diff.abs() < 1e-8 {
             return Some(mid);
         }
-        if (price(&mk(lo), is_call) - market_price) * diff <= 0.0 {
+        if f_lo * diff <= 0.0 {
             hi = mid;
         } else {
             lo = mid;
+            f_lo = diff;
         }
     }
     Some(0.5 * (lo + hi))

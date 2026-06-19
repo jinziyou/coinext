@@ -1,0 +1,39 @@
+# Docker build-context excludes. Several Dockerfiles do `COPY . .`; keep the context small and
+# reproducible by dropping build/cache cruft and host-only state. Mirrors .gitignore's intent.
+
+# Rust build output
+target/
+**/target/
+
+# Python venv / build artifacts
+.venv/
+.uv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# maturin / pyo3 native artifacts
+*.so
+*.pyd
+
+# Node / UI build output
+**/node_modules/
+services/ui/dist/
+
+# Generic build/dist dirs
+dist/
+build/
+
+# VCS metadata
+.git/
+
+# Data lake (local) — not needed in the image
+/data/*
+
+# Secrets & local env
+.env
+.env.*
+!.env.example

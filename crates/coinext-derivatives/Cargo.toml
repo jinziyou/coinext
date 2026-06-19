@@ -1,5 +1,6 @@
 [package]
 name = "coinext-derivatives"
+description = "Coinext derivatives: Black–Scholes option pricing, greeks, and implied volatility."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

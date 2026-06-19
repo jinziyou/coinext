@@ -18,11 +18,11 @@ use async_trait::async_trait;
 use coinext_core::{Price, Quantity, UnixNanos};
 use coinext_model::{
     Bar, BarAggregation, BarType, BookAction, InstrumentId, MarketEvent, OrderBookDelta, OrderSide,
-    QuoteTick, Symbol, TradeId, TradeTick, Venue,
+    QuoteTick, Symbol, TradeId, TradeTick,
 };
 use coinext_network::{
-    now_unix_ms, Credentials, NetError, RateLimiter, RestClient, RestConfig, RestRequest, WsClient,
-    WsConfig, WsMessage,
+    now_unix_ms, Credentials, RateLimiter, RestClient, RestConfig, RestRequest, WsClient, WsConfig,
+    WsMessage,
 };
 use coinext_ports::{DataClient, PortError, PortResult, SubKind, Subscription};
 use rust_decimal::Decimal;
@@ -69,7 +69,7 @@ impl BinanceDataClient {
             RateLimiter::per_minute(1200),
             Credentials::default(),
         )
-        .map_err(net_to_port)?;
+        .map_err(crate::net_to_port)?;
         Ok(BinanceDataClient {
             config,
             rest,
@@ -181,8 +181,8 @@ impl DataClient for BinanceDataClient {
                     .with_param("limit", "1000"),
             )
             .await
-            .map_err(net_to_port)?;
-        let rows: Vec<serde_json::Value> = resp.json().map_err(net_to_port)?;
+            .map_err(crate::net_to_port)?;
+        let rows: Vec<serde_json::Value> = resp.json().map_err(crate::net_to_port)?;
         let mut bars = Vec::with_capacity(rows.len());
         for row in &rows {
             let bar = kline_to_bar(row, bar_type.clone())
@@ -205,14 +205,6 @@ impl DataClient for BinanceDataClient {
             ws.shutdown().await;
         }
         Ok(())
-    }
-}
-
-/// Map a `coinext-network` transport error into a `coinext-ports` error at the adapter boundary.
-fn net_to_port(e: NetError) -> PortError {
-    match e {
-        NetError::Http { status, body } => PortError::Io(format!("http {status}: {body}")),
-        other => PortError::Io(other.to_string()),
     }
 }
 
@@ -389,7 +381,7 @@ pub fn kline_to_bar(row: &serde_json::Value, bar_type: BarType) -> Result<Bar, S
 // --- small parsing helpers -------------------------------------------------------------------
 
 fn instrument_id(symbol: &str) -> InstrumentId {
-    InstrumentId::new(Symbol::from(symbol), Venue::from("BINANCE"))
+    InstrumentId::new(Symbol::from(symbol), crate::venue())
 }
 
 fn str_field<'a>(data: &'a serde_json::Value, key: &str) -> Result<&'a str, String> {

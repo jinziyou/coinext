@@ -7,14 +7,7 @@ limits against tick prices. Requires the compiled coinext_py extension.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-_PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
-if str(_PYTHON_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PYTHON_ROOT))
 
 pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
 
@@ -78,11 +71,10 @@ def test_quotes_set_the_market_reference_to_bid_ask():
             if self.n == 2:  # by bar 2, bar 1's quote is in the book
                 ctx.submit_market("buy", 1.0)
 
-    BuyOnce = BuyOnBar2
     bars = [(BASE + i * STEP, 100.0, 100.0, 100.0, 100.0, 10.0) for i in range(4)]
     quotes = [(BASE + i * STEP, 99.0, 101.0, 5.0, 5.0) for i in range(4)]  # bid 99 / ask 101
-    with_q = bt.run(BuyOnce(), bars=bars, quotes=quotes)
-    plain = bt.run(BuyOnce(), bars=bars)
+    with_q = bt.run(BuyOnBar2(), bars=bars, quotes=quotes)
+    plain = bt.run(BuyOnBar2(), bars=bars)
     # The buy fill price is logged in fills_log (ts, symbol, side, qty, px).
     px_q = with_q.fills_log[0][4]
     px_plain = plain.fills_log[0][4]

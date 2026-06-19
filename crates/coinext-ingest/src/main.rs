@@ -2,8 +2,8 @@
 //!
 //! Per the architecture (`docs/ARCHITECTURE.md` §7, "Live"): "A standalone Rust `ingestor`
 //! normalizes Binance WS frames and republishes on the Redis bus; the `trader` process's DataEngine
-//! consumes them." It also persists normalized data to the data lake so warm-up/backtest read the
-//! SAME bytes (the parity invariant for indicators).
+//! consumes them." The production ingestor will also persist normalized data to the data lake so
+//! warm-up/backtest read the SAME bytes (the parity invariant for indicators).
 //!
 //! This wires a real [`BinanceDataClient`] against the PUBLIC combined market-data streams (no API
 //! keys), takes its `MarketEvent` receiver via `take_stream`, and drains it in a tokio loop printing

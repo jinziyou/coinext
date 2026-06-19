@@ -37,8 +37,22 @@ pub use exec::BinanceExecutionClient;
 pub use instruments::BinanceInstrumentProvider;
 
 use coinext_model::Venue;
+use coinext_network::NetError;
+use coinext_ports::PortError;
 
 /// The canonical `Venue` tag for this adapter (matches `InstrumentId` symbology `*.BINANCE`).
 pub fn venue() -> Venue {
     Venue::from("BINANCE")
+}
+
+/// Map a `coinext-network` transport error into a `coinext-ports` error at the adapter boundary.
+///
+/// The data/instrument read paths share this generic mapping (every `NetError` becomes
+/// `PortError::Io`); `exec` keeps its own variant that surfaces 4xx as `Rejected` for the
+/// idempotent-retry case.
+pub(crate) fn net_to_port(e: NetError) -> PortError {
+    match e {
+        NetError::Http { status, body } => PortError::Io(format!("http {status}: {body}")),
+        other => PortError::Io(other.to_string()),
+    }
 }

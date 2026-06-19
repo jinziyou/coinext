@@ -1,7 +1,8 @@
 //! `coinext-kernel` — the single place backtest vs live differs, and the deterministic synchronous core
-//! loop. For backtest it merge-sorts three event sources by timestamp — incoming market data, due
-//! delayed execution reports from the sim's DelayedEventQueue, and due timers from the
-//! HistoricalClock — and dispatches each to the engines and the Strategy SYNCHRONOUSLY. The same
+//! loop. For backtest it merge-sorts four event sources by timestamp — incoming market data, due
+//! delayed execution reports from the sim's DelayedEventQueue, due timers from the
+//! HistoricalClock, and due dated-contract expiry/settlement from the expiry schedule — and
+//! dispatches each to the engines and the Strategy SYNCHRONOUSLY. The same
 //! engines, Strategy, RiskEngine and Cache are used in live; only the Clock and Data/Execution
 //! clients are swapped (the parity invariant).
 
@@ -25,7 +26,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-/// Which environment the kernel runs. Only this selects the Clock + Data/Exec clients.
+/// Environment the kernel targets. Reserved for the live kernel — the current BacktestKernel does
+/// not switch on this yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
     Backtest,
@@ -66,7 +68,7 @@ impl BacktestConfig {
 /// Result of a backtest run.
 #[derive(Debug, Clone)]
 pub struct RunResult {
-    /// (ts_ns, equity) sampled once per processed bar/quote — the input to the tear sheet.
+    /// (ts_ns, equity) sampled once per processed bar — the input to the tear sheet.
     pub equity_curve: Vec<(u64, f64)>,
     pub fills: u64,
     /// Per-fill log `(ts_ns, symbol, side[+1 buy/-1 sell], qty, price)`. The `symbol` lets analytics
@@ -130,8 +132,10 @@ impl BacktestKernel {
             for inst in &config.instruments {
                 c.add_instrument(inst.clone());
             }
-            let mut account =
-                coinext_model::AccountState::new(coinext_model::AccountId::from("BACKTEST"), config.settle);
+            let mut account = coinext_model::AccountState::new(
+                coinext_model::AccountId::from("BACKTEST"),
+                config.settle,
+            );
             account.set_balance(config.starting_balance);
             c.set_account(account);
         }
