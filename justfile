@@ -1,4 +1,4 @@
-# VeloxQuant task runner. `just` (https://github.com/casey/just) wraps the common workflows.
+# Coinext task runner. `just` (https://github.com/casey/just) wraps the common workflows.
 set shell := ["bash", "-uc"]
 
 # Default: list recipes
@@ -18,7 +18,7 @@ lint:
 
 # Run the example SMA-crossover backtest
 backtest:
-    cargo run -p qv-example-backtest
+    cargo run -p coinext-example-backtest
 
 # Build the optimized release binaries
 build-release:
@@ -30,11 +30,11 @@ build-release:
 py-setup:
     uv sync --extra research --group dev
 
-# Build the qv_py PyO3 extension into the active venv (editable)
+# Build the coinext_py PyO3 extension into the active venv (editable)
 py-build:
-    uvx maturin develop --manifest-path crates/qv-py/Cargo.toml --features python
+    uvx maturin develop --manifest-path crates/coinext-py/Cargo.toml --features python
 
-# Run the Python tests (requires py-build first for qv_py)
+# Run the Python tests (requires py-build first for coinext_py)
 py-test:
     uv run pytest
 
@@ -43,9 +43,9 @@ py-lint:
     uv run ruff check python tests
     uv run ruff format python tests
 
-# Run a backtest via the qv CLI
+# Run a backtest via the coinext CLI
 cli-backtest *ARGS:
-    uv run qv backtest {{ARGS}}
+    uv run coinext backtest {{ARGS}}
 
 # --- Ops ---
 

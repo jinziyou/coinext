@@ -1,8 +1,8 @@
 {
-  "name": "@veloxquant/ui",
+  "name": "@coinext/ui",
   "private": true,
   "version": "0.1.0",
-  "description": "VeloxQuant operator dashboard — Runs, Live Positions/PnL, Fills, Latency, Kill-Switch.",
+  "description": "Coinext operator dashboard — Runs, Live Positions/PnL, Fills, Latency, Kill-Switch.",
   "type": "module",
   "engines": {
     "node": ">=22"

@@ -1,4 +1,4 @@
-# VeloxQuant — local DEV overrides.
+# Coinext — local DEV overrides.
 #
 # Layered on top of docker-compose.yml (and optionally docker-compose.obs.yml):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
@@ -12,16 +12,16 @@
 #
 # HOT-RELOAD NOTES
 #   * api (FastAPI/uvicorn): `--reload` watches the bind-mounted python/ tree. NOTE the compiled
-#     qv_py extension is built into the image; if you change Rust under crates/qv-py you must
+#     coinext_py extension is built into the image; if you change Rust under crates/coinext-py you must
 #     rebuild (`just py-build` locally, or `docker compose build api`). Pure-Python edits reload.
 #   * trader / risk-monitor: bind-mounted source; restart the container to pick up changes, or run
-#     them under `watchfiles` (see commented command). The Kernel itself is the compiled qv_py.
+#     them under `watchfiles` (see commented command). The Kernel itself is the compiled coinext_py.
 #   * ingestor / exec-svc (Rust): no in-container hot reload — rebuild the image, or run the binary
-#     on the host with `cargo run -p qv-ingest` / `-p qv-exec-svc` against the dev infra ports below.
+#     on the host with `cargo run -p coinext-ingest` / `-p coinext-exec-svc` against the dev infra ports below.
 #   * ui (Vite): for true HMR run `npm run dev` on the host (port 5173); this overlay still serves
 #     the built static bundle via nginx on :3000 for an integration-like view.
 
-name: veloxquant
+name: coinext
 
 services:
   # --- Infra: expose ports to the host for psql / redis-cli / mc / browser console ---
@@ -43,33 +43,33 @@ services:
     ports:
       - "9101:9101"   # prometheus metrics
     environment:
-      VQ__LOG__LEVEL: debug
+      COINEXT__LOG__LEVEL: debug
 
   exec-svc:
     ports:
       - "9102:9102"   # prometheus metrics
       - "8081:8081"   # control/admin API
     environment:
-      VQ__LOG__LEVEL: debug
+      COINEXT__LOG__LEVEL: debug
 
   # --- Python control plane: bind-mount source for fast iteration ---
   trader:
     ports:
       - "9103:9103"   # prometheus metrics
     environment:
-      VQ__LOG__LEVEL: debug
+      COINEXT__LOG__LEVEL: debug
     volumes:
       - ./python:/app/python:ro
       - ./config:/app/config:ro
       - ./data:/data
     # Restart-to-reload by default. For auto-reload uncomment:
-    # command: ["uv", "run", "watchfiles", "qv live run", "python"]
+    # command: ["uv", "run", "watchfiles", "coinext live run", "python"]
 
   risk-monitor:
     ports:
       - "9104:9104"   # prometheus metrics
     environment:
-      VQ__LOG__LEVEL: debug
+      COINEXT__LOG__LEVEL: debug
     volumes:
       - ./python:/app/python:ro
       - ./config:/app/config:ro
@@ -78,13 +78,13 @@ services:
     ports:
       - "8000:8000"
     environment:
-      VQ__LOG__LEVEL: debug
+      COINEXT__LOG__LEVEL: debug
     volumes:
       - ./python:/app/python:ro
       - ./config:/app/config:ro
       - ./data:/data
     # uvicorn auto-reload on bind-mounted python/ (pure-Python changes only; see header note).
-    command: ["uvicorn", "qv_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/python"]
+    command: ["uvicorn", "coinext_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/python"]
 
   # --- UI: serve the built bundle on :3000; use host `npm run dev` for HMR ---
   ui:

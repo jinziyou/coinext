@@ -1,10 +1,10 @@
-# VeloxQuant Architecture
+# Coinext Architecture
 
-> 本文为 VeloxQuant 平台的权威架构说明。核心不变量是 **回测↔实盘一致性（backtest↔live parity）**：
+> 本文为 Coinext 平台的权威架构说明。核心不变量是 **回测↔实盘一致性（backtest↔live parity）**：
 > 同一份 Strategy 代码、同一套引擎、同一个确定性核心，在回测 / 沙盒 / 实盘中原样运行；只有 Kernel 注入的
 > 三样东西不同 —— 时钟（Clock）、缓存（Cache）内容、数据/执行客户端（behind identical ports）。
 
-This document is the canonical description of the VeloxQuant platform. It was synthesized from a
+This document is the canonical description of the Coinext platform. It was synthesized from a
 study of NautilusTrader (the closest prior art — also Python+Rust), QuantConnect LEAN, Freqtrade,
 Hummingbot, and Rust trading engines (barter-rs), then designed from three competing angles
 (research-first, execution-first, platform-ops-first), merged, critiqued, and revised.
@@ -48,46 +48,46 @@ In backtest, the core merge-sorts **three event sources by timestamp**:
 
 This merge-sort on `ts_event` is what makes a delayed fill (scheduled at `now + latency`) interleave
 correctly with subsequent market data — the concrete mechanism behind research fidelity, and a
-structural guarantee against look-ahead. (Implemented in `qv-kernel::BacktestKernel::run`.)
+structural guarantee against look-ahead. (Implemented in `coinext-kernel::BacktestKernel::run`.)
 
 ## 3. Monorepo layout
 
 ```
-veloxquant/
+coinext/
 ├── crates/                      # RUST: hot path + shared domain (source of truth)
-│   ├── qv-core/                 # fixed-precision Price/Quantity/Money/Currency, UnixNanos, Clock+timers
-│   ├── qv-model/                # typed IDs, Instrument, event-sourced Order FSM, Fill, Position, market data
-│   ├── qv-ports/                # ALL hexagonal port traits + command/report value types
-│   ├── qv-bus/                  # in-proc bus (typed Arc, zero-serialization) + Redis Envelope contract
-│   ├── qv-cache/                # in-memory object store (instruments/quotes/marks/orders/positions/account)
-│   ├── qv-data-engine/          # cache-then-publish market data; mark maintenance; bar aggregation
-│   ├── qv-exec-engine/          # OMS: risk-gated routing, FSM driving, report folding
-│   ├── qv-risk-engine/          # pre-trade risk gate + atomic kill-switch
-│   ├── qv-portfolio/            # balances, realized/unrealized PnL, exposure (mark-sourced from Cache)
-│   ├── qv-sim/                  # SimulatedExchange: BrokerageModel + matching + DelayedEventQueue
-│   ├── qv-kernel/               # the synchronous core loop; Environment; backtest wiring
-│   ├── qv-indicators/           # streaming SMA/EMA/RSI/ATR (same code warm-up + live)
-│   ├── qv-testkit/              # sample instruments + synthetic data generators
-│   ├── qv-adapters/binance/     # reference venue adapter (Data/Exec/InstrumentProvider) [stub]
-│   ├── qv-network/              # shared WS/REST framework (rate limit, auth, retry) [stub]
-│   ├── qv-persistence/          # append-only OrderEvent store + Parquet writer [stub]
-│   ├── qv-ingest/               # BIN: market-data ingestion daemon [stub]
-│   ├── qv-exec-svc/             # BIN: OMS/execution service [stub]
-│   └── qv-py/                   # PyO3 crate: domain + Kernel + PyStrategyAdapter dispatch shim
+│   ├── coinext-core/                 # fixed-precision Price/Quantity/Money/Currency, UnixNanos, Clock+timers
+│   ├── coinext-model/                # typed IDs, Instrument, event-sourced Order FSM, Fill, Position, market data
+│   ├── coinext-ports/                # ALL hexagonal port traits + command/report value types
+│   ├── coinext-bus/                  # in-proc bus (typed Arc, zero-serialization) + Redis Envelope contract
+│   ├── coinext-cache/                # in-memory object store (instruments/quotes/marks/orders/positions/account)
+│   ├── coinext-data-engine/          # cache-then-publish market data; mark maintenance; bar aggregation
+│   ├── coinext-exec-engine/          # OMS: risk-gated routing, FSM driving, report folding
+│   ├── coinext-risk-engine/          # pre-trade risk gate + atomic kill-switch
+│   ├── coinext-portfolio/            # balances, realized/unrealized PnL, exposure (mark-sourced from Cache)
+│   ├── coinext-sim/                  # SimulatedExchange: BrokerageModel + matching + DelayedEventQueue
+│   ├── coinext-kernel/               # the synchronous core loop; Environment; backtest wiring
+│   ├── coinext-indicators/           # streaming SMA/EMA/RSI/ATR (same code warm-up + live)
+│   ├── coinext-testkit/              # sample instruments + synthetic data generators
+│   ├── coinext-adapters/binance/     # reference venue adapter (Data/Exec/InstrumentProvider) [stub]
+│   ├── coinext-network/              # shared WS/REST framework (rate limit, auth, retry) [stub]
+│   ├── coinext-persistence/          # append-only OrderEvent store + Parquet writer [stub]
+│   ├── coinext-ingest/               # BIN: market-data ingestion daemon [stub]
+│   ├── coinext-exec-svc/             # BIN: OMS/execution service [stub]
+│   └── coinext-py/                   # PyO3 crate: domain + Kernel + PyStrategyAdapter dispatch shim
 │
 ├── python/                      # PYTHON: control plane
-│   ├── qv_contracts/            # re-exports qv_py stubs; port Protocols; Envelope schema
-│   ├── qv_strategy/             # Strategy ABC (sync handlers) + OrderFactory + example strategies
-│   ├── qv_kernel/               # thin wrapper over qv_py: build/run Kernel
-│   ├── qv_backtest/             # BacktestNode (authoritative) + vectorized screen (advisory)
-│   ├── qv_data/                 # DataLake catalog + HistoryReader [stub]
-│   ├── qv_analytics/            # returns/Sharpe/drawdown, tear sheets, bias detectors
-│   ├── qv_optimize/             # Optuna walk-forward optimization [stub]
-│   ├── qv_risk/  qv_portfolio/  # Python-side config facades
-│   ├── qv_bus/                  # Redis-Streams client + MessagePack Envelope decode
-│   ├── qv_live/                 # TradingNode (live runtime) [stub]
-│   ├── qv_config/               # layered config (CLI > env > files > defaults), pydantic
-│   └── qv_cli/                  # `qv` CLI (Typer)
+│   ├── coinext_contracts/            # re-exports coinext_py stubs; port Protocols; Envelope schema
+│   ├── coinext_strategy/             # Strategy ABC (sync handlers) + OrderFactory + example strategies
+│   ├── coinext_kernel/               # thin wrapper over coinext_py: build/run Kernel
+│   ├── coinext_backtest/             # BacktestNode (authoritative) + vectorized screen (advisory)
+│   ├── coinext_data/                 # DataLake catalog + HistoryReader [stub]
+│   ├── coinext_analytics/            # returns/Sharpe/drawdown, tear sheets, bias detectors
+│   ├── coinext_optimize/             # Optuna walk-forward optimization [stub]
+│   ├── coinext_risk/  coinext_portfolio/  # Python-side config facades
+│   ├── coinext_bus/                  # Redis-Streams client + MessagePack Envelope decode
+│   ├── coinext_live/                 # TradingNode (live runtime) [stub]
+│   ├── coinext_config/               # layered config (CLI > env > files > defaults), pydantic
+│   └── coinext_cli/                  # `coinext` CLI (Typer)
 │
 ├── services/                    # deployable wrappers: ingestor, trader, risk-monitor, api, ui
 ├── deploy/                      # Dockerfiles + prometheus/grafana/loki/tempo/otel
@@ -98,14 +98,14 @@ veloxquant/
 
 ## 4. Domain model — the integer invariant
 
-All prices/quantities/money are **fixed-precision integer-backed** value types (`qv-core::value`):
+All prices/quantities/money are **fixed-precision integer-backed** value types (`coinext-core::value`):
 `Price { raw: i64, precision }`, `Quantity { raw: i64, precision }` (non-negative),
 `Money { amount: i128, currency }`. **No `f64` in the domain** — `as_f64()` is display-only; the
 Python mirror keeps the same integer representation and exposes decimals only via `as_decimal()` /
 `amount()` methods, never as fields. This eliminates float drift in PnL/matching. All identifiers are
-distinct newtypes (`qv-model::identifiers`) so ID categories can never be mixed.
+distinct newtypes (`coinext-model::identifiers`) so ID categories can never be mixed.
 
-`Order` and `Position` are **event-sourced** (`qv-model::order`, `qv-model::position`): state is the
+`Order` and `Position` are **event-sourced** (`coinext-model::order`, `coinext-model::position`): state is the
 fold of an immutable event sequence, giving an audit trail and trivial reconciliation. The Order FSM
 has a complete transition table including the modify path
 (`PendingUpdate → Updated → Accepted/PartiallyFilled`, `PendingCancel → Canceled`). Illegal
@@ -113,11 +113,11 @@ transitions fail-fast.
 
 ## 5. The ExecutionClient port — the parity seam
 
-`qv-ports::ExecutionClient` is the single seam where backtest vs live differ.
+`coinext-ports::ExecutionClient` is the single seam where backtest vs live differ.
 `SimulatedExecutionClient` (backtest), a testnet variant (sandbox), and `BinanceExecutionClient`
 (live) all implement it identically; the OMS/Risk/Strategy above it is byte-for-byte the same.
 
-The `SimulatedExchange` (`qv-sim`) is parameterized by a **`BrokerageModel`** (fees / slippage /
+The `SimulatedExchange` (`coinext-sim`) is parameterized by a **`BrokerageModel`** (fees / slippage /
 fill / latency) that is **shared with live config** — backtest and live agree on venue *economics*,
 not just order flow (LEAN's keystone). Simulated acks/fills are scheduled at `now + latency_ns` in a
 `DelayedEventQueue` and merge-sorted with market data on the HistoricalClock time-frontier.
@@ -142,13 +142,13 @@ histogram `strategy_dispatch_ns`), not hidden. Two consequences are made explici
   backtest reproducibility — a Python handler adds a bounded, measured per-event cost.
 
 For cross-service / UI fan-out, Python never imports the Rust bus crate in-process. It consumes a
-**Redis-Streams** bus via the `qv_bus` package, decoding a versioned MessagePack `Envelope`
+**Redis-Streams** bus via the `coinext_bus` package, decoding a versioned MessagePack `Envelope`
 (`{schema_version, msg_type, trace_id, ts_init, payload}`). The in-process bus, by contrast, passes
 typed `Arc` payloads with **zero serialization** (the hot path).
 
 ## 7. Data flow
 
-**Backtest.** `qv_backtest`/CLI builds a `RunConfig` with `Environment::Backtest`; the Kernel injects
+**Backtest.** `coinext_backtest`/CLI builds a `RunConfig` with `Environment::Backtest`; the Kernel injects
 a `HistoricalClock`, a HistoryReader-backed data feed, and a `SimulatedExecutionClient`. The core
 loop drains merge-sorted CoreEvents; the DataEngine does cache-then-publish; the Strategy handler
 fires synchronously; orders pass the synchronous RiskEngine gate, then the SimulatedExecutionClient
@@ -156,7 +156,7 @@ applies the BrokerageModel and **enqueues** ack/fill reports at `now + latency`;
 advances, those reports fold into the event-sourced Order/Position at the correct interleaved time.
 Analytics produces a tear sheet and runs lookahead/recursion bias detectors.
 
-**Live.** `qv_live` builds the SAME RunConfig with `Environment::Live`; the Kernel injects a
+**Live.** `coinext_live` builds the SAME RunConfig with `Environment::Live`; the Kernel injects a
 `LiveClock`, the `BinanceDataClient`, and the `BinanceExecutionClient` — nothing else changes. A
 standalone Rust `ingestor` normalizes Binance WS frames and republishes on the Redis bus; the
 `trader` process's DataEngine consumes them; warm-up is served from the LOCAL HistoryReader
@@ -176,22 +176,22 @@ topology (deterministic, simple); Redis Streams is a clean horizontal-scale / te
 ## 9. Build order
 
 1. Bootstrap workspace + CI + empty compose with redis/postgres/observability.
-2. `qv-core` (value types, clock, timers) — property tested. ✅
-3. `qv-model` (IDs, Instrument, Order FSM, Fill, Position, market data). ✅
-4. `qv-ports` (all port traits + command/report types). ✅
-5. `qv-py` PyO3 + PyStrategyAdapter dispatch shim. 🚧
-6. `qv-bus` + `qv-cache` (in-proc bus, indexed cache). ✅
-7. Engines on the ports (data/exec/risk/portfolio) wired in `qv-kernel`. ✅
-8. `qv-sim` (matching + BrokerageModel + DelayedEventQueue) — first proof of parity. ✅
-9. Data lake foundation (`qv_data`). 🚧
-10. `qv_strategy` + `qv_backtest` (authoritative runner + advisory screen). 🚧
-11. `qv_analytics` (metrics + bias detectors). 🚧
-12. `qv_optimize` (Optuna walk-forward). 🚧
-13. `qv-network` + `qv-adapters/binance`. 🚧
-14. `qv-persistence` + reconciliation. 🚧
+2. `coinext-core` (value types, clock, timers) — property tested. ✅
+3. `coinext-model` (IDs, Instrument, Order FSM, Fill, Position, market data). ✅
+4. `coinext-ports` (all port traits + command/report types). ✅
+5. `coinext-py` PyO3 + PyStrategyAdapter dispatch shim. 🚧
+6. `coinext-bus` + `coinext-cache` (in-proc bus, indexed cache). ✅
+7. Engines on the ports (data/exec/risk/portfolio) wired in `coinext-kernel`. ✅
+8. `coinext-sim` (matching + BrokerageModel + DelayedEventQueue) — first proof of parity. ✅
+9. Data lake foundation (`coinext_data`). 🚧
+10. `coinext_strategy` + `coinext_backtest` (authoritative runner + advisory screen). 🚧
+11. `coinext_analytics` (metrics + bias detectors). 🚧
+12. `coinext_optimize` (Optuna walk-forward). 🚧
+13. `coinext-network` + `coinext-adapters/binance`. 🚧
+14. `coinext-persistence` + reconciliation. 🚧
 15. Python bus client + standalone services. 🚧
 16. Observability wiring. 🚧
-17. `qv_live` + api + ui + risk-monitor. 🚧
+17. `coinext_live` + api + ui + risk-monitor. 🚧
 18. Ops + hardening + sandbox-vs-backtest parity acceptance gate. 🚧
 
 ## 10. Key decisions (with rationale)
@@ -204,11 +204,11 @@ topology (deterministic, simple); Redis Streams is a clean horizontal-scale / te
 - **Vectorized path is explicitly non-authoritative** — it skips Risk/Exec/Brokerage, so it is a
   fast screen, never a parity surface; the cross-check is an advisory drift warning.
 - **Single ClientOrderId owner (OrderFactory)** — stable before submit; idempotent retries.
-- **All ports in one `qv-ports` crate owning `async-trait`** — keeps `qv-model` sync-only; fixes the
+- **All ports in one `coinext-ports` crate owning `async-trait`** — keeps `coinext-model` sync-only; fixes the
   non-compiling `&self -> Receiver` (now `take_*(&mut self)` once at wiring); adds the modify
   report + `disconnect()`.
 - **In-proc bus passes typed Arc (zero serialization); only Redis serializes** — resolves the
-  contradiction with the zero-serialization claim; Python consumes via `qv_bus`.
+  contradiction with the zero-serialization claim; Python consumes via `coinext_bus`.
 - **Delayed-fill scheduling on the time-frontier** — without it, latency is cosmetic and fills
   mis-interleave; merge-sort makes delayed execution deterministic.
 - **Event-sourced Orders/Positions with the full modify FSM; integer domain even in Python; fail-

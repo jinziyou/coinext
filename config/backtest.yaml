@@ -1,4 +1,4 @@
-# VeloxQuant — backtest overrides (merged on top of config/base.yaml).
+# Coinext — backtest overrides (merged on top of config/base.yaml).
 #
 # Environment::Backtest (docs/ARCHITECTURE.md §1, §7): the Kernel injects a HistoricalClock, a
 # HistoryReader-backed data feed, and a SimulatedExecutionClient. This is the AUTHORITATIVE,

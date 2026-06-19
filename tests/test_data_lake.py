@@ -12,8 +12,8 @@ import pytest
 
 pytest.importorskip("pyarrow", reason="the data lake needs pyarrow (`uv pip install pyarrow`)")
 
-from qv_data import BarSpec, DataCatalog, DataLake, HistoryReader  # noqa: E402
-from qv_data import download as dl  # noqa: E402
+from coinext_data import BarSpec, DataCatalog, DataLake, HistoryReader  # noqa: E402
+from coinext_data import download as dl  # noqa: E402
 
 _NS = 1_000_000_000
 
@@ -154,9 +154,9 @@ def test_lake_is_authoritative_over_stale_csv(tmp_path):
 def test_cli_download_guards_when_pyarrow_absent(monkeypatch, capsys):
     """Regression (review finding): lake-backed CLI commands give a clean message + exit 1 when
     pyarrow is missing, not an opaque ``'NoneType' object is not callable``."""
-    import qv_cli.main as cli
-    import qv_data
+    import coinext_cli.main as cli
+    import coinext_data
 
-    monkeypatch.setattr(qv_data, "_HAVE_LAKE", False)
+    monkeypatch.setattr(coinext_data, "_HAVE_LAKE", False)
     assert cli._cmd_download("BTCUSDT") == 1
     assert "pyarrow" in capsys.readouterr().out

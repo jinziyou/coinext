@@ -1,11 +1,11 @@
-# VeloxQuant — base configuration (defaults shared by every environment).
+# Coinext — base configuration (defaults shared by every environment).
 #
 # Layered config, lowest precedence first:
 #   built-in defaults  <  config/base.yaml  <  config/{backtest,sandbox,live}.yaml  <  env  <  CLI flags
 #
-# The env layer uses the VQ__SECTION__KEY convention (double underscore separates nested keys),
-# e.g. `VQ__RISK__MAX_ORDERS_PER_SEC=20` overrides `risk.max_orders_per_sec` below. See
-# `.env.example` and `qv_config` (pydantic-backed loader).
+# The env layer uses the COINEXT__SECTION__KEY convention (double underscore separates nested keys),
+# e.g. `COINEXT__RISK__MAX_ORDERS_PER_SEC=20` overrides `risk.max_orders_per_sec` below. See
+# `.env.example` and `coinext_config` (pydantic-backed loader).
 #
 # The keystone invariant (see docs/ARCHITECTURE.md §1, §5): the SAME Strategy + engines run in
 # backtest / sandbox / live. Only the Kernel-injected Clock, Cache contents, and Data/Execution
@@ -26,7 +26,7 @@ venue:
   # testnet=true routes the live/sandbox clients to Binance testnet endpoints. Ignored in backtest.
   testnet: true
   # Public market-data streams need no keys; trading (sandbox/live) does. Pulled from env/secrets,
-  # never committed here (see VQ__BINANCE__API_KEY / VQ__BINANCE__API_SECRET).
+  # never committed here (see COINEXT__BINANCE__API_KEY / COINEXT__BINANCE__API_SECRET).
   api_key: ""
   api_secret: ""
 
@@ -35,7 +35,7 @@ data:
   # Root of the local Parquet data lake. Warm-up is ALWAYS served from here (identical in backtest
   # and live), never from a live REST call at handler time.
   lake_root: /data
-  # Default catalog partitioning hint for qv_data (venue/symbol/interval/date).
+  # Default catalog partitioning hint for coinext_data (venue/symbol/interval/date).
   catalog: parquet
 
 # --- Risk limits (defense-in-depth; the per-order RiskEngine reads these too; ARCHITECTURE §1, §6) ---
@@ -64,13 +64,13 @@ redis:
   url: redis://redis:6379/0        # Redis-Streams bus (cross-service / UI fan-out; ARCHITECTURE §6)
 
 postgres:
-  dsn: postgresql://veloxquant:veloxquant@postgres:5432/veloxquant
+  dsn: postgresql://coinext:coinext@postgres:5432/coinext
 
 minio:
   endpoint: http://minio:9000      # S3-compatible object store (bulk data lake, artifacts)
-  access_key: veloxquant
-  secret_key: veloxquant-secret
-  bucket: veloxquant
+  access_key: coinext
+  secret_key: coinext-secret
+  bucket: coinext
 
 # --- Observability (Prometheus + Grafana + Loki + Tempo via OTel Collector; ARCHITECTURE §8) ---
 otel:

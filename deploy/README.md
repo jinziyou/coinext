@@ -1,17 +1,17 @@
-# VeloxQuant — Deployment
+# Coinext — Deployment
 
 Dockerized multi-service stack for a single VPS, with `prod` / `dev` / `obs` compose profiles
 (docs/ARCHITECTURE.md §8). The topology preserves the parity invariant: the SAME engines run
 everywhere; only the Kernel-injected Clock / Cache / clients differ between backtest, sandbox, and
-live (selected via `VQ__ENV` and the Binance section of `.env`).
+live (selected via `COINEXT__ENV` and the Binance section of `.env`).
 
 ## Services & ports
 
 | Service        | Build                                   | Runtime              | Port(s)              |
 |----------------|-----------------------------------------|----------------------|----------------------|
-| `ingestor`     | `deploy/docker/ingestor.Dockerfile`     | Rust `qv-ingest`     | metrics 9101         |
-| `exec-svc`     | `deploy/docker/exec-svc.Dockerfile`     | Rust `qv-exec-svc`   | metrics 9102, ctl 8081 |
-| `trader`       | `deploy/docker/trader.Dockerfile`       | Python `qv_live`     | metrics 9103         |
+| `ingestor`     | `deploy/docker/ingestor.Dockerfile`     | Rust `coinext-ingest`     | metrics 9101         |
+| `exec-svc`     | `deploy/docker/exec-svc.Dockerfile`     | Rust `coinext-exec-svc`   | metrics 9102, ctl 8081 |
+| `trader`       | `deploy/docker/trader.Dockerfile`       | Python `coinext_live`     | metrics 9103         |
 | `risk-monitor` | `deploy/docker/risk-monitor.Dockerfile` | Python               | metrics 9104         |
 | `api`          | `deploy/docker/api.Dockerfile`          | Python FastAPI       | 8000                 |
 | `ui`           | `deploy/docker/ui.Dockerfile`           | Node 22 build → nginx| 3000 (dev → :80)     |
@@ -32,10 +32,10 @@ Observability overlay (`docker-compose.obs.yml`):
 ## Prerequisites
 
 ```bash
-cp .env.example .env      # then fill in VQ__BINANCE__* for sandbox/live
+cp .env.example .env      # then fill in COINEXT__BINANCE__* for sandbox/live
 ```
 
-All services read configuration from `.env` using the `VQ__SECTION__KEY` convention.
+All services read configuration from `.env` using the `COINEXT__SECTION__KEY` convention.
 
 ## Bring-up
 
@@ -59,11 +59,11 @@ docker compose -f docker-compose.yml -f docker-compose.obs.yml up -d --build
 ```
 
 Adds Prometheus + Grafana + Loki + Tempo + the OpenTelemetry Collector. Grafana auto-provisions the
-Prometheus/Loki/Tempo datasources and the **VeloxQuant — SLOs & PnL** dashboard from
+Prometheus/Loki/Tempo datasources and the **Coinext — SLOs & PnL** dashboard from
 `deploy/grafana/`.
 
 Open:
-- Grafana   → http://localhost:3001  (default `admin` / `admin`, override via `VQ__GRAFANA__*`)
+- Grafana   → http://localhost:3001  (default `admin` / `admin`, override via `COINEXT__GRAFANA__*`)
 - Prometheus→ http://localhost:9090
 - MinIO     → http://localhost:9001
 
@@ -79,7 +79,7 @@ just up-dev
 
 The `dev` overlay publishes every port to `localhost`, bind-mounts `python/`, `config/`, and `data/`
 into the Python containers, and runs the `api` under `uvicorn --reload`. See the header of
-`docker-compose.dev.yml` for hot-reload caveats (Rust services and the compiled `qv_py` extension
+`docker-compose.dev.yml` for hot-reload caveats (Rust services and the compiled `coinext_py` extension
 require an image rebuild; pure-Python edits reload live).
 
 ## Validate the topology (no containers started)
@@ -114,10 +114,10 @@ SLO histograms surfaced on the dashboard: `strategy_dispatch_ns`, `submit_to_ack
 
 ## Notes & TODOs
 
-- The Rust service crates (`qv-ingest`, `qv-exec-svc`) are workspace-excluded **stubs** today; their
+- The Rust service crates (`coinext-ingest`, `coinext-exec-svc`) are workspace-excluded **stubs** today; their
   Dockerfiles are valid scaffolding and are not expected to build until the venue adapters
-  (`qv-network`, `qv-adapters/binance`) and persistence land.
-- The Python service entrypoints (`qv_live`, `qv_api`, `qv_risk.monitor`) and the UI source
+  (`coinext-network`, `coinext-adapters/binance`) and persistence land.
+- The Python service entrypoints (`coinext_live`, `coinext_api`, `coinext_risk.monitor`) and the UI source
   (`services/ui/`) are scaffolded by their respective areas; the Dockerfiles reference the agreed
   module/entrypoint names.
 - Secrets management (SOPS/Vault) is an open question (ARCHITECTURE.md §11); for now secrets come

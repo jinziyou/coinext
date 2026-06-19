@@ -6,8 +6,8 @@
 # Postgres event store, and can trip the GLOBAL kill-switch (ARCHITECTURE.md §7). SLO-relevant
 # signal: risk_denials. Metrics on :9104.
 #
-# Pure-Python service — it does NOT need the compiled qv_py Kernel (no strategy dispatch here); it
-# only decodes the MessagePack Envelope via qv_bus and reads positions/PnL. Single-stage slim image.
+# Pure-Python service — it does NOT need the compiled coinext_py Kernel (no strategy dispatch here); it
+# only decodes the MessagePack Envelope via coinext_bus and reads positions/PnL. Single-stage slim image.
 # ----------------------------------------------------------------------------------------------
 
 FROM python:3.13-slim AS runtime
@@ -28,5 +28,5 @@ ENV PYTHONPATH=/app/python
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 9104
-# TODO: qv_risk.monitor implements the out-of-band watch loop + kill-switch trip over the control API.
-ENTRYPOINT ["python", "-m", "qv_risk.monitor"]
+# TODO: coinext_risk.monitor implements the out-of-band watch loop + kill-switch trip over the control API.
+ENTRYPOINT ["python", "-m", "coinext_risk.monitor"]

@@ -1,0 +1,27 @@
+# coinext-exec-svc — the OMS/execution service (service name `exec-svc`).
+#
+# EXCLUDED from the root cargo workspace (root Cargo.toml `exclude`), so it uses EXPLICIT dependency
+# versions — NOT `.workspace = true`. Deliberately minimal so the bin compiles in isolation; the
+# real OMS/risk wiring is deferred behind TODO deps below.
+[package]
+name = "coinext-exec-svc"
+description = "Coinext OMS/execution service: risk-gated routing + FSM driving + reconciliation. [stub]"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+authors = ["Coinext"]
+
+[[bin]]
+name = "coinext-exec-svc"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros"] }
+# TODO(exec-svc): wire the real OMS pipeline when implementing:
+#   coinext-exec-engine      = { path = "../coinext-exec-engine" }        # OMS: risk-gated routing + report folding
+#   coinext-risk-engine      = { path = "../coinext-risk-engine" }        # pre-trade gate + kill-switch
+#   coinext-adapters-binance = { path = "../coinext-adapters/binance" }   # live ExecutionClient
+#   coinext-persistence      = { path = "../coinext-persistence" }        # append-only event store + SeqCursor
+#   coinext-bus              = { path = "../coinext-bus" }                 # Redis Envelope (commands in / reports out)
+#   redis, prometheus client, tracing/otel for :9102 metrics + :8081 control

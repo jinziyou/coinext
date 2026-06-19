@@ -1,6 +1,6 @@
-"""Option pricing (Black–Scholes) bridged to Python — the same qv-derivatives the Rust core uses.
+"""Option pricing (Black–Scholes) bridged to Python — the same coinext-derivatives the Rust core uses.
 
-Phase 3 of derivatives: price options, compute greeks, back out implied vol. Requires qv_py.
+Phase 3 of derivatives: price options, compute greeks, back out implied vol. Requires coinext_py.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-pytest.importorskip("qv_py", reason="build qv_py: uvx maturin develop --features python")
+pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
 
-from qv_derivatives import Greeks, bs_price, greeks, implied_vol  # noqa: E402
+from coinext_derivatives import Greeks, bs_price, greeks, implied_vol  # noqa: E402
 
 # Reference: S=K=100, T=1, r=5%, vol=20%.
 ATM = dict(spot=100.0, strike=100.0, t_years=1.0, rate=0.05, vol=0.2)

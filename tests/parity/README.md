@@ -1,19 +1,19 @@
 # tests/parity/ — the parity test plan
 
-VeloxQuant's single most important property is **backtest↔live parity** (see
+Coinext's single most important property is **backtest↔live parity** (see
 `docs/ARCHITECTURE.md` §1, §5): ONE Strategy API, ONE set of engines, ONE deterministic core. Only
 the Kernel-injected **Clock**, **Cache** contents, and **Data/Execution clients** differ between
 `Backtest` / `Sandbox` / `Live`. These tests are the guardrails that keep that promise true.
 
-There are two independent parity checks. Both are implemented in the **`qv_parity`** package
-(`python/qv_parity/__init__.py`, stdlib-only) and exercised by `test_parity_gate.py`. A run is
-reduced to a `qv_parity.SessionResult` (an `equity_curve` of `(ts_ns, equity)` + a `fills` log of
-`(ts_ns, side, qty, px)`); `SessionResult.from_backtest(result)` builds it from a `qv_py`
+There are two independent parity checks. Both are implemented in the **`coinext_parity`** package
+(`python/coinext_parity/__init__.py`, stdlib-only) and exercised by `test_parity_gate.py`. A run is
+reduced to a `coinext_parity.SessionResult` (an `equity_curve` of `(ts_ns, equity)` + a `fills` log of
+`(ts_ns, side, qty, px)`); `SessionResult.from_backtest(result)` builds it from a `coinext_py`
 `BacktestResult` (which exposes `equity_curve` + `fills_log`).
 
 ## 1. Event-driven vs vectorized screen cross-check (advisory)
 
-The authoritative runner is the **event-driven** `qv_backtest.run` (through the Rust kernel: Risk +
+The authoritative runner is the **event-driven** `coinext_backtest.run` (through the Rust kernel: Risk +
 Exec + BrokerageModel + SimulatedExecutionClient). A separate **vectorized** `populate_*` research
 screen exists for fast parameter sweeps but is **explicitly non-authoritative** — it skips the
 Risk/Exec/Brokerage path, so it can never validate a strategy for promotion (§1, §10).
@@ -27,7 +27,7 @@ The cross-check runs the SAME strategy logic both ways over the SAME bars and me
   failure — it flags that the fast screen is misleading for this strategy, never that the strategy
   is invalid. Only the event-driven result is a parity surface.
 
-**Implementation.** `qv_parity.cross_check(event_result, vector_result, *, max_pnl_diff_bps=50.0)
+**Implementation.** `coinext_parity.cross_check(event_result, vector_result, *, max_pnl_diff_bps=50.0)
 -> list[str]` returns advisory warning strings and **never raises**. It warns when signal timing
 drifts (the two methods fire on different bar buckets/sides) or when the coarse return proxy drifts
 beyond `max_pnl_diff_bps`. An empty list means the fast screen tracks the authoritative runner for
@@ -45,13 +45,13 @@ SAME `RunConfig` and the SAME local-HistoryReader warm-up in two environments:
 
 Because the BrokerageModel economics are **shared** (§5), the two should agree closely.
 
-**This gate is MANDATORY and HARD: a strategy may go live ONLY if it passes.** `qv_parity.run_gate`
+**This gate is MANDATORY and HARD: a strategy may go live ONLY if it passes.** `coinext_parity.run_gate`
 is the seam — it runs the authoritative event-driven backtest for a fresh strategy instance over the
 same bars, reduces it to a `SessionResult`, compares it to the recorded sandbox (testnet)
 `SessionResult`, and returns a `Verdict(passed, reasons, metrics)`. Promotion to live is gated on
 `verdict.passed`.
 
-`qv_parity.parity_metrics(backtest, sandbox, *, ts_bucket_ns=60_000_000_000)` quantifies agreement
+`coinext_parity.parity_metrics(backtest, sandbox, *, ts_bucket_ns=60_000_000_000)` quantifies agreement
 (fills are matched at `(ts bucket, side)` granularity because the HistoricalClock and LiveClock never
 align to the nanosecond):
 
@@ -64,7 +64,7 @@ align to the nanosecond):
   length.
 - **`return_diff`** — `|final_return_backtest - final_return_sandbox|`.
 
-The **acceptance criterion** (`qv_parity.AcceptanceCriterion`, the mandatory pre-live thresholds —
+The **acceptance criterion** (`coinext_parity.AcceptanceCriterion`, the mandatory pre-live thresholds —
 start tight, widen with evidence per §11) defaults to:
 
 | condition | default | meaning |
@@ -74,8 +74,8 @@ start tight, widen with evidence per §11) defaults to:
 | `min_equity_corr`      | `0.90` | equity curves correlate ≥ 0.90 |
 | `max_return_diff`      | `0.02` | final returns differ by ≤ 2 percentage points |
 
-`qv_parity.evaluate(metrics, criterion) -> Verdict` checks all four; `Verdict.reasons` lists every
-failing condition, and `qv_parity.render_verdict(verdict)` renders the decision report
+`coinext_parity.evaluate(metrics, criterion) -> Verdict` checks all four; `Verdict.reasons` lists every
+failing condition, and `coinext_parity.render_verdict(verdict)` renders the decision report
 (`promote-eligible` vs `BLOCKED from live`). These thresholds also live under the `parity` section of
 `config/*.yaml`. Covered by `test_parity_gate.py` (identical → PASS; +2 bps + tiny equity noise →
 PASS within tolerance; +50 bps / dropped signals → FAIL with reasons; end-to-end `run_gate` with
@@ -84,19 +84,19 @@ SmaCross over synthetic bars → PASS).
 ### Running
 
 ```bash
-just py-build           # qv_py must be compiled
+just py-build           # coinext_py must be compiled
 uv run pytest tests/parity
-qv parity               # demo gate: SmaCross backtest vs a slightly-perturbed sandbox (PASS)
+coinext parity               # demo gate: SmaCross backtest vs a slightly-perturbed sandbox (PASS)
 ```
 
-The `qv parity` CLI subcommand (`qv_cli.main`, both the Typer and argparse fronts) runs a demo
+The `coinext parity` CLI subcommand (`coinext_cli.main`, both the Typer and argparse fronts) runs a demo
 promotion gate: it backtests `SmaCross` over synthetic bars, builds a near-identical sandbox session
 (fills nudged +1.5 bps + a tiny equity wobble) from the same run, and prints `render_verdict`. It
 exits `0` on PASS (promote-eligible) and `1` on FAIL (blocked from live).
 
-The sandbox half requires Binance **testnet** credentials (`VQ__BINANCE__API_KEY` /
-`VQ__BINANCE__API_SECRET`, `VQ__BINANCE__TESTNET=true`) and network access; those tests are skipped
-(`importorskip` on `qv_py` + a `requires_sandbox` marker) when credentials or connectivity are
+The sandbox half requires Binance **testnet** credentials (`COINEXT__BINANCE__API_KEY` /
+`COINEXT__BINANCE__API_SECRET`, `COINEXT__BINANCE__TESTNET=true`) and network access; those tests are skipped
+(`importorskip` on `coinext_py` + a `requires_sandbox` marker) when credentials or connectivity are
 absent, so CI runs the offline cross-check while the sandbox gate runs in a gated environment.
 
 ## Relationship to the other suites

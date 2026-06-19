@@ -1,0 +1,33 @@
+# coinext-network — shared WS/REST framework primitives for venue adapters (rate limit, auth, retry).
+#
+# This crate is intentionally EXCLUDED from the root cargo workspace (see the root Cargo.toml
+# `exclude` list) because it pulls heavy network deps (reqwest, tokio-tungstenite). As a
+# workspace-external crate it MUST therefore use EXPLICIT dependency versions and path deps — it
+# cannot use `.workspace = true`.
+#
+# TLS is rustls (NOT native-tls/openssl) everywhere to avoid a system-openssl dependency.
+[package]
+name = "coinext-network"
+description = "Coinext shared WS/REST framework: RestClient, WsClient, RateLimiter, HMAC signer (rate limit/auth/retry)."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+authors = ["Coinext"]
+
+[dependencies]
+# Path dep into the in-workspace foundation crate (for shared error/value types if needed).
+coinext-core = { path = "../coinext-core" }
+
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+governor = "0.7"
+url = "2"

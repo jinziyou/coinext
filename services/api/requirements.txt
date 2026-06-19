@@ -1,7 +1,7 @@
 # services/api — FastAPI control-plane API (canonical port 8000).
 # These mirror the `api` + `bus` extras in the root pyproject.toml; pinned loosely for the
-# container build (deploy/docker/api.Dockerfile). The compiled `qv_py` extension and the pure-Python
-# qv_* packages are installed separately (from the workspace), not via this file.
+# container build (deploy/docker/api.Dockerfile). The compiled `coinext_py` extension and the pure-Python
+# coinext_* packages are installed separately (from the workspace), not via this file.
 fastapi>=0.110
 uvicorn>=0.29
 redis>=5

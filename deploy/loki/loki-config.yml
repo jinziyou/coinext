@@ -1,4 +1,4 @@
-# VeloxQuant — Loki config (single-binary, local filesystem storage; ARCHITECTURE.md §8).
+# Coinext — Loki config (single-binary, local filesystem storage; ARCHITECTURE.md §8).
 # Receives logs from the otel-collector's loki exporter. Sized for a single VPS, not a cluster.
 auth_enabled: false
 

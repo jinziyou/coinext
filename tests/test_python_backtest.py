@@ -2,27 +2,27 @@
 
 This is the cross-FFI demonstration of the backtest↔live parity invariant — the same engines, risk
 gate, and SimulatedExecutionClient that run a native-Rust strategy run a Python one via
-``qv_py``'s ``PyStrategyAdapter`` (GIL acquired per ``on_bar``).
+``coinext_py``'s ``PyStrategyAdapter`` (GIL acquired per ``on_bar``).
 """
 
 from __future__ import annotations
 
 import pytest
 
-qv_py = pytest.importorskip(
-    "qv_py",
-    reason="build qv_py first: see crates/qv-py (uvx maturin develop --features python)",
+coinext_py = pytest.importorskip(
+    "coinext_py",
+    reason="build coinext_py first: see crates/coinext-py (uvx maturin develop --features python)",
 )
 
-from qv_analytics import (  # noqa: E402
+from coinext_analytics import (  # noqa: E402
     compute_metrics,
     detect_lookahead_bias,
     screen_biases,
     stats_from_result,
     tear_sheet,
 )
-from qv_backtest import run, synthetic_bars  # noqa: E402
-from qv_strategy import SmaCross  # noqa: E402
+from coinext_backtest import run, synthetic_bars  # noqa: E402
+from coinext_strategy import SmaCross  # noqa: E402
 
 
 def test_python_strategy_runs_through_rust_kernel():
@@ -39,7 +39,7 @@ def test_python_strategy_runs_through_rust_kernel():
     assert -1.0 < m.total_return < 5.0
     assert m.max_drawdown >= 0.0
     assert detect_lookahead_bias(list(res.equity_curve)) == []
-    assert "VeloxQuant tear sheet" in tear_sheet(res, bars=bars)
+    assert "Coinext tear sheet" in tear_sheet(res, bars=bars)
 
 
 def test_trade_stats_from_real_backtest():
@@ -69,8 +69,8 @@ def test_bias_screen_on_real_backtest_is_clean():
 def test_walk_forward_optimize_through_real_backtest():
     # Grid walk-forward over the AUTHORITATIVE Rust backtest: optimize fast/slow in-sample per fold,
     # validate out-of-sample, and confirm the report is well-formed with a finite OOS estimate.
-    from qv_analytics import compute_metrics
-    from qv_optimize import walk_forward_optimize
+    from coinext_analytics import compute_metrics
+    from coinext_optimize import walk_forward_optimize
 
     bars = synthetic_bars(1200)
 
@@ -95,12 +95,12 @@ def test_walk_forward_optimize_through_real_backtest():
     assert "walk-forward" in report.render()
 
 
-def test_qv_kernel_run_backtest_wrapper_runs():
-    # The qv_kernel convenience wrapper must delegate to qv_backtest.run (bar normalization +
+def test_coinext_kernel_run_backtest_wrapper_runs():
+    # The coinext_kernel convenience wrapper must delegate to coinext_backtest.run (bar normalization +
     # symbol/venue/balance defaults), not call the native 6-wide pyfunction with raw 2-tuples.
-    import qv_kernel
+    import coinext_kernel
 
-    res = qv_kernel.run_backtest(SmaCross(10, 30, 0.5), bars=synthetic_bars(200))
+    res = coinext_kernel.run_backtest(SmaCross(10, 30, 0.5), bars=synthetic_bars(200))
     assert res.orders_submitted > 0
     assert res.starting_equity == pytest.approx(100_000.0)
 
@@ -117,7 +117,7 @@ def test_backtest_is_deterministic():
 def test_ohlc_limit_fills_on_intrabar_wick_not_close():
     # The OHLC-aware proof: a resting buy limit @ 95 fills only because a later bar's LOW wicks to
     # 94 — its close never leaves 100. A close-only series (high==low==close) misses the touch.
-    from qv_strategy import Strategy
+    from coinext_strategy import Strategy
 
     class LimitOnce(Strategy):
         def __init__(self):
@@ -143,7 +143,7 @@ def test_ohlc_limit_fills_on_intrabar_wick_not_close():
 def test_large_limit_partial_fills_over_bars_via_bridge():
     # A resting buy limit of qty 5.0 vs volume-4.0 bars at participation 0.25 fills 1.0 per bar,
     # so ONE order produces FIVE partial fills over five bars (the volume-participation model).
-    from qv_strategy import Strategy
+    from coinext_strategy import Strategy
 
     class BigLimitOnce(Strategy):
         def __init__(self):
@@ -167,7 +167,7 @@ def test_large_limit_partial_fills_over_bars_via_bridge():
 def test_queue_position_delays_a_touched_limit():
     # With queue_ahead_factor > 0, a buy limit the price only TOUCHES (bar low == limit) waits
     # behind the queue, so it fills LATER than with the queue off. (A price THROUGH still fills.)
-    from qv_strategy import Strategy
+    from coinext_strategy import Strategy
 
     class LimitOnce(Strategy):
         def __init__(self):
@@ -195,7 +195,7 @@ def test_queue_position_delays_a_touched_limit():
 def test_large_market_order_participates_over_bars():
     # A single market BUY of qty 5.0 against volume-4 bars (participation 0.25 -> 1.0/bar) takes 1.0
     # at submit and fills the aggressive remainder 1.0 per later bar: ONE order, FIVE fills.
-    from qv_strategy import Strategy
+    from coinext_strategy import Strategy
 
     class BigMarketOnce(Strategy):
         def __init__(self):
@@ -216,7 +216,7 @@ def test_large_market_order_participates_over_bars():
 
 def test_market_order_fills_fully_without_volume():
     # Backward compat: a close-only series carries no volume -> market orders fill in one shot.
-    from qv_strategy import Strategy
+    from coinext_strategy import Strategy
 
     class BuyOnce(Strategy):
         def __init__(self):
@@ -234,7 +234,7 @@ def test_market_order_fills_fully_without_volume():
 
 
 def test_pybar_exposes_threaded_volume():
-    from qv_strategy import Strategy
+    from coinext_strategy import Strategy
 
     class VolRecorder(Strategy):
         def __init__(self):
@@ -251,8 +251,8 @@ def test_pybar_exposes_threaded_volume():
 
 
 def test_limit_maker_trades_on_synthetic_ohlc():
-    from qv_backtest import synthetic_ohlc_bars
-    from qv_strategy import LimitMaker
+    from coinext_backtest import synthetic_ohlc_bars
+    from coinext_strategy import LimitMaker
 
     bars = synthetic_ohlc_bars(400, wick=0.004)
     res = run(LimitMaker(dip_bps=30, rise_bps=30, qty=0.1), bars=bars)
@@ -261,11 +261,11 @@ def test_limit_maker_trades_on_synthetic_ohlc():
     # Only one order is outstanding at a time -> no runaway pile-up of denials.
     assert res.orders_denied == 0
     # The tear sheet accepts OHLC bars (the look-ahead screen must take row[0] regardless of width).
-    assert "VeloxQuant tear sheet" in tear_sheet(res, bars=bars)
+    assert "Coinext tear sheet" in tear_sheet(res, bars=bars)
 
 
 def test_to_ohlcv_normalization_and_validation():
-    from qv_backtest import _to_ohlcv
+    from coinext_backtest import _to_ohlcv
 
     # close-only and OHLC default volume to 0 (no participation cap); OHLCV carries real volume.
     assert _to_ohlcv([(1, 100.0)]) == [(1, 100.0, 100.0, 100.0, 100.0, 0.0)]
@@ -277,7 +277,7 @@ def test_to_ohlcv_normalization_and_validation():
 
 def test_long_position_tracks_price_up():
     # Buy-and-hold on a monotonically rising price -> positive unrealized PnL at the end.
-    from qv_strategy import Strategy
+    from coinext_strategy import Strategy
 
     bars = [(i * 60_000_000_000, 50_000.0 + i * 100.0) for i in range(60)]
 

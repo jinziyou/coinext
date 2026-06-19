@@ -1,11 +1,11 @@
-// VeloxQuant — typed fetch client for the `api` service.
+// Coinext — typed fetch client for the `api` service.
 //
 // The `api` service (FastAPI, canonical port 8000) is the read-side projection
 // over the Redis-Streams Envelope bus (docs/ARCHITECTURE.md §6/§8): the trader /
 // exec-svc / risk-monitor publish state, the api caches it, and this UI polls it.
 // The only mutating call is the kill-switch, which the api forwards to the
 // exec-svc control plane (port 8081) to trip the atomic kill-switch in
-// qv-risk-engine.
+// coinext-risk-engine.
 //
 // Base URL: VITE_API_BASE (injected at build/run time) || http://localhost:8000.
 // Set VITE_API_BASE=/api to route through the dev proxy in vite.config.ts.
@@ -173,7 +173,7 @@ export const api = {
   /**
    * POST /control/killswitch — engage/disengage the global kill-switch.
    * Forwarded by the api to exec-svc's control plane (port 8081) which trips
-   * the atomic kill-switch in qv-risk-engine; all order routing is denied
+   * the atomic kill-switch in coinext-risk-engine; all order routing is denied
    * while engaged (risk_denials metric increments).
    */
   setKillSwitch: (req: KillSwitchRequest) =>

@@ -1,6 +1,6 @@
-# VeloxQuant UI — operator dashboard
+# Coinext UI — operator dashboard
 
-A minimal Vite + React + TypeScript operator cockpit for VeloxQuant. It is a
+A minimal Vite + React + TypeScript operator cockpit for Coinext. It is a
 **read-only-by-default** dashboard over the `api` service (FastAPI), with one
 guarded mutating action: the global **kill-switch**.
 
@@ -14,7 +14,7 @@ See `docs/ARCHITECTURE.md` §8 (observability & deployment) for where this fits.
 | Live Positions / PnL | `GET /positions`           | mark-sourced unrealized PnL (from the Cache)       |
 | Fills                | `GET /fills`               | recent execution fills                             |
 | Latency (SLO)        | `GET /latency`             | SLO histograms (`submit_to_ack_ns`, …) in ns       |
-| Kill-Switch          | `GET/POST /control/killswitch` | guarded confirm dialog; trips `qv-risk-engine` |
+| Kill-Switch          | `GET/POST /control/killswitch` | guarded confirm dialog; trips `coinext-risk-engine` |
 
 All monetary / quantity / price fields cross the wire as **strings** to preserve
 the fixed-precision integer domain (no `f64`; see ARCHITECTURE §4). The UI treats

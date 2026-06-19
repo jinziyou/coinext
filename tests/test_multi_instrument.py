@@ -3,7 +3,7 @@
 Proves the bridge wires the already-multi-instrument core to Python: each symbol's bars reach
 ``on_bar`` tagged with ``bar.symbol``, orders target the right instrument, positions are isolated,
 and a portfolio run is equivalent to running each symbol standalone. Requires the compiled
-``qv_py`` extension.
+``coinext_py`` extension.
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-pytest.importorskip("qv_py", reason="build qv_py: uvx maturin develop --features python")
+pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
 
-import qv_backtest as bt  # noqa: E402
-from qv_strategy import MultiSma, SmaCross, Strategy  # noqa: E402
+import coinext_backtest as bt  # noqa: E402
+from coinext_strategy import MultiSma, SmaCross, Strategy  # noqa: E402
 
 STEP, BASE = 60_000_000_000, 1_700_000_000_000_000_000
 

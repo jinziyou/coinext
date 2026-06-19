@@ -6,7 +6,7 @@
 
 ## The sandbox design
 
-VeloxQuant's `Environment::Sandbox` is **real market data + paper (testnet) execution**:
+Coinext's `Environment::Sandbox` is **real market data + paper (testnet) execution**:
 
 - **Market data** comes from Binance **mainnet** public streams/REST — real, liquid prices. No API
   key is needed for public data. This is the right research/backtest data source even while
@@ -26,24 +26,24 @@ before promoting a strategy to live.
 ```bash
 cp .env.example .env          # .env is gitignored
 # edit .env:
-#   VQ__ENV=sandbox
-#   VQ__BINANCE__TESTNET=true
-#   VQ__BINANCE__API_KEY=...
-#   VQ__BINANCE__API_SECRET=...
+#   COINEXT__ENV=sandbox
+#   COINEXT__BINANCE__TESTNET=true
+#   COINEXT__BINANCE__API_KEY=...
+#   COINEXT__BINANCE__API_SECRET=...
 ```
 
 Public market data needs **no** key; only order flow does.
 
 ## 1. Live market data — NO key (verified ✅)
 
-`qv-ingest` connects the real Binance WS combined streams via the `BinanceDataClient`, normalizes
+`coinext-ingest` connects the real Binance WS combined streams via the `BinanceDataClient`, normalizes
 frames to the venue-agnostic `MarketEvent` types, and prints them:
 
 ```bash
-VQ__INGEST__SYMBOLS="BTCUSDT.BINANCE,ETHUSDT.BINANCE" \
-VQ__INGEST__MAX_EVENTS=20 \
-VQ__BINANCE__TESTNET=false \
-cargo run --manifest-path crates/qv-ingest/Cargo.toml --features live
+COINEXT__INGEST__SYMBOLS="BTCUSDT.BINANCE,ETHUSDT.BINANCE" \
+COINEXT__INGEST__MAX_EVENTS=20 \
+COINEXT__BINANCE__TESTNET=false \
+cargo run --manifest-path crates/coinext-ingest/Cargo.toml --features live
 ```
 
 Sample real output (mainnet BTCUSDT order-book deltas):
@@ -54,18 +54,18 @@ DELTA  BTCUSDT.BINANCE Buy Delete px=63230.80000000 sz=0.00000000 seq=9497452888
 ...
 ```
 
-The real service additionally writes the lake (`qv_persistence::ParquetWriter`) and republishes a
-versioned MessagePack `Envelope` on Redis Streams (`qv_bus`) for the `trader`/`api`/`risk-monitor`.
+The real service additionally writes the lake (`coinext_persistence::ParquetWriter`) and republishes a
+versioned MessagePack `Envelope` on Redis Streams (`coinext_bus`) for the `trader`/`api`/`risk-monitor`.
 
 ## 2. Real-data backtest — NO key (verified ✅)
 
 Backtest on REAL Binance klines (public REST, stdlib only):
 
 ```python
-from qv_data import fetch_binance_klines      # public REST, no key
-from qv_backtest import run
-from qv_strategy import SmaCross
-from qv_analytics import tear_sheet
+from coinext_data import fetch_binance_klines      # public REST, no key
+from coinext_backtest import run
+from coinext_strategy import SmaCross
+from coinext_analytics import tear_sheet
 
 bars = fetch_binance_klines("BTCUSDT", "1m", 500)   # real 1m closes as (ts_ns, close)
 res = run(SmaCross(10, 30, 0.05), bars=bars)        # same Rust kernel as live
@@ -79,10 +79,10 @@ submit a resting LIMIT BUY far below market → `Accepted` → reconcile → can
 (the limit is far below market), and it's paper money regardless.
 
 ```bash
-export VQ__BINANCE__API_KEY=...      # spot testnet key
-export VQ__BINANCE__API_SECRET=...
-cargo run --manifest-path crates/qv-adapters/binance/Cargo.toml --example testnet_order
-# optional: VQ__ORDER__SYMBOL / VQ__ORDER__PRICE / VQ__ORDER__QTY
+export COINEXT__BINANCE__API_KEY=...      # spot testnet key
+export COINEXT__BINANCE__API_SECRET=...
+cargo run --manifest-path crates/coinext-adapters/binance/Cargo.toml --example testnet_order
+# optional: COINEXT__ORDER__SYMBOL / COINEXT__ORDER__PRICE / COINEXT__ORDER__QTY
 ```
 
 Without keys it aborts before any network call (safe wiring check). The order id is the deterministic
@@ -90,10 +90,10 @@ Without keys it aborts before any network call (safe wiring check). The order id
 
 ## 4. The parity promotion gate
 
-Before going live, a strategy must pass `qv_parity.run_gate` against a recorded sandbox session:
+Before going live, a strategy must pass `coinext_parity.run_gate` against a recorded sandbox session:
 
 ```python
-from qv_parity import SessionResult, run_gate, render_verdict, AcceptanceCriterion
+from coinext_parity import SessionResult, run_gate, render_verdict, AcceptanceCriterion
 
 # `sandbox` is a SessionResult recorded from a testnet run (its fills + equity).
 verdict = run_gate(lambda: SmaCross(10, 30, 0.05), bars=bars, sandbox=sandbox,
@@ -106,14 +106,14 @@ The gate bounds **signal-timing agreement**, **realized-vs-simulated fill-price 
 quick demo (synthetic sandbox) runs via the CLI:
 
 ```bash
-python -m qv_cli.main parity        # or: just cli-backtest / qv parity
+python -m coinext_cli.main parity        # or: just cli-backtest / coinext parity
 ```
 
 A separate **advisory** `cross_check` warns on vectorized-vs-event drift but never gates.
 
 ## Going to live (later)
 
-Flip `VQ__BINANCE__TESTNET=false` and supply **mainnet** keys with **withdrawal disabled** + an **IP
+Flip `COINEXT__BINANCE__TESTNET=false` and supply **mainnet** keys with **withdrawal disabled** + an **IP
 allowlist**; store secrets in SOPS/Vault (see ARCHITECTURE.md §11 open questions). The out-of-band
 `risk-monitor` watches PnL/positions and can trip the global kill-switch; the per-order `RiskEngine`
 gate runs synchronously on every order in backtest, sandbox, and live alike.

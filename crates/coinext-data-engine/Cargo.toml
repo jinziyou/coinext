@@ -1,0 +1,13 @@
+[package]
+name = "coinext-data-engine"
+description = "Coinext data engine: cache-then-publish market data, maintain marks, aggregate bars."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+coinext-core.workspace = true
+coinext-model.workspace = true
+coinext-cache.workspace = true
+coinext-ports.workspace = true

@@ -1,4 +1,4 @@
-# VeloxQuant — Tempo config (single-binary, local storage; ARCHITECTURE.md §8).
+# Coinext — Tempo config (single-binary, local storage; ARCHITECTURE.md §8).
 # Receives spans from the otel-collector via OTLP. trace_id originates in the Redis Envelope and
 # propagates across services, so a single trace can span ingestor -> trader -> exec-svc.
 server:

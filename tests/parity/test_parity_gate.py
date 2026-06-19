@@ -1,8 +1,8 @@
-"""Pure-logic tests for the qv_parity promotion gate and advisory cross-check.
+"""Pure-logic tests for the coinext_parity promotion gate and advisory cross-check.
 
 These exercise the metric math and the gate decision over fixtures (no network / no testnet). The
-end-to-end ``run_gate`` test drives the AUTHORITATIVE ``qv_backtest.run`` through the Rust kernel,
-so it requires the compiled ``qv_py`` extension (``importorskip``).
+end-to-end ``run_gate`` test drives the AUTHORITATIVE ``coinext_backtest.run`` through the Rust kernel,
+so it requires the compiled ``coinext_py`` extension (``importorskip``).
 """
 
 from __future__ import annotations
@@ -13,16 +13,16 @@ from pathlib import Path
 import pytest
 
 # Make the control-plane packages importable when pytest is run from the repo root without setting
-# PYTHONPATH (mirrors how the other suites resolve qv_* packages).
+# PYTHONPATH (mirrors how the other suites resolve coinext_* packages).
 _PYTHON_ROOT = Path(__file__).resolve().parents[2] / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 # The gate's run_gate path needs the compiled kernel; skip the whole module if it isn't built.
-pytest.importorskip("qv_py")
+pytest.importorskip("coinext_py")
 
-import qv_backtest  # noqa: E402
-from qv_parity import (  # noqa: E402
+import coinext_backtest  # noqa: E402
+from coinext_parity import (  # noqa: E402
     AcceptanceCriterion,
     SessionResult,
     cross_check,
@@ -31,7 +31,7 @@ from qv_parity import (  # noqa: E402
     render_verdict,
     run_gate,
 )
-from qv_strategy import SmaCross  # noqa: E402
+from coinext_strategy import SmaCross  # noqa: E402
 
 
 # --------------------------------------------------------------------------------------------------
@@ -149,11 +149,11 @@ def test_large_perturbation_and_dropped_signals_fail():
 # 4. run_gate end-to-end with SmaCross vs a near-identical sandbox -> PASS.
 # --------------------------------------------------------------------------------------------------
 def test_run_gate_end_to_end_passes():
-    bars = qv_backtest.synthetic_bars(n=400)
+    bars = coinext_backtest.synthetic_bars(n=400)
 
     # Build the "sandbox" session from a real backtest, then nudge it: +1.5 bps on every fill price
     # and a 1e-5 equity wobble — a near-identical testnet recording that should clear the gate.
-    base_result = qv_backtest.run(SmaCross(fast=10, slow=30), bars=bars)
+    base_result = coinext_backtest.run(SmaCross(fast=10, slow=30), bars=bars)
     base_session = SessionResult.from_backtest(base_result)
     sandbox = SessionResult(
         equity_curve=_perturb_equity_noise(base_session, eps=1e-5),
@@ -168,8 +168,8 @@ def test_run_gate_end_to_end_passes():
 
 
 def test_run_gate_blocks_on_divergent_sandbox():
-    bars = qv_backtest.synthetic_bars(n=400)
-    base_result = qv_backtest.run(SmaCross(fast=10, slow=30), bars=bars)
+    bars = coinext_backtest.synthetic_bars(n=400)
+    base_result = coinext_backtest.run(SmaCross(fast=10, slow=30), bars=bars)
     base_session = SessionResult.from_backtest(base_result)
     # A sandbox whose fills are off by 80 bps -> must be blocked from live.
     sandbox = SessionResult(

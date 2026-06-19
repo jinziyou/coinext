@@ -1,9 +1,9 @@
 """services/risk-monitor — out-of-band global risk supervisor.
 
-ARCHITECTURE.md §7–§8: the per-order ``qv-risk-engine`` gate lives *inside* each trading node's
+ARCHITECTURE.md §7–§8: the per-order ``coinext-risk-engine`` gate lives *inside* each trading node's
 synchronous core and is the first line of defense. This service is the **second, out-of-band** line:
 a standalone process that watches *all* PnL / position / fill telemetry on the Redis-Streams bus
-(``qv_bus``, decoding the MessagePack ``Envelope`` — §6) and enforces **account-wide** limits the
+(``coinext_bus``, decoding the MessagePack ``Envelope`` — §6) and enforces **account-wide** limits the
 in-core gate cannot see in isolation:
 
 * **max drawdown**            — peak-to-trough equity decline across the account,
@@ -16,10 +16,10 @@ routing platform-wide. Because it is out-of-band, a crash or deadlock in a tradi
 silence it.
 
 Canonical deployment (service/port table): built from ``deploy/docker/risk-monitor.Dockerfile``,
-exposes Prometheus metrics on **:9104**. Config via ``VQ__REDIS__URL`` and the ``VQ__RISK__*`` keys
+exposes Prometheus metrics on **:9104**. Config via ``COINEXT__REDIS__URL`` and the ``COINEXT__RISK__*`` keys
 (shared with the in-core gate — see ``.env.example``).
 
-Design note: ``qv_bus`` (and ``redis`` / ``msgpack`` / ``prometheus_client``) are imported **lazily
+Design note: ``coinext_bus`` (and ``redis`` / ``msgpack`` / ``prometheus_client``) are imported **lazily
 and guarded**, so this module imports and the limit math is unit-testable without the bus, the
 extension, or a running Redis.
 """
@@ -31,10 +31,10 @@ import logging
 import os
 from dataclasses import dataclass, field
 
-logger = logging.getLogger("vq.risk_monitor")
+logger = logging.getLogger("coinext.risk_monitor")
 
 # --------------------------------------------------------------------------------------------------
-# Config (VQ__SECTION__KEY convention; same keys the in-core RiskEngine reads — defense in depth)
+# Config (COINEXT__SECTION__KEY convention; same keys the in-core RiskEngine reads — defense in depth)
 # --------------------------------------------------------------------------------------------------
 
 
@@ -49,7 +49,7 @@ def _env_float(key: str, default: float) -> float:
 
 @dataclass(frozen=True)
 class RiskLimits:
-    """Account-wide limits. Sourced from ``VQ__RISK__*`` env (see ``.env.example``)."""
+    """Account-wide limits. Sourced from ``COINEXT__RISK__*`` env (see ``.env.example``)."""
 
     max_drawdown_pct: float = 0.20          # trip if equity falls 20% below its session peak
     max_gross_exposure: float = 1_000_000.0  # sum of |notional| across all instruments
@@ -59,10 +59,10 @@ class RiskLimits:
     @classmethod
     def from_env(cls) -> "RiskLimits":
         return cls(
-            max_drawdown_pct=_env_float("VQ__RISK__MAX_DRAWDOWN_PCT", cls.max_drawdown_pct),
-            max_gross_exposure=_env_float("VQ__RISK__MAX_GROSS_EXPOSURE", cls.max_gross_exposure),
-            max_net_exposure=_env_float("VQ__RISK__MAX_NET_EXPOSURE", cls.max_net_exposure),
-            max_loss_of_day=_env_float("VQ__RISK__MAX_LOSS_OF_DAY", cls.max_loss_of_day),
+            max_drawdown_pct=_env_float("COINEXT__RISK__MAX_DRAWDOWN_PCT", cls.max_drawdown_pct),
+            max_gross_exposure=_env_float("COINEXT__RISK__MAX_GROSS_EXPOSURE", cls.max_gross_exposure),
+            max_net_exposure=_env_float("COINEXT__RISK__MAX_NET_EXPOSURE", cls.max_net_exposure),
+            max_loss_of_day=_env_float("COINEXT__RISK__MAX_LOSS_OF_DAY", cls.max_loss_of_day),
         )
 
 
@@ -145,7 +145,7 @@ class RiskSupervisor:
     def fold_envelope(self, payload: dict) -> None:
         """Fold one decoded bus payload (position / PnL / account snapshot) into the running state.
 
-        TODO: match against the concrete qv_contracts payload schemas (FILL / position snapshot /
+        TODO: match against the concrete coinext_contracts payload schemas (FILL / position snapshot /
         account event). The shape below is a representative placeholder.
         """
         if "equity" in payload:
@@ -164,18 +164,18 @@ class RiskSupervisor:
 # Bus wiring (lazy / guarded)
 # --------------------------------------------------------------------------------------------------
 
-REDIS_URL = os.environ.get("VQ__REDIS__URL", "redis://redis:6379/0")
-STREAM_TELEMETRY = "vq.live"     # position / PnL telemetry consumed here
-STREAM_CONTROL = "vq.control"    # CtrlKillSwitch published here on a breach
-METRICS_PORT = int(os.environ.get("VQ__RISK_MONITOR__METRICS_PORT", "9104"))
+REDIS_URL = os.environ.get("COINEXT__REDIS__URL", "redis://redis:6379/0")
+STREAM_TELEMETRY = "coinext.live"     # position / PnL telemetry consumed here
+STREAM_CONTROL = "coinext.control"    # CtrlKillSwitch published here on a breach
+METRICS_PORT = int(os.environ.get("COINEXT__RISK_MONITOR__METRICS_PORT", "9104"))
 
 
 def _load_bus():
-    """Import ``qv_bus`` lazily; return None when the bus client is unavailable."""
+    """Import ``coinext_bus`` lazily; return None when the bus client is unavailable."""
     try:
-        import qv_bus  # noqa: WPS433 - intentional lazy import
+        import coinext_bus  # noqa: WPS433 - intentional lazy import
 
-        return qv_bus
+        return coinext_bus
     except ImportError:  # pragma: no cover - environment-dependent
         return None
 
@@ -183,7 +183,7 @@ def _load_bus():
 def _trip_kill_switch(bus, breaches: list[Breach]) -> None:
     """Publish a global ``CtrlKillSwitch`` (engaged) command in response to ``breaches``.
 
-    TODO: build and publish the real CtrlKillSwitch Envelope (MsgType.CTRL) via qv_bus once the
+    TODO: build and publish the real CtrlKillSwitch Envelope (MsgType.CTRL) via coinext_bus once the
     publisher API lands. Shape kept explicit so the contract is reviewable.
     """
     reason = "; ".join(str(b) for b in breaches)
@@ -214,7 +214,7 @@ async def run(poll_interval_s: float = 1.0) -> None:
 
     Stub control flow (the bus consume + decode is a TODO):
 
-      1. subscribe to STREAM_TELEMETRY via qv_bus (async consumer),
+      1. subscribe to STREAM_TELEMETRY via coinext_bus (async consumer),
       2. for each Envelope: decode → ``supervisor.fold_envelope(payload)``,
       3. ``breaches = supervisor.evaluate()``,
       4. if breaches and not already tripped: ``_trip_kill_switch(...)`` and latch ``tripped``,
@@ -226,7 +226,7 @@ async def run(poll_interval_s: float = 1.0) -> None:
 
     if bus is None or not hasattr(bus, "AsyncConsumer"):
         logger.warning(
-            "qv_bus unavailable; risk-monitor running in IDLE stub mode (no telemetry consumed). "
+            "coinext_bus unavailable; risk-monitor running in IDLE stub mode (no telemetry consumed). "
             "Limits=%s",
             supervisor.limits,
         )
@@ -237,7 +237,7 @@ async def run(poll_interval_s: float = 1.0) -> None:
     # TODO: real consume loop, e.g.:
     #   async with bus.AsyncConsumer(REDIS_URL, STREAM_TELEMETRY) as consumer:
     #       async for envelope in consumer:
-    #           supervisor.fold_envelope(qv_bus.decode_payload(envelope))
+    #           supervisor.fold_envelope(coinext_bus.decode_payload(envelope))
     #           breaches = supervisor.evaluate()
     #           if breaches and not supervisor.tripped:
     #               _trip_kill_switch(bus, breaches)
@@ -249,8 +249,8 @@ async def run(poll_interval_s: float = 1.0) -> None:
 def _maybe_start_metrics_server() -> None:
     """Start the Prometheus metrics endpoint on :9104 if ``prometheus_client`` is installed.
 
-    Exported series (planned): ``vq_risk_drawdown_pct``, ``vq_risk_gross_exposure``,
-    ``vq_risk_net_exposure``, ``vq_risk_loss_of_day``, ``vq_risk_killswitch_trips_total``.
+    Exported series (planned): ``risk_drawdown_pct``, ``risk_gross_exposure``,
+    ``risk_net_exposure``, ``risk_loss_of_day``, ``risk_killswitch_trips_total``.
     """
     try:  # pragma: no cover - optional dependency
         from prometheus_client import start_http_server  # noqa: WPS433
@@ -264,7 +264,7 @@ def _maybe_start_metrics_server() -> None:
 def main() -> None:
     """Console entrypoint (also the Docker CMD target)."""
     logging.basicConfig(
-        level=os.environ.get("VQ__LOG__LEVEL", "info").upper(),
+        level=os.environ.get("COINEXT__LOG__LEVEL", "info").upper(),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     logger.info("starting risk-monitor (out-of-band global supervisor)")

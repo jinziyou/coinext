@@ -1,4 +1,4 @@
-# VeloxQuant — sandbox overrides (merged on top of config/base.yaml).
+# Coinext — sandbox overrides (merged on top of config/base.yaml).
 #
 # Environment::Sandbox (docs/ARCHITECTURE.md §1, §5): a LiveClock + LIVE market data, but the
 # testnet execution variant of the ExecutionClient port. This is the sandbox-vs-backtest parity
@@ -9,7 +9,7 @@ env: sandbox
 venue:
   # Route trading to Binance testnet endpoints; public market-data streams remain real.
   testnet: true
-  # API key/secret supplied via env/secrets: VQ__BINANCE__API_KEY / VQ__BINANCE__API_SECRET.
+  # API key/secret supplied via env/secrets: COINEXT__BINANCE__API_KEY / COINEXT__BINANCE__API_SECRET.
 
 data:
   lake_root: /data        # warm-up still served from the LOCAL HistoryReader (identical to backtest)
@@ -35,7 +35,7 @@ redis:
   url: redis://redis:6379/0
 
 postgres:
-  dsn: postgresql://veloxquant:veloxquant@postgres:5432/veloxquant
+  dsn: postgresql://coinext:coinext@postgres:5432/coinext
 
 minio:
   endpoint: http://minio:9000

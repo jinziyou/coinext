@@ -1,7 +1,7 @@
-"""Unit tests for qv_analytics: trade reconstruction, trade stats, and bias screens.
+"""Unit tests for coinext_analytics: trade reconstruction, trade stats, and bias screens.
 
 The trade/bias math is pure stdlib (it consumes already-materialized fills/equity), so these run
-without the compiled ``qv_py`` extension. A separate integration test in
+without the compiled ``coinext_py`` extension. A separate integration test in
 ``tests/test_python_backtest.py`` exercises the same code against a real Rust-kernel backtest.
 """
 
@@ -16,8 +16,8 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from qv_analytics.bias import detect_lookahead_bias, detect_overfitting  # noqa: E402
-from qv_analytics.trades import (  # noqa: E402
+from coinext_analytics.bias import detect_lookahead_bias, detect_overfitting  # noqa: E402
+from coinext_analytics.trades import (  # noqa: E402
     compute_trade_stats,
     open_exposure,
     reconstruct_trades,
@@ -134,10 +134,10 @@ def test_stats_from_result_reconstructs_trades_per_instrument():
     # absurd +10000 trade. Per-instrument reconstruction keeps each round-trip at its own scale.
     from dataclasses import dataclass
 
-    from qv_analytics import stats_from_result
+    from coinext_analytics import stats_from_result
 
     @dataclass
-    class _R:  # minimal stand-in for a qv_py BacktestResult
+    class _R:  # minimal stand-in for a coinext_py BacktestResult
         equity_curve: list
         fills_log: list
         starting_equity: float = 100_000.0
@@ -196,7 +196,7 @@ def test_lookahead_latency_offset_fills_are_clean():
 
 
 def test_overfitting_screen_flags_too_good():
-    from qv_analytics import Metrics
+    from coinext_analytics import Metrics
 
     perfect = Metrics(
         total_return=0.5, sharpe=12.0, sortino=20.0, max_drawdown=0.0, volatility=0.1, n_periods=400
@@ -212,7 +212,7 @@ def test_overfitting_screen_flags_too_good():
 
 
 def test_overfitting_screen_silent_on_normal_result():
-    from qv_analytics import Metrics
+    from coinext_analytics import Metrics
 
     normal = Metrics(
         total_return=0.08, sharpe=1.3, sortino=1.8, max_drawdown=0.07, volatility=0.2, n_periods=400
@@ -232,10 +232,10 @@ def test_plot_tear_sheet_writes_png(tmp_path):
     pytest.importorskip("matplotlib", reason="plotting needs the research extra (matplotlib)")
     from dataclasses import dataclass
 
-    from qv_analytics import plot_tear_sheet
+    from coinext_analytics import plot_tear_sheet
 
     @dataclass
-    class _Result:  # minimal stand-in for a qv_py BacktestResult
+    class _Result:  # minimal stand-in for a coinext_py BacktestResult
         equity_curve: list
         fills_log: list
         starting_equity: float = 100_000.0

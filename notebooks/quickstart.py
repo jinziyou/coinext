@@ -1,12 +1,12 @@
 # %% [markdown]
-# # VeloxQuant quickstart
+# # Coinext quickstart
 #
-# Build synthetic bars, run the **authoritative** event-driven backtest (`qv_backtest.run`) with a
-# Python `qv_strategy.SmaCross` strategy driven through the **Rust kernel** (`qv_py`), and print the
-# `qv_analytics.tear_sheet`.
+# Build synthetic bars, run the **authoritative** event-driven backtest (`coinext_backtest.run`) with a
+# Python `coinext_strategy.SmaCross` strategy driven through the **Rust kernel** (`coinext_py`), and print the
+# `coinext_analytics.tear_sheet`.
 #
 # This is a `py:percent` script: each `# %%` marks a cell. Open it directly in Jupyter via jupytext,
-# or just run it: `uv run python notebooks/quickstart.py` (after building `qv_py` — see
+# or just run it: `uv run python notebooks/quickstart.py` (after building `coinext_py` — see
 # `notebooks/README.md`). It demonstrates the backtest↔live parity invariant from
 # `docs/ARCHITECTURE.md` §1: the same Strategy + engines + SimulatedExecutionClient that the live
 # path uses.
@@ -14,10 +14,10 @@
 # %%
 from __future__ import annotations
 
-# qv_py is the compiled Rust extension. qv_backtest.run raises a clear error if it is not built.
-from qv_analytics import compute_metrics, detect_lookahead_bias, tear_sheet
-from qv_backtest import run, synthetic_bars
-from qv_strategy import SmaCross
+# coinext_py is the compiled Rust extension. coinext_backtest.run raises a clear error if it is not built.
+from coinext_analytics import compute_metrics, detect_lookahead_bias, tear_sheet
+from coinext_backtest import run, synthetic_bars
+from coinext_strategy import SmaCross
 
 # %% [markdown]
 # ## 1. Synthetic bars
@@ -64,5 +64,5 @@ warnings = detect_lookahead_bias(list(result.equity_curve))
 print("lookahead warnings:", warnings or "none")
 
 # %% [markdown]
-# Next steps: sweep `fast`/`slow` with `qv_optimize` (walk-forward), or promote to the
+# Next steps: sweep `fast`/`slow` with `coinext_optimize` (walk-forward), or promote to the
 # sandbox-vs-backtest parity gate (`tests/parity/`). See `docs/ARCHITECTURE.md`.

@@ -1,10 +1,10 @@
-# VeloxQuant — Python control plane (managed by uv). The Rust domain is exposed to Python by the
-# `qv_py` extension module (built with maturin from crates/qv-py); the pure-Python packages under
+# Coinext — Python control plane (managed by uv). The Rust domain is exposed to Python by the
+# `coinext_py` extension module (built with maturin from crates/coinext-py); the pure-Python packages under
 # python/ build research/analytics/ops on top of it.
 [project]
-name = "veloxquant"
+name = "coinext"
 version = "0.1.0"
-description = "VeloxQuant — Python control plane for the Rust+Python quant platform"
+description = "Coinext — Python control plane for the Rust+Python quant platform"
 requires-python = ">=3.13"
 readme = "README.md"
 license = { text = "MIT" }
@@ -23,16 +23,16 @@ api = ["fastapi>=0.110", "uvicorn>=0.29"]
 live = ["anyio>=4"]
 obs = ["structlog>=24", "prometheus-client>=0.20", "opentelemetry-sdk>=1.25"]
 all = [
-    "veloxquant[research,config,cli,bus,api,live,obs]",
+    "coinext[research,config,cli,bus,api,live,obs]",
 ]
 
 [project.scripts]
-qv = "qv_cli.main:app"
+coinext = "coinext_cli.main:app"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.5", "maturin>=1.7"]
 
-# Scaffold-friendly: make the python/ packages importable and the compiled qv_py discoverable
+# Scaffold-friendly: make the python/ packages importable and the compiled coinext_py discoverable
 # without a full editable install, so `pytest` works against the source tree.
 [tool.pytest.ini_options]
 pythonpath = ["python", "."]

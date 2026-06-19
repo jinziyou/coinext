@@ -1,4 +1,4 @@
-// VeloxQuant operator dashboard shell.
+// Coinext operator dashboard shell.
 //
 // Panels (docs/ARCHITECTURE.md §7/§8):
 //   - Runs                : GET /runs
@@ -322,7 +322,7 @@ function KillSwitchPanel() {
     >
       <div className="killswitch">
         <p className="muted">
-          Trips the atomic global kill-switch in <code>qv-risk-engine</code> via
+          Trips the atomic global kill-switch in <code>coinext-risk-engine</code> via
           the exec-svc control plane. While engaged, all order routing is denied.
         </p>
 
@@ -395,8 +395,8 @@ export function App() {
     <div className="app">
       <header className="app-head">
         <div className="brand">
-          <span className="brand-mark">VQ</span>
-          <span className="brand-name">VeloxQuant</span>
+          <span className="brand-mark">CX</span>
+          <span className="brand-name">Coinext</span>
           <span className="brand-sub">operator dashboard</span>
         </div>
         <div className="app-head-right">

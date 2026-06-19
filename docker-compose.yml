@@ -1,13 +1,13 @@
-# VeloxQuant — production topology (single-VPS docker-compose).
+# Coinext — production topology (single-VPS docker-compose).
 #
 # This is the canonical service graph described in docs/ARCHITECTURE.md §8:
-#   * Rust hot path:  ingestor (qv-ingest), exec-svc (qv-exec-svc)
-#   * Python control plane: trader (qv_live), risk-monitor, api (FastAPI)
+#   * Rust hot path:  ingestor (coinext-ingest), exec-svc (coinext-exec-svc)
+#   * Python control plane: trader (coinext_live), risk-monitor, api (FastAPI)
 #   * UI: static Vite build served by nginx
 #   * Infra: postgres (event/audit store), redis (Redis-Streams bus), minio (S3 data lake)
 #
 # Topology mirrors the parity model: the SAME engines run in every environment; only the Kernel's
-# injected Clock / Cache / clients differ (set via VQ__ENV and the Binance section). The in-process
+# injected Clock / Cache / clients differ (set via COINEXT__ENV and the Binance section). The in-process
 # bus is the default hot path; Redis Streams is the cross-service / telemetry seam (the `trader`
 # DataEngine consumes the `ingestor`'s normalized frames over Redis; see ARCHITECTURE.md §6/§7).
 #
@@ -16,9 +16,9 @@
 # Local dev overrides (exposed ports, source bind-mounts, hot reload) live in docker-compose.dev.yml.
 #
 # Env is loaded from .env (copy .env.example -> .env). Config precedence, per ARCHITECTURE.md:
-#   CLI flags > env (VQ__SECTION__KEY) > config/*.yaml > built-in defaults.
+#   CLI flags > env (COINEXT__SECTION__KEY) > config/*.yaml > built-in defaults.
 
-name: veloxquant
+name: coinext
 
 # ---------------------------------------------------------------------------------------------
 # Reusable anchors
@@ -33,32 +33,32 @@ x-app-common: &app-common
   restart: always
   env_file: .env
   logging: *default-logging
-  networks: [vq]
+  networks: [coinext-net]
 
 services:
   # =============================================================================================
   # Infrastructure
   # =============================================================================================
 
-  # PostgreSQL — append-only OrderEvent store + audit/reconciliation truth (qv-persistence).
+  # PostgreSQL — append-only OrderEvent store + audit/reconciliation truth (coinext-persistence).
   postgres:
     image: postgres:16
     restart: always
     env_file: .env
     environment:
-      # The app reads VQ__POSTGRES__DSN; these POSTGRES_* drive the image's initdb. Keep in sync.
-      POSTGRES_USER: veloxquant
-      POSTGRES_PASSWORD: veloxquant
-      POSTGRES_DB: veloxquant
+      # The app reads COINEXT__POSTGRES__DSN; these POSTGRES_* drive the image's initdb. Keep in sync.
+      POSTGRES_USER: coinext
+      POSTGRES_PASSWORD: coinext
+      POSTGRES_DB: coinext
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U veloxquant -d veloxquant"]
+      test: ["CMD-SHELL", "pg_isready -U coinext -d coinext"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-    networks: [vq]
+    networks: [coinext-net]
     logging: *default-logging
 
   # Redis — Redis-Streams bus (versioned MessagePack Envelope) + ephemeral coordination.
@@ -73,17 +73,17 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-    networks: [vq]
+    networks: [coinext-net]
     logging: *default-logging
 
-  # MinIO — S3-compatible object store backing the Parquet data lake (qv_data / DataLake catalog).
+  # MinIO — S3-compatible object store backing the Parquet data lake (coinext_data / DataLake catalog).
   minio:
     image: minio/minio
     restart: always
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${VQ__MINIO__ACCESS_KEY:-veloxquant}
-      MINIO_ROOT_PASSWORD: ${VQ__MINIO__SECRET_KEY:-veloxquant-secret}
+      MINIO_ROOT_USER: ${COINEXT__MINIO__ACCESS_KEY:-coinext}
+      MINIO_ROOT_PASSWORD: ${COINEXT__MINIO__SECRET_KEY:-coinext-secret}
     volumes:
       - minio-data:/data
     healthcheck:
@@ -92,14 +92,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    networks: [vq]
+    networks: [coinext-net]
     logging: *default-logging
 
   # =============================================================================================
   # Rust hot path
   # =============================================================================================
 
-  # ingestor (qv-ingest) — normalizes Binance WS frames and republishes on the Redis bus.
+  # ingestor (coinext-ingest) — normalizes Binance WS frames and republishes on the Redis bus.
   # SLO histogram: ingest_to_publish_ns. Metrics on :9101.
   ingestor:
     <<: *app-common
@@ -107,22 +107,22 @@ services:
       context: .
       dockerfile: deploy/docker/ingestor.Dockerfile
     environment:
-      VQ__SERVICE: ingestor
-      VQ__METRICS__PORT: "9101"
-      VQ__REDIS__URL: ${VQ__REDIS__URL:-redis://redis:6379/0}
-      VQ__OTEL__ENDPOINT: ${VQ__OTEL__ENDPOINT:-http://otel-collector:4317}
+      COINEXT__SERVICE: ingestor
+      COINEXT__METRICS__PORT: "9101"
+      COINEXT__REDIS__URL: ${COINEXT__REDIS__URL:-redis://redis:6379/0}
+      COINEXT__OTEL__ENDPOINT: ${COINEXT__OTEL__ENDPOINT:-http://otel-collector:4317}
     depends_on:
       redis:
         condition: service_healthy
     healthcheck:
       # Liveness via the Prometheus metrics endpoint (exposes /metrics + a /healthz route).
-      test: ["CMD", "/app/qv-ingest", "healthcheck"]
+      test: ["CMD", "/app/coinext-ingest", "healthcheck"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 10s
 
-  # exec-svc (qv-exec-svc) — OMS/execution service: risk-gated routing, FSM driving, report folding.
+  # exec-svc (coinext-exec-svc) — OMS/execution service: risk-gated routing, FSM driving, report folding.
   # SLO histogram: submit_to_ack_ns. Metrics on :9102, control/admin API on :8081.
   exec-svc:
     <<: *app-common
@@ -130,19 +130,19 @@ services:
       context: .
       dockerfile: deploy/docker/exec-svc.Dockerfile
     environment:
-      VQ__SERVICE: exec-svc
-      VQ__METRICS__PORT: "9102"
-      VQ__CONTROL__PORT: "8081"
-      VQ__REDIS__URL: ${VQ__REDIS__URL:-redis://redis:6379/0}
-      VQ__POSTGRES__DSN: ${VQ__POSTGRES__DSN:-postgresql://veloxquant:veloxquant@postgres:5432/veloxquant}
-      VQ__OTEL__ENDPOINT: ${VQ__OTEL__ENDPOINT:-http://otel-collector:4317}
+      COINEXT__SERVICE: exec-svc
+      COINEXT__METRICS__PORT: "9102"
+      COINEXT__CONTROL__PORT: "8081"
+      COINEXT__REDIS__URL: ${COINEXT__REDIS__URL:-redis://redis:6379/0}
+      COINEXT__POSTGRES__DSN: ${COINEXT__POSTGRES__DSN:-postgresql://coinext:coinext@postgres:5432/coinext}
+      COINEXT__OTEL__ENDPOINT: ${COINEXT__OTEL__ENDPOINT:-http://otel-collector:4317}
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/app/qv-exec-svc", "healthcheck"]
+      test: ["CMD", "/app/coinext-exec-svc", "healthcheck"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -152,7 +152,7 @@ services:
   # Python control plane
   # =============================================================================================
 
-  # trader (qv_live) — live TradingNode: the SAME engines as backtest, with LiveClock + Binance
+  # trader (coinext_live) — live TradingNode: the SAME engines as backtest, with LiveClock + Binance
   # clients injected by the Kernel. SLO histogram: strategy_dispatch_ns. Metrics on :9103.
   trader:
     <<: *app-common
@@ -160,11 +160,11 @@ services:
       context: .
       dockerfile: deploy/docker/trader.Dockerfile
     environment:
-      VQ__SERVICE: trader
-      VQ__METRICS__PORT: "9103"
-      VQ__REDIS__URL: ${VQ__REDIS__URL:-redis://redis:6379/0}
-      VQ__POSTGRES__DSN: ${VQ__POSTGRES__DSN:-postgresql://veloxquant:veloxquant@postgres:5432/veloxquant}
-      VQ__OTEL__ENDPOINT: ${VQ__OTEL__ENDPOINT:-http://otel-collector:4317}
+      COINEXT__SERVICE: trader
+      COINEXT__METRICS__PORT: "9103"
+      COINEXT__REDIS__URL: ${COINEXT__REDIS__URL:-redis://redis:6379/0}
+      COINEXT__POSTGRES__DSN: ${COINEXT__POSTGRES__DSN:-postgresql://coinext:coinext@postgres:5432/coinext}
+      COINEXT__OTEL__ENDPOINT: ${COINEXT__OTEL__ENDPOINT:-http://otel-collector:4317}
     volumes:
       - data:/data
     depends_on:
@@ -185,18 +185,18 @@ services:
       context: .
       dockerfile: deploy/docker/risk-monitor.Dockerfile
     environment:
-      VQ__SERVICE: risk-monitor
-      VQ__METRICS__PORT: "9104"
-      VQ__REDIS__URL: ${VQ__REDIS__URL:-redis://redis:6379/0}
-      VQ__POSTGRES__DSN: ${VQ__POSTGRES__DSN:-postgresql://veloxquant:veloxquant@postgres:5432/veloxquant}
-      VQ__OTEL__ENDPOINT: ${VQ__OTEL__ENDPOINT:-http://otel-collector:4317}
+      COINEXT__SERVICE: risk-monitor
+      COINEXT__METRICS__PORT: "9104"
+      COINEXT__REDIS__URL: ${COINEXT__REDIS__URL:-redis://redis:6379/0}
+      COINEXT__POSTGRES__DSN: ${COINEXT__POSTGRES__DSN:-postgresql://coinext:coinext@postgres:5432/coinext}
+      COINEXT__OTEL__ENDPOINT: ${COINEXT__OTEL__ENDPOINT:-http://otel-collector:4317}
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
 
-  # api (FastAPI) — control-plane REST/WS for the UI. Embeds qv_py (maturin) for domain types.
+  # api (FastAPI) — control-plane REST/WS for the UI. Embeds coinext_py (maturin) for domain types.
   # Serves on :8000.
   api:
     <<: *app-common
@@ -204,12 +204,12 @@ services:
       context: .
       dockerfile: deploy/docker/api.Dockerfile
     environment:
-      VQ__SERVICE: api
-      VQ__API__HOST: "0.0.0.0"
-      VQ__API__PORT: "8000"
-      VQ__REDIS__URL: ${VQ__REDIS__URL:-redis://redis:6379/0}
-      VQ__POSTGRES__DSN: ${VQ__POSTGRES__DSN:-postgresql://veloxquant:veloxquant@postgres:5432/veloxquant}
-      VQ__OTEL__ENDPOINT: ${VQ__OTEL__ENDPOINT:-http://otel-collector:4317}
+      COINEXT__SERVICE: api
+      COINEXT__API__HOST: "0.0.0.0"
+      COINEXT__API__PORT: "8000"
+      COINEXT__REDIS__URL: ${COINEXT__REDIS__URL:-redis://redis:6379/0}
+      COINEXT__POSTGRES__DSN: ${COINEXT__POSTGRES__DSN:-postgresql://coinext:coinext@postgres:5432/coinext}
+      COINEXT__OTEL__ENDPOINT: ${COINEXT__OTEL__ENDPOINT:-http://otel-collector:4317}
     volumes:
       - data:/data
     depends_on:
@@ -224,7 +224,7 @@ services:
       retries: 5
       start_period: 20s
 
-  # ui — static Vite/React dashboard served by nginx. Talks to the api at VQ__UI__API_BASE.
+  # ui — static Vite/React dashboard served by nginx. Talks to the api at COINEXT__UI__API_BASE.
   ui:
     <<: *app-common
     build:
@@ -232,7 +232,7 @@ services:
       dockerfile: deploy/docker/ui.Dockerfile
       args:
         # Baked at build time (Vite inlines VITE_* into the static bundle).
-        VITE_API_BASE: ${VQ__UI__API_BASE:-http://localhost:8000}
+        VITE_API_BASE: ${COINEXT__UI__API_BASE:-http://localhost:8000}
     depends_on:
       api:
         condition: service_started
@@ -246,7 +246,7 @@ services:
 # Networks & volumes
 # ---------------------------------------------------------------------------------------------
 networks:
-  vq:
+  coinext-net:
     driver: bridge
 
 volumes:

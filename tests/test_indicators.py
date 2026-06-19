@@ -1,6 +1,6 @@
-"""qv_indicators — the Rust streaming indicators exposed to Python (via qv_py).
+"""coinext_indicators — the Rust streaming indicators exposed to Python (via coinext_py).
 
-Unit tests assert the Python-visible values equal the Rust crate's (qv-indicators), and an
+Unit tests assert the Python-visible values equal the Rust crate's (coinext-indicators), and an
 integration test drives an RSI strategy through the Rust kernel. Requires the compiled extension.
 """
 
@@ -15,9 +15,9 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-pytest.importorskip("qv_py", reason="build qv_py: uvx maturin develop --features python")
+pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
 
-from qv_indicators import Atr, Bollinger, Ema, Macd, Resampler, Rsi, Sma, Vwap  # noqa: E402
+from coinext_indicators import Atr, Bollinger, Ema, Macd, Resampler, Rsi, Sma, Vwap  # noqa: E402
 
 
 def test_sma_window_matches_rust():
@@ -116,8 +116,8 @@ def test_resampler_rejects_bad_factor():
 
 
 def test_multi_timeframe_strategy_runs_through_kernel():
-    import qv_backtest
-    from qv_strategy import Strategy
+    import coinext_backtest
+    from coinext_strategy import Strategy
 
     class FiveMinSma(Strategy):
         def __init__(self):
@@ -134,30 +134,30 @@ def test_multi_timeframe_strategy_runs_through_kernel():
                 ctx.submit_market("buy", 0.5)
                 self.bought = True
 
-    bars = qv_backtest.synthetic_ohlc_bars(200)
-    res = qv_backtest.run(FiveMinSma(), bars=bars)
+    bars = coinext_backtest.synthetic_ohlc_bars(200)
+    res = coinext_backtest.run(FiveMinSma(), bars=bars)
     assert res.orders_denied == 0
     assert res.orders_submitted <= 1  # buys once at most
 
 
 def test_rsi_reversion_strategy_trades_through_the_kernel():
-    import qv_backtest
-    from qv_strategy import RsiReversion
+    import coinext_backtest
+    from coinext_strategy import RsiReversion
 
     # A sine series swings RSI across the thresholds, so the strategy enters and exits.
-    bars = qv_backtest.synthetic_bars(400, amplitude=2000.0, period=30, trend_per_bar=0.0)
-    res = qv_backtest.run(RsiReversion(period=14, low=35.0, high=65.0, qty=0.5), bars=bars)
+    bars = coinext_backtest.synthetic_bars(400, amplitude=2000.0, period=30, trend_per_bar=0.0)
+    res = coinext_backtest.run(RsiReversion(period=14, low=35.0, high=65.0, qty=0.5), bars=bars)
     assert res.orders_submitted > 0
     assert res.orders_denied == 0
     assert res.fills == res.orders_submitted  # market orders fill in the sim
 
 
 def test_indicator_matches_handrolled_sma_on_a_real_backtest():
-    # The Rust Sma fed bar.close must agree with qv_strategy's pure-Python _Sma on the same series.
-    import qv_backtest
-    from qv_strategy import _Sma
+    # The Rust Sma fed bar.close must agree with coinext_strategy's pure-Python _Sma on the same series.
+    import coinext_backtest
+    from coinext_strategy import _Sma
 
-    bars = qv_backtest.synthetic_bars(120)
+    bars = coinext_backtest.synthetic_bars(120)
     rust = Sma(10)
     py = _Sma(10)
     for _ts, close in bars:

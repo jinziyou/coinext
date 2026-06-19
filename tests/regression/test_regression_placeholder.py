@@ -1,6 +1,6 @@
 """Pinned-statistics regression gate (LEAN-style determinism check).
 
-VeloxQuant's core invariant is that the event-driven backtest is **deterministic** (see
+Coinext's core invariant is that the event-driven backtest is **deterministic** (see
 ``docs/ARCHITECTURE.md`` §1-2: the synchronous core merge-sorts events by ``ts_event``; there is no
 RNG and ``synthetic_bars`` is a closed-form series). This test enforces two things:
 
@@ -13,7 +13,7 @@ RNG and ``synthetic_bars`` is a closed-form series). This test enforces two thin
    intentionally).
 
 This is the placeholder for the broader regression suite; extend with more strategies / fixtures.
-The whole module is skipped if the compiled ``qv_py`` extension is not built.
+The whole module is skipped if the compiled ``coinext_py`` extension is not built.
 """
 
 from __future__ import annotations
@@ -25,15 +25,15 @@ import pytest
 
 # Skip the entire module unless the Rust extension is available (same guard as tests/parity etc.).
 pytest.importorskip(
-    "qv_py",
+    "coinext_py",
     reason=(
         "build the extension: "
-        "uvx maturin develop --manifest-path crates/qv-py/Cargo.toml --features python"
+        "uvx maturin develop --manifest-path crates/coinext-py/Cargo.toml --features python"
     ),
 )
 
-from qv_backtest import run, synthetic_bars  # noqa: E402
-from qv_strategy import SmaCross  # noqa: E402
+from coinext_backtest import run, synthetic_bars  # noqa: E402
+from coinext_strategy import SmaCross  # noqa: E402
 
 # --- Fixed fixture (any change here is an intentional re-pin) ---
 _FIXTURE = {

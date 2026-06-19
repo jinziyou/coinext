@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// VeloxQuant UI dev/build config (canonical service table: ui -> port 3000).
+// Coinext UI dev/build config (canonical service table: ui -> port 3000).
 //
 // The dashboard talks to the `api` service (FastAPI, port 8000). In production
 // the base URL is injected via VITE_API_BASE (see src/api.ts); in dev we also

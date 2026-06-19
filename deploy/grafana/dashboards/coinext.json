@@ -1,0 +1,109 @@
+{
+  "__comment": "Coinext SLO dashboard (dashboards-as-code, docs/ARCHITECTURE.md §8). Panels track the core SLO histograms (p99 latency via *_ns_bucket), risk_denials, and PnL. Metric names are the scaffold contract emitted by the services; adjust queries as the exporters land.",
+  "schemaVersion": 39,
+  "version": 1,
+  "uid": "coinext-slo",
+  "title": "Coinext — SLOs & PnL",
+  "tags": ["coinext", "slo"],
+  "timezone": "browser",
+  "editable": true,
+  "refresh": "10s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "prometheus" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "strategy_dispatch_ns (p99) — per-event GIL/dispatch cost",
+      "description": "Per-event Strategy handler dispatch latency (PyStrategyAdapter GIL cost is budgeted, ARCHITECTURE.md §6).",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ns" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum(rate(strategy_dispatch_ns_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "submit_to_ack_ns (p99) — OMS submit→ack",
+      "description": "Order submit-to-ack latency in the exec-svc (ARCHITECTURE.md §5/§8).",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ns" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum(rate(submit_to_ack_ns_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "ingest_to_publish_ns (p99) — WS frame→bus publish",
+      "description": "Ingestor normalize-and-republish latency (ARCHITECTURE.md §7/§8).",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ns" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum(rate(ingest_to_publish_ns_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "risk_denials — pre-trade gate rejections",
+      "description": "Rate of orders rejected by the pre-trade RiskEngine gate (ARCHITECTURE.md §8).",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(risk_denials_total[5m])) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "PnL — realized + unrealized",
+      "description": "Portfolio PnL sourced from marks in the Cache (ARCHITECTURE.md §4). Gauge series exported by the trader.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(pnl_realized) by (strategy)",
+          "legendFormat": "realized {{strategy}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(pnl_unrealized) by (strategy)",
+          "legendFormat": "unrealized {{strategy}}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-// VeloxQuant operator dashboard — React entrypoint.
+// Coinext operator dashboard — React entrypoint.
 //
 // Wires the @tanstack/react-query client (polling cache over the `api` service)
 // and mounts the dashboard shell. See docs/ARCHITECTURE.md §8 (observability /
@@ -25,7 +25,7 @@ const queryClient = new QueryClient({
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
-  throw new Error("VeloxQuant UI: #root element not found in index.html");
+  throw new Error("Coinext UI: #root element not found in index.html");
 }
 
 ReactDOM.createRoot(rootEl).render(

@@ -1,38 +1,38 @@
 # %% [markdown]
-# # VeloxQuant research loop (end-to-end)
+# # Coinext research loop (end-to-end)
 #
 # One runnable demo that strings the whole research workflow together on the **same** Rust core the
 # live path uses:
 #
-# 1. **Screen** — a fast vectorized `(fast, slow)` sweep (`qv_screen`), cross-checked vs the
+# 1. **Screen** — a fast vectorized `(fast, slow)` sweep (`coinext_screen`), cross-checked vs the
 #    authoritative runner.
-# 2. **Optimize** — walk-forward with out-of-sample degradation (`qv_optimize`).
-# 3. **Backtest** — the authoritative event-driven run (`qv_backtest.run`) + a `qv_analytics`
+# 2. **Optimize** — walk-forward with out-of-sample degradation (`coinext_optimize`).
+# 3. **Backtest** — the authoritative event-driven run (`coinext_backtest.run`) + a `coinext_analytics`
 #    tear sheet (trade stats + bias screen).
-# 4. **Indicators** — an RSI strategy off the shared Rust `qv_indicators`.
+# 4. **Indicators** — an RSI strategy off the shared Rust `coinext_indicators`.
 # 5. **Portfolio** — a multi-instrument run through one kernel.
 # 6. **Ticks** — quote/trade feed so `on_trade` fires.
 #
 # This is a `py:percent` script (each `# %%` is a cell). Run it: `uv run python
 # notebooks/research_loop.py` (after `just py-build`). It uses **synthetic** bars by default, so it
 # fully reproducible and needs no network; set `USE_LAKE = True` to run over the REAL Parquet lake
-# (after `uv run qv download --symbols BTCUSDT,ETHUSDT --days 30`).
+# (after `uv run coinext download --symbols BTCUSDT,ETHUSDT --days 30`).
 
 # %%
 from __future__ import annotations
 
-import qv_backtest as bt
-import qv_screen
-from qv_analytics import tear_sheet
-from qv_optimize import walk_forward_optimize
-from qv_strategy import MultiSma, RsiReversion, SmaCross
+import coinext_backtest as bt
+import coinext_screen
+from coinext_analytics import tear_sheet
+from coinext_optimize import walk_forward_optimize
+from coinext_strategy import MultiSma, RsiReversion, SmaCross
 
 USE_LAKE = False  # flip to True to use real downloaded BTCUSDT/ETHUSDT history
 
 
 def _bars(symbol: str = "BTCUSDT", n: int = 600):
     if USE_LAKE:
-        from qv_data import DataLake
+        from coinext_data import DataLake
 
         return DataLake().read_ohlcv("BINANCE", symbol, "1m")
     # Distinct synthetic regimes per symbol so the portfolio isn't N copies of one series.
@@ -50,12 +50,12 @@ def _bars(symbol: str = "BTCUSDT", n: int = 600):
 
 # %%
 bars = _bars("BTCUSDT")
-rows = qv_screen.sweep_sma_cross(bars, fasts=[5, 10, 15, 20], slows=[30, 50])
+rows = coinext_screen.sweep_sma_cross(bars, fasts=[5, 10, 15, 20], slows=[30, 50])
 print("top vectorized (fast,slow) by Sharpe:")
 for r in rows[:4]:
     print(f"  fast={r.params['fast']:>2} slow={r.params['slow']:>2}  sharpe={r.sharpe:>8.2f}")
 best = rows[0].params
-drift = qv_screen.cross_check_vs_event(bars, best["fast"], best["slow"])
+drift = coinext_screen.cross_check_vs_event(bars, best["fast"], best["slow"])
 print("cross-check drift:", drift or "none (screen tracks the runner)")
 
 # %% [markdown]
@@ -65,7 +65,7 @@ print("cross-check drift:", drift or "none (screen tracks the runner)")
 # guards against overfitting (grid search over the AUTHORITATIVE backtest).
 
 # %%
-from qv_analytics import compute_metrics  # noqa: E402
+from coinext_analytics import compute_metrics  # noqa: E402
 
 
 def objective(params, window):
@@ -93,7 +93,7 @@ print(tear_sheet(result, bars=bars))
 # %% [markdown]
 # ## 4. Indicators — RSI mean-reversion
 #
-# `RsiReversion` uses the SHARED Rust `qv_indicators.Rsi` (identical to warm-up / live), not a
+# `RsiReversion` uses the SHARED Rust `coinext_indicators.Rsi` (identical to warm-up / live), not a
 # re-rolled Python copy.
 
 # %%
@@ -116,10 +116,10 @@ print(f"portfolio: {portfolio.fills} fills, total return {portfolio.total_return
 # ## 6. Tick feed — on_trade fires
 #
 # Interleave a (synthetic) trade stream with the bars so `on_trade` fires on real prints. Swap in
-# `qv_data.fetch_binance_agg_trades("BTCUSDT")` for genuine microstructure.
+# `coinext_data.fetch_binance_agg_trades("BTCUSDT")` for genuine microstructure.
 
 # %%
-from qv_strategy import Strategy  # noqa: E402
+from coinext_strategy import Strategy  # noqa: E402
 
 
 class TradeCounter(Strategy):

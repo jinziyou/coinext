@@ -1,31 +1,31 @@
-# VeloxQuant — Prometheus scrape config (docs/ARCHITECTURE.md §8).
+# Coinext — Prometheus scrape config (docs/ARCHITECTURE.md §8).
 #
 # Scrapes the SLO histograms emitted by each service:
 #   ingest_to_publish_ns, submit_to_ack_ns, strategy_dispatch_ns, book_gaps, ws_reconnects,
 #   risk_denials, plus per-service process/runtime metrics. Targets are addressed by docker-compose
-#   service name on the shared `vq` network. Ports match the canonical service+port table.
+#   service name on the shared `coinext-net` network. Ports match the canonical service+port table.
 
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: veloxquant
+    cluster: coinext
     env: prod
 
 scrape_configs:
-  # ingestor (Rust qv-ingest) — ingest_to_publish_ns, book_gaps, ws_reconnects.
+  # ingestor (Rust coinext-ingest) — ingest_to_publish_ns, book_gaps, ws_reconnects.
   - job_name: ingestor
     static_configs:
       - targets: ["ingestor:9101"]
         labels: { service: ingestor, tier: hot-path }
 
-  # exec-svc (Rust qv-exec-svc) — submit_to_ack_ns, risk_denials.
+  # exec-svc (Rust coinext-exec-svc) — submit_to_ack_ns, risk_denials.
   - job_name: exec-svc
     static_configs:
       - targets: ["exec-svc:9102"]
         labels: { service: exec-svc, tier: hot-path }
 
-  # trader (Python qv_live) — strategy_dispatch_ns, PnL.
+  # trader (Python coinext_live) — strategy_dispatch_ns, PnL.
   - job_name: trader
     static_configs:
       - targets: ["trader:9103"]

@@ -1,0 +1,14 @@
+[package]
+name = "coinext-exec-engine"
+description = "Coinext execution engine (OMS): risk-gated order routing + event-sourced FSM driving + report folding."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+coinext-core.workspace = true
+coinext-model.workspace = true
+coinext-cache.workspace = true
+coinext-ports.workspace = true
+coinext-sim.workspace = true

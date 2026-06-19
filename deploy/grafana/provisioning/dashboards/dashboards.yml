@@ -1,11 +1,11 @@
-# VeloxQuant — Grafana dashboard provider (dashboards-as-code, ARCHITECTURE.md §8).
-# Loads JSON dashboards from the mounted folder so the VeloxQuant SLO board appears on first boot.
+# Coinext — Grafana dashboard provider (dashboards-as-code, ARCHITECTURE.md §8).
+# Loads JSON dashboards from the mounted folder so the Coinext SLO board appears on first boot.
 apiVersion: 1
 
 providers:
-  - name: veloxquant
+  - name: coinext
     orgId: 1
-    folder: VeloxQuant
+    folder: Coinext
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30

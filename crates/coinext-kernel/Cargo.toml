@@ -1,0 +1,25 @@
+[package]
+name = "coinext-kernel"
+description = "Coinext kernel: the synchronous deterministic core loop wiring engines + sim + strategy for backtest."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+coinext-core.workspace = true
+coinext-model.workspace = true
+coinext-cache.workspace = true
+coinext-ports.workspace = true
+coinext-bus.workspace = true
+coinext-sim.workspace = true
+coinext-data-engine.workspace = true
+coinext-exec-engine.workspace = true
+coinext-risk-engine.workspace = true
+coinext-portfolio.workspace = true
+rust_decimal.workspace = true
+
+[dev-dependencies]
+coinext-indicators.workspace = true
+rust_decimal.workspace = true
+rust_decimal_macros.workspace = true

@@ -1,6 +1,6 @@
 # services/trader — live trading node wrapper, one process per account (canonical metrics port 9103).
-# Mirrors the `live` + `bus` + `obs` extras in the root pyproject.toml. The compiled `qv_py`
-# extension and the qv_live / qv_strategy / qv_contracts packages are installed separately from the
+# Mirrors the `live` + `bus` + `obs` extras in the root pyproject.toml. The compiled `coinext_py`
+# extension and the coinext_live / coinext_strategy / coinext_contracts packages are installed separately from the
 # workspace (not via this file).
 anyio>=4
 redis>=5

@@ -1,15 +1,15 @@
-//! Runnable example: an SMA-crossover strategy through the VeloxQuant backtest kernel.
+//! Runnable example: an SMA-crossover strategy through the Coinext backtest kernel.
 //!
 //! Demonstrates the whole pure-Rust pipeline: synthetic bars → Strategy (native Rust, no GIL) →
 //! pre-trade risk gate → SimulatedExecutionClient with delayed fills → Position/PnL → tear sheet.
-//! The SAME `Strategy` trait is what a Python strategy implements (bridged by qv-py) and what runs
+//! The SAME `Strategy` trait is what a Python strategy implements (bridged by coinext-py) and what runs
 //! live — only the Clock and Data/Execution clients differ.
 
-use qv_core::{Currency, Money, Quantity};
-use qv_indicators::{Indicator, Sma};
-use qv_kernel::{BacktestConfig, BacktestKernel};
-use qv_model::{Bar, InstrumentId, OrderSide, StrategyId, Venue};
-use qv_ports::{Strategy, StrategyContext};
+use coinext_core::{Currency, Money, Quantity};
+use coinext_indicators::{Indicator, Sma};
+use coinext_kernel::{BacktestConfig, BacktestKernel};
+use coinext_model::{Bar, InstrumentId, OrderSide, StrategyId, Venue};
+use coinext_ports::{Strategy, StrategyContext};
 use rust_decimal::Decimal;
 
 /// Classic SMA crossover: go long when the fast SMA crosses above the slow SMA, flatten when it
@@ -101,16 +101,16 @@ fn quick_metrics(curve: &[(u64, f64)]) -> (f64, f64) {
 
 fn main() {
     let usdt = Currency::new("USDT", 8).unwrap();
-    let inst = qv_testkit::sample_spot("BINANCE");
+    let inst = coinext_testkit::sample_spot("BINANCE");
     let iid = inst.id();
 
     // A trending + oscillating synthetic series so the crossover actually trades.
-    let mut closes = qv_testkit::sine_closes(400, 50_000.0, 1_500.0, 40);
+    let mut closes = coinext_testkit::sine_closes(400, 50_000.0, 1_500.0, 40);
     for (i, c) in closes.iter_mut().enumerate() {
         *c += i as f64 * 12.0; // gentle uptrend
     }
     let events =
-        qv_testkit::bars_from_closes(&iid, 1_700_000_000_000_000_000, 60_000_000_000, &closes);
+        coinext_testkit::bars_from_closes(&iid, 1_700_000_000_000_000_000, 60_000_000_000, &closes);
 
     let cfg = BacktestConfig::new(
         Venue::from("BINANCE"),
@@ -130,7 +130,7 @@ fn main() {
     let res = kernel.run();
     let (sharpe, max_dd) = quick_metrics(&res.equity_curve);
 
-    println!("================ VeloxQuant backtest: SMA crossover ================");
+    println!("================ Coinext backtest: SMA crossover ================");
     println!("instrument        : {iid}");
     println!("bars processed    : {}", res.equity_curve.len());
     println!("orders submitted  : {}", res.orders_submitted);

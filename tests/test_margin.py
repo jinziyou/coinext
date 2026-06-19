@@ -1,7 +1,7 @@
 """Margin / leverage / liquidation (Phase 4 of derivatives).
 
 `leverage` gates initial margin at submit; `maintenance_margin_rate` arms mark-to-market
-liquidation. Both opt-in (0 = fully funded, no liquidation). Requires the compiled qv_py extension.
+liquidation. Both opt-in (0 = fully funded, no liquidation). Requires the compiled coinext_py extension.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-pytest.importorskip("qv_py", reason="build qv_py: uvx maturin develop --features python")
+pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
 
-import qv_backtest as bt  # noqa: E402
-from qv_strategy import Strategy  # noqa: E402
+import coinext_backtest as bt  # noqa: E402
+from coinext_strategy import Strategy  # noqa: E402
 
 BASE, STEP = 1_700_000_000_000_000_000, 60_000_000_000
 

@@ -1,6 +1,6 @@
-# VeloxQuant — Grafana datasources (provisioned as code, ARCHITECTURE.md §8).
+# Coinext — Grafana datasources (provisioned as code, ARCHITECTURE.md §8).
 # Prometheus (metrics) + Loki (logs) + Tempo (traces), wired by docker-compose service name on the
-# shared `vq` network. trace_id flows through the Redis Envelope, enabling logs<->traces correlation.
+# shared `coinext-net` network. trace_id flows through the Redis Envelope, enabling logs<->traces correlation.
 apiVersion: 1
 
 datasources:

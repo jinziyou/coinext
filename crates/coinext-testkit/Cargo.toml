@@ -1,0 +1,12 @@
+[package]
+name = "coinext-testkit"
+description = "Coinext test kit: sample instruments + synthetic market-data generators for tests/examples."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+coinext-core.workspace = true
+coinext-model.workspace = true
+rust_decimal.workspace = true

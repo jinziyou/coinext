@@ -1,0 +1,16 @@
+[package]
+name = "coinext-ports"
+description = "Coinext hexagonal ports: DataClient/ExecutionClient/Strategy/Risk/Portfolio/Bus traits + value types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+coinext-core.workspace = true
+coinext-model.workspace = true
+coinext-cache.workspace = true
+rust_decimal.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+thiserror.workspace = true

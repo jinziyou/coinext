@@ -1,0 +1,42 @@
+# coinext-persistence — append-only OrderEvent store + persisted SeqCursor + Parquet writer.
+#
+# This is the audit-trail + crash-recovery source of truth for the live runtime (see lib.rs).
+#
+# EXCLUDED from the root cargo workspace (root Cargo.toml `exclude`), so it uses EXPLICIT dependency
+# versions and path deps — NOT `.workspace = true`. The event store + SeqCursor are backed by an
+# embedded SQLite (`rusqlite` with `bundled` so no system libsqlite3 is needed); the Parquet writer
+# is gated behind the default `parquet` feature so the event store can build without arrow/parquet.
+[package]
+name = "coinext-persistence"
+description = "Coinext persistence: append-only OrderEvent store + persisted SeqCursor + Parquet writer."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+authors = ["Coinext"]
+
+[features]
+# Parquet data-lake writer (arrow + parquet). Default-on; disable to drop the heavy columnar stack
+# and build a lean event-store-only binary (`--no-default-features`).
+default = ["parquet"]
+parquet = ["dep:arrow", "dep:parquet"]
+
+[dependencies]
+# Path deps into the in-workspace domain crates (relative to this crate's directory).
+coinext-core = { path = "../coinext-core" }
+coinext-model = { path = "../coinext-model" }
+
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+thiserror = "2"
+chrono = "0.4"
+# Embedded SQLite — `bundled` compiles libsqlite3 in, so there is no system-sqlite dependency.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Columnar data-lake writer — gated behind the `parquet` feature (see [features]).
+arrow = { version = "53", optional = true }
+parquet = { version = "53", optional = true }
+
+[dev-dependencies]
+rust_decimal = "1"
+rust_decimal_macros = "1"

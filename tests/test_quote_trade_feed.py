@@ -1,8 +1,8 @@
 """Quote/trade tick feed: on_quote/on_trade fire, and ticks drive marks + resting-limit fills.
 
 The bar-only backtest never emitted quotes/trades; passing the optional `quotes`/`trades` streams to
-`qv_backtest.run` interleaves them with the bars so the handlers fire and the sim matches resting
-limits against tick prices. Requires the compiled qv_py extension.
+`coinext_backtest.run` interleaves them with the bars so the handlers fire and the sim matches resting
+limits against tick prices. Requires the compiled coinext_py extension.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-pytest.importorskip("qv_py", reason="build qv_py: uvx maturin develop --features python")
+pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
 
-import qv_backtest as bt  # noqa: E402
-from qv_strategy import Strategy  # noqa: E402
+import coinext_backtest as bt  # noqa: E402
+from coinext_strategy import Strategy  # noqa: E402
 
 STEP, BASE = 60_000_000_000, 1_700_000_000_000_000_000
 
@@ -47,7 +47,7 @@ def test_on_quote_and_on_trade_fire_with_tick_data():
 def test_equity_curve_stays_bar_cadence_with_ticks():
     # 40 bars + 40 quotes + 40 trades = 120 market events, but the equity curve must sample at BAR
     # cadence (40 points) so the per-bar annualized metrics aren't distorted by sub-bar ticks.
-    from qv_strategy import SmaCross
+    from coinext_strategy import SmaCross
 
     bars = bt.synthetic_ohlc_bars(40)
     q, t = bt.synth_quotes(bars), bt.synth_trades(bars)
@@ -58,7 +58,7 @@ def test_equity_curve_stays_bar_cadence_with_ticks():
 def test_trades_only_do_not_change_the_backtest():
     # Trades fire on_trade and set the mark to the print price (= bar close) but add no bid/ask, so
     # market orders (which reference the mark) and the equity curve are unchanged vs no ticks.
-    from qv_strategy import SmaCross
+    from coinext_strategy import SmaCross
 
     bars = bt.synthetic_ohlc_bars(40)
     res = bt.run(SmaCross(5, 15), bars=bars, trades=bt.synth_trades(bars))
@@ -139,7 +139,7 @@ def test_synth_helpers_shapes():
 
 def test_real_agg_trades_drive_on_trade():
     # Fetch REAL Binance aggTrades and confirm on_trade fires on the real prints. Skips if offline.
-    from qv_data import fetch_binance_agg_trades
+    from coinext_data import fetch_binance_agg_trades
 
     try:
         trades = fetch_binance_agg_trades("BTCUSDT", limit=200)

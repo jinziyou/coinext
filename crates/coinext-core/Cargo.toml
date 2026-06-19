@@ -1,0 +1,17 @@
+[package]
+name = "coinext-core"
+description = "Coinext foundation primitives: fixed-precision value types, time, clock."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rust_decimal.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true

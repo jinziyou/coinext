@@ -164,6 +164,182 @@ dependencies = [
 ]
 
 [[package]]
+name = "coinext-bus"
+version = "0.1.0"
+dependencies = [
+ "coinext-core",
+ "coinext-model",
+ "coinext-ports",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "coinext-cache"
+version = "0.1.0"
+dependencies = [
+ "coinext-core",
+ "coinext-model",
+ "fnv",
+]
+
+[[package]]
+name = "coinext-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "coinext-data-engine"
+version = "0.1.0"
+dependencies = [
+ "coinext-cache",
+ "coinext-core",
+ "coinext-model",
+ "coinext-ports",
+]
+
+[[package]]
+name = "coinext-derivatives"
+version = "0.1.0"
+
+[[package]]
+name = "coinext-example-backtest"
+version = "0.1.0"
+dependencies = [
+ "coinext-core",
+ "coinext-indicators",
+ "coinext-kernel",
+ "coinext-model",
+ "coinext-ports",
+ "coinext-testkit",
+ "rust_decimal",
+]
+
+[[package]]
+name = "coinext-exec-engine"
+version = "0.1.0"
+dependencies = [
+ "coinext-cache",
+ "coinext-core",
+ "coinext-model",
+ "coinext-ports",
+ "coinext-sim",
+]
+
+[[package]]
+name = "coinext-indicators"
+version = "0.1.0"
+
+[[package]]
+name = "coinext-kernel"
+version = "0.1.0"
+dependencies = [
+ "coinext-bus",
+ "coinext-cache",
+ "coinext-core",
+ "coinext-data-engine",
+ "coinext-exec-engine",
+ "coinext-indicators",
+ "coinext-model",
+ "coinext-portfolio",
+ "coinext-ports",
+ "coinext-risk-engine",
+ "coinext-sim",
+ "rust_decimal",
+ "rust_decimal_macros",
+]
+
+[[package]]
+name = "coinext-model"
+version = "0.1.0"
+dependencies = [
+ "coinext-core",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "coinext-portfolio"
+version = "0.1.0"
+dependencies = [
+ "coinext-cache",
+ "coinext-core",
+ "coinext-model",
+ "coinext-ports",
+ "rust_decimal",
+]
+
+[[package]]
+name = "coinext-ports"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "coinext-cache",
+ "coinext-core",
+ "coinext-model",
+ "rust_decimal",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "coinext-py"
+version = "0.1.0"
+dependencies = [
+ "coinext-cache",
+ "coinext-core",
+ "coinext-derivatives",
+ "coinext-indicators",
+ "coinext-kernel",
+ "coinext-model",
+ "coinext-ports",
+ "coinext-sim",
+ "pyo3",
+ "rust_decimal",
+]
+
+[[package]]
+name = "coinext-risk-engine"
+version = "0.1.0"
+dependencies = [
+ "coinext-cache",
+ "coinext-core",
+ "coinext-model",
+ "coinext-ports",
+ "rust_decimal",
+]
+
+[[package]]
+name = "coinext-sim"
+version = "0.1.0"
+dependencies = [
+ "coinext-cache",
+ "coinext-core",
+ "coinext-model",
+ "coinext-ports",
+ "rust_decimal",
+ "rust_decimal_macros",
+]
+
+[[package]]
+name = "coinext-testkit"
+version = "0.1.0"
+dependencies = [
+ "coinext-core",
+ "coinext-model",
+ "rust_decimal",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -510,182 +686,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "qv-bus"
-version = "0.1.0"
-dependencies = [
- "qv-core",
- "qv-model",
- "qv-ports",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "qv-cache"
-version = "0.1.0"
-dependencies = [
- "fnv",
- "qv-core",
- "qv-model",
-]
-
-[[package]]
-name = "qv-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rust_decimal",
- "rust_decimal_macros",
- "serde",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "qv-data-engine"
-version = "0.1.0"
-dependencies = [
- "qv-cache",
- "qv-core",
- "qv-model",
- "qv-ports",
-]
-
-[[package]]
-name = "qv-derivatives"
-version = "0.1.0"
-
-[[package]]
-name = "qv-example-backtest"
-version = "0.1.0"
-dependencies = [
- "qv-core",
- "qv-indicators",
- "qv-kernel",
- "qv-model",
- "qv-ports",
- "qv-testkit",
- "rust_decimal",
-]
-
-[[package]]
-name = "qv-exec-engine"
-version = "0.1.0"
-dependencies = [
- "qv-cache",
- "qv-core",
- "qv-model",
- "qv-ports",
- "qv-sim",
-]
-
-[[package]]
-name = "qv-indicators"
-version = "0.1.0"
-
-[[package]]
-name = "qv-kernel"
-version = "0.1.0"
-dependencies = [
- "qv-bus",
- "qv-cache",
- "qv-core",
- "qv-data-engine",
- "qv-exec-engine",
- "qv-indicators",
- "qv-model",
- "qv-portfolio",
- "qv-ports",
- "qv-risk-engine",
- "qv-sim",
- "rust_decimal",
- "rust_decimal_macros",
-]
-
-[[package]]
-name = "qv-model"
-version = "0.1.0"
-dependencies = [
- "qv-core",
- "rust_decimal",
- "rust_decimal_macros",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "qv-portfolio"
-version = "0.1.0"
-dependencies = [
- "qv-cache",
- "qv-core",
- "qv-model",
- "qv-ports",
- "rust_decimal",
-]
-
-[[package]]
-name = "qv-ports"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "qv-cache",
- "qv-core",
- "qv-model",
- "rust_decimal",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "qv-py"
-version = "0.1.0"
-dependencies = [
- "pyo3",
- "qv-cache",
- "qv-core",
- "qv-derivatives",
- "qv-indicators",
- "qv-kernel",
- "qv-model",
- "qv-ports",
- "qv-sim",
- "rust_decimal",
-]
-
-[[package]]
-name = "qv-risk-engine"
-version = "0.1.0"
-dependencies = [
- "qv-cache",
- "qv-core",
- "qv-model",
- "qv-ports",
- "rust_decimal",
-]
-
-[[package]]
-name = "qv-sim"
-version = "0.1.0"
-dependencies = [
- "qv-cache",
- "qv-core",
- "qv-model",
- "qv-ports",
- "rust_decimal",
- "rust_decimal_macros",
-]
-
-[[package]]
-name = "qv-testkit"
-version = "0.1.0"
-dependencies = [
- "qv-core",
- "qv-model",
- "rust_decimal",
 ]
 
 [[package]]

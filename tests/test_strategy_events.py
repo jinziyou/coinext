@@ -2,7 +2,7 @@
 
 Exercises the handlers the bar-driven backtest actually fires — on_start/on_stop, on_order_filled,
 on_order_event, on_timer — plus ctx.cancel and the cancelable client_order_id returned by
-submit_*. Requires the compiled qv_py extension.
+submit_*. Requires the compiled coinext_py extension.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-pytest.importorskip("qv_py", reason="build qv_py: uvx maturin develop --features python")
+pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
 
-from qv_backtest import run  # noqa: E402
-from qv_strategy import Strategy  # noqa: E402
+from coinext_backtest import run  # noqa: E402
+from coinext_strategy import Strategy  # noqa: E402
 
 STEP, BASE = 60_000_000_000, 1_700_000_000_000_000_000
 

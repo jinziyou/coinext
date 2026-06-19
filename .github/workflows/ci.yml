@@ -1,8 +1,8 @@
-# VeloxQuant CI — verifies the Rust core workspace and the Python control plane on every push/PR.
+# Coinext CI — verifies the Rust core workspace and the Python control plane on every push/PR.
 #
 # Two independent jobs (they share no state, run in parallel):
 #   * rust   — fmt check, clippy (warnings as errors), and the core `cargo test` suite.
-#   * python — `uv sync`, build the qv_py PyO3 extension via `maturin develop`, then ruff + pytest.
+#   * python — `uv sync`, build the coinext_py PyO3 extension via `maturin develop`, then ruff + pytest.
 #
 # Mirrors the local workflow in the justfile (`just lint` / `just test` / `just py-build` /
 # `just py-test`). Toolchains: stable Rust (MSRV floor 1.95 enforced by the workspace Cargo.toml's
@@ -60,7 +60,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      # maturin needs a Rust toolchain to compile the qv_py PyO3 extension.
+      # maturin needs a Rust toolchain to compile the coinext_py PyO3 extension.
       - name: Install stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -70,9 +70,9 @@ jobs:
       - name: Sync Python deps (research extras + dev group)
         run: uv sync --extra research --extra config --group dev
 
-      # Build the compiled domain/runtime into the active venv so `import qv_py` works for pytest.
-      - name: Build qv_py extension (maturin develop)
-        run: uv run maturin develop --manifest-path crates/qv-py/Cargo.toml --features python
+      # Build the compiled domain/runtime into the active venv so `import coinext_py` works for pytest.
+      - name: Build coinext_py extension (maturin develop)
+        run: uv run maturin develop --manifest-path crates/coinext-py/Cargo.toml --features python
 
       - name: Ruff lint
         run: uv run ruff check python tests

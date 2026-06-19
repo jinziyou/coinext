@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 # ----------------------------------------------------------------------------------------------
-# ui (Node 22 / Vite -> nginx) — the VeloxQuant operations dashboard.
+# ui (Node 22 / Vite -> nginx) — the Coinext operations dashboard.
 #
 # Static React/Vite single-page app that talks to the `api` service. Vite inlines VITE_* env at
-# BUILD time, so VITE_API_BASE is passed as a build arg (wired from VQ__UI__API_BASE in compose).
+# BUILD time, so VITE_API_BASE is passed as a build arg (wired from COINEXT__UI__API_BASE in compose).
 # The built bundle is served by nginx:alpine. Container listens on :80 (mapped to host :3000 in dev).
 #
 # NOTE: the UI source lives under services/ui/ (ARCHITECTURE.md §3). This is valid scaffolding; the

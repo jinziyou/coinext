@@ -1,6 +1,6 @@
-"""Unit tests for qv_optimize: walk-forward splits, grid search, and the honest IS/OOS optimizer.
+"""Unit tests for coinext_optimize: walk-forward splits, grid search, and the honest IS/OOS optimizer.
 
-These use a synthetic scalar objective (no backtest), so they run without the compiled ``qv_py``
+These use a synthetic scalar objective (no backtest), so they run without the compiled ``coinext_py``
 extension or Optuna. A separate integration test in ``tests/parity`` drives the real backtest.
 """
 
@@ -16,7 +16,7 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1] / "python"
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from qv_optimize import (  # noqa: E402
+from coinext_optimize import (  # noqa: E402
     grid_search,
     walk_forward_optimize,
     walk_forward_splits,

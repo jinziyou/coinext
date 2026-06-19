@@ -1,0 +1,28 @@
+[package]
+name = "coinext-py"
+description = "Coinext PyO3 bindings: domain mirror + run_backtest + PyStrategyAdapter GIL dispatch shim."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "coinext_py"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+coinext-core.workspace = true
+coinext-model.workspace = true
+coinext-ports.workspace = true
+coinext-cache.workspace = true
+coinext-sim.workspace = true
+coinext-kernel.workspace = true
+coinext-indicators.workspace = true
+coinext-derivatives.workspace = true
+rust_decimal.workspace = true
+pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
+
+[features]
+# pyo3 is optional so the default `cargo test` builds coinext-py without linking libpython.
+# maturin enables it: `uvx maturin develop --manifest-path crates/coinext-py/Cargo.toml --features python`.
+python = ["dep:pyo3"]

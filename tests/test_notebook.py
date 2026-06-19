@@ -1,7 +1,7 @@
 """The end-to-end research-loop notebook runs clean (on synthetic data, no network).
 
 `notebooks/research_loop.py` strings the whole workflow together (screen -> optimize -> backtest ->
-indicators -> portfolio -> ticks); this guards it against bit-rot in CI. Needs the compiled qv_py.
+indicators -> portfolio -> ticks); this guards it against bit-rot in CI. Needs the compiled coinext_py.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT / "python") not in sys.path:
     sys.path.insert(0, str(_ROOT / "python"))
 
-pytest.importorskip("qv_py", reason="build qv_py: uvx maturin develop --features python")
+pytest.importorskip("coinext_py", reason="build coinext_py: uvx maturin develop --features python")
 
 
 def test_research_loop_notebook_runs(capsys):
