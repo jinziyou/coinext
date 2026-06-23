@@ -11,8 +11,8 @@ use crate::error::PortResult;
 use async_trait::async_trait;
 use coinext_core::{TimerEvent, UnixNanos};
 use coinext_model::{
-    Bar, BarType, Currency, Fill, Instrument, InstrumentId, MarketEvent, Money, Order, OrderEvent,
-    Position, QuoteTick, TradeTick, Venue,
+    Bar, BarType, Currency, Fill, Instrument, InstrumentId, MarketEvent, Money, Order, OrderBook,
+    OrderEvent, Position, QuoteTick, TradeTick, Venue,
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -96,6 +96,9 @@ pub trait Strategy {
     fn on_quote(&mut self, _q: &QuoteTick, _ctx: &mut StrategyContext) {}
     fn on_trade(&mut self, _t: &TradeTick, _ctx: &mut StrategyContext) {}
     fn on_bar(&mut self, _b: &Bar, _ctx: &mut StrategyContext) {}
+    /// The maintained L2 order book after an `OrderBookDelta` was folded in (cache-then-publish, so
+    /// `_book` is already up to date). Full depth is available via `_book.bids()/asks()/best_bid()`.
+    fn on_book(&mut self, _book: &OrderBook, _ctx: &mut StrategyContext) {}
     fn on_order_event(&mut self, _e: &OrderEvent, _ctx: &mut StrategyContext) {}
     fn on_order_filled(&mut self, _f: &Fill, _ctx: &mut StrategyContext) {}
     fn on_timer(&mut self, _ev: &TimerEvent, _ctx: &mut StrategyContext) {}
