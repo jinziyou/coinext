@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------------------------
 
 # --- chef: provides cargo-chef for dependency caching ---
-FROM rust:1.95 AS chef
+FROM rust:1.96 AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /build
 

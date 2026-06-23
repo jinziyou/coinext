@@ -12,7 +12,7 @@
 # is not expected to build until the crate is implemented (coinext-network + adapters land first).
 # ----------------------------------------------------------------------------------------------
 
-FROM rust:1.95 AS chef
+FROM rust:1.96 AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /build
 

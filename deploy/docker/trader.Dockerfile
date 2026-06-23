@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------------------------
 
 # --- stage 1: build the coinext_py PyO3 wheel (crates/coinext-py, --features python) ---
-FROM rust:1.95-slim AS rust-builder
+FROM rust:1.96-slim AS rust-builder
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-pip python3-venv build-essential \
  && rm -rf /var/lib/apt/lists/*
