@@ -23,7 +23,7 @@ COPY . .
 RUN maturin build --release --manifest-path crates/coinext-py/Cargo.toml --out /wheels
 
 # --- stage 2: python runtime with uv + uvicorn ---
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
