@@ -1,0 +1,66 @@
+# Dependabot — automated dependency-update PRs for every ecosystem in the Coinext monorepo.
+#
+# Ecosystems covered (all weekly):
+#   * cargo          — the Rust workspace (root) PLUS each workspace-EXCLUDED crate, which vendors
+#                      its own Cargo.lock and is therefore invisible to the root manifest.
+#   * pip            — the Python control plane (pyproject.toml / uv.lock; uv is pip-compatible).
+#   * github-actions — the CI workflow action pins (.github/workflows/*).
+#   * docker         — base images in the service Dockerfiles (deploy/docker/*) and the UI build.
+#
+# See FIX 2 / FIX 3: the excluded live-edge crates are the security-critical venue/network/persistence
+# code, so they get their own update streams here just as they get their own CI build+test job.
+version: 2
+updates:
+  # --- Rust: workspace root (covers all `members` in Cargo.toml) ---
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  # --- Rust: workspace-EXCLUDED crates (each has its own Cargo.toml + Cargo.lock) ---
+  - package-ecosystem: cargo
+    directory: /crates/coinext-network
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /crates/coinext-adapters/binance
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /crates/coinext-persistence
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /crates/coinext-ingest
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /crates/coinext-exec-svc
+    schedule:
+      interval: weekly
+
+  # --- Python control plane (uv is pip-compatible; scans pyproject.toml + uv.lock) ---
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      pip-minor-patch:
+        update-types: [minor, patch]
+
+  # --- GitHub Actions used by the CI workflows ---
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # --- Docker base images for the service builds ---
+  - package-ecosystem: docker
+    directory: /deploy/docker
+    schedule:
+      interval: weekly

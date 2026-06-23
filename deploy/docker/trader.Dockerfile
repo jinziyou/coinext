@@ -33,6 +33,9 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY python ./python
 COPY config ./config
+# The thin per-account live wrapper lives in services/trader/main.py (reads COINEXT__* env, builds one
+# coinext_live.TradingNode). Copy it in and put it on the import path.
+COPY services/trader ./trader
 
 # Install the control-plane deps needed by the live runtime (bus + live + obs extras).
 # `--system` installs into the image interpreter (no venv indirection in containers).
@@ -45,12 +48,13 @@ RUN uv pip install --system --no-cache \
 COPY --from=rust-builder /wheels/*.whl /tmp/wheels/
 RUN uv pip install --system --no-cache /tmp/wheels/*.whl && rm -rf /tmp/wheels
 
-# Make the source packages importable (coinext_live, coinext_strategy, coinext_kernel, coinext_bus, ...).
-ENV PYTHONPATH=/app/python
+# Make the source packages importable (coinext_live, coinext_strategy, coinext_kernel, coinext_bus, ...)
+# plus the trader wrapper.
+ENV PYTHONPATH=/app/python:/app/trader
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 9103
 # TODO(venue/IO): coinext_live wires the Binance clients behind the ExecutionClient/DataClient ports.
-# Launches the live node via the `coinext` CLI (entrypoint declared in pyproject [project.scripts]).
-ENTRYPOINT ["coinext"]
-CMD ["live", "run", "--config", "/app/config/live.yaml"]
+# Run the per-account live node. main.py reads COINEXT__* env (account, env, symbol, redis, metrics
+# port) — one container == one account; there is no --config flag (config is env-driven).
+ENTRYPOINT ["python", "-m", "main"]

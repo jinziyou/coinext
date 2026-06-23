@@ -44,7 +44,8 @@ def test_sma_cross_positions_flat_when_fast_starts_above_slow():
 def test_vector_backtest_pnl_and_fills():
     bars = [(0, 100.0), (1, 110.0), (2, 105.0)]
     positions = np.array([1.0, 1.0, 0.0])  # long at bar0, hold, flat at bar2
-    res = vector_backtest(bars, positions, starting_balance=100_000.0, fee_rate=0.0)
+    # exec_lag=0: test the raw same-bar PnL math directly (no no-look-ahead shift).
+    res = vector_backtest(bars, positions, starting_balance=100_000.0, fee_rate=0.0, exec_lag=0)
     assert res.equity_curve == [(0, 100_000.0), (1, 100_010.0), (2, 100_005.0)]
     assert res.fills == [(0, +1, 1.0, 100.0), (2, -1, 1.0, 105.0)]
     assert res.final_equity == pytest.approx(100_005.0)
@@ -54,7 +55,7 @@ def test_vector_backtest_pnl_and_fills():
 def test_vector_backtest_charges_fees_on_changes():
     bars = [(0, 100.0), (1, 100.0), (2, 100.0)]
     positions = np.array([1.0, 1.0, 0.0])  # open 1 @100, close 1 @100
-    res = vector_backtest(bars, positions, fee_rate=0.001)
+    res = vector_backtest(bars, positions, fee_rate=0.001, exec_lag=0)
     # No price move -> only fees: open 100*1*0.001 + close 100*1*0.001 = 0.20.
     assert res.final_equity == pytest.approx(100_000.0 - 0.20)
 

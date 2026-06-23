@@ -182,9 +182,116 @@ impl BrokerageModel for DefaultBrokerageModel {
             LiquiditySide::Maker => inst.maker_fee(),
             LiquiditySide::Taker => inst.taker_fee(),
         };
-        let notional =
-            fill_px.as_decimal() * fill_qty.as_decimal() * inst.multiplier().as_decimal();
+        // Fees are charged on the fill NOTIONAL in the settlement currency. Linear: `px*qty*mult`
+        // (quote ccy). Inverse (coin-margined): `qty*mult/px` (coin ccy) — charging the linear
+        // notional on an inverse perp would denominate the fee in the wrong currency/magnitude.
+        let px = fill_px.as_decimal();
+        let mult = inst.multiplier().as_decimal();
+        let qty = fill_qty.as_decimal();
+        let notional = if inst.is_inverse() {
+            if px.is_zero() {
+                Decimal::ZERO
+            } else {
+                qty * mult / px
+            }
+        } else {
+            px * qty * mult
+        };
         Money::from_decimal(notional * rate, inst.settlement_currency())
             .unwrap_or_else(|_| Money::zero(inst.settlement_currency()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coinext_model::{
+        ClientOrderId, CryptoPerpetual, CurrencyPair, InstrumentId, OrderType, StrategyId,
+        TimeInForce, VenueOrderId,
+    };
+    use coinext_model::{Currency, OrderFlags, UnixNanos};
+    use rust_decimal_macros::dec;
+
+    fn order(side: OrderSide, iid: &InstrumentId) -> Order {
+        Order::new(
+            StrategyId::from("s"),
+            ClientOrderId::from("c"),
+            iid.clone(),
+            side,
+            OrderType::Market,
+            Quantity::from_decimal(dec!(100), 0).unwrap(),
+            None,
+            None,
+            TimeInForce::Ioc,
+            OrderFlags::default(),
+            UnixNanos(0),
+        )
+    }
+
+    // Linear fee = px*qty*mult*rate, in the quote/settle currency.
+    #[test]
+    fn linear_fee_uses_quote_notional() {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let btc = Currency::new("BTC", 8).unwrap();
+        let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        let inst = CurrencyPair {
+            id: id.clone(),
+            base: btc,
+            quote: usdt,
+            price_precision: 2,
+            size_precision: 0,
+            price_increment: Price::from_decimal(dec!(0.01), 2).unwrap(),
+            size_increment: Quantity::from_decimal(dec!(1), 0).unwrap(),
+            min_notional: None,
+            maker_fee: dec!(0.0002),
+            taker_fee: dec!(0.0004),
+        };
+        let m = DefaultBrokerageModel::default();
+        let fee = m.fee(
+            &order(OrderSide::Buy, &id),
+            Price::from_decimal(dec!(50000), 2).unwrap(),
+            Quantity::from_decimal(dec!(100), 0).unwrap(),
+            LiquiditySide::Taker,
+            &inst,
+        );
+        // 50000*100*1 * 0.0004 = 2000 USDT.
+        assert_eq!(fee.currency(), usdt);
+        assert_eq!(fee.amount(), dec!(2000));
+    }
+
+    // Inverse fee = (qty*mult/px)*rate, in the COIN (settle) currency — NOT px*qty*mult.
+    #[test]
+    fn inverse_fee_uses_coin_notional() {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let btc = Currency::new("BTC", 8).unwrap();
+        let id = InstrumentId::parse("BTCUSD.BINANCE").unwrap();
+        let inst = CryptoPerpetual {
+            id: id.clone(),
+            base: btc,
+            quote: usdt,
+            settlement: btc,
+            price_precision: 1,
+            size_precision: 0,
+            price_increment: Price::from_decimal(dec!(0.1), 1).unwrap(),
+            size_increment: Quantity::from_decimal(dec!(1), 0).unwrap(),
+            min_notional: None,
+            multiplier: Quantity::from_raw(1, 0).unwrap(),
+            maker_fee: dec!(0.0002),
+            taker_fee: dec!(0.0004),
+            is_inverse: true,
+            funding_interval_ns: 0,
+        };
+        let m = DefaultBrokerageModel::default();
+        let _ = VenueOrderId::from("v"); // keep the import used regardless of feature flags
+        let fee = m.fee(
+            &order(OrderSide::Buy, &id),
+            Price::from_decimal(dec!(50000), 1).unwrap(),
+            Quantity::from_decimal(dec!(100), 0).unwrap(),
+            LiquiditySide::Taker,
+            &inst,
+        );
+        // coin notional = 100/50000 = 0.002 BTC; fee = 0.002 * 0.0004 = 0.0000008 BTC.
+        assert_eq!(fee.currency(), btc);
+        assert_eq!(fee.amount(), dec!(0.0000008));
     }
 }

@@ -42,7 +42,8 @@ const WIRE_PRECISION: u8 = 8;
 /// user-data WS (fast) and are pushed onto `tx`; the core takes `rx` once.
 pub struct BinanceExecutionClient {
     config: BinanceConfig,
-    rest: RestClient,
+    /// Shared so the background listenKey-keepalive task can also issue requests.
+    rest: std::sync::Arc<RestClient>,
     /// Outbound side of the report seam; the user-stream task holds a clone.
     tx: mpsc::Sender<ExecutionReport>,
     /// Inbound side handed to the core exactly once at wiring (`take_reports`).
@@ -51,6 +52,8 @@ pub struct BinanceExecutionClient {
     listen_key: Option<String>,
     /// The running user-data WS task.
     ws: Option<WsClient>,
+    /// Handle to the background listenKey-keepalive task (aborted on disconnect).
+    keepalive: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl BinanceExecutionClient {
@@ -73,11 +76,12 @@ impl BinanceExecutionClient {
         .map_err(net_to_port)?;
         Ok(BinanceExecutionClient {
             config,
-            rest,
+            rest: std::sync::Arc::new(rest),
             tx,
             rx: Some(rx),
             listen_key: None,
             ws: None,
+            keepalive: None,
         })
     }
 }
@@ -94,20 +98,16 @@ impl ExecutionClient for BinanceExecutionClient {
                 "BinanceExecutionClient::connect requires api credentials".into(),
             ));
         }
-        // Create a listenKey (POST /api/v3/userDataStream — api-key-only, not signed). The api key
-        // header is attached because `signed: false` keeps the key path but skips the HMAC; for
-        // userDataStream the venue only requires the key header, so we add it via a no-signature
-        // request whose key header is supplied by the RestClient credentials.
+        // Create a listenKey (POST /api/v3/userDataStream). This endpoint is api-key-only: it
+        // requires the `X-MBX-APIKEY` header but rejects an HMAC signature. We send it with the
+        // api-key request mode so the key header is attached WITHOUT signing.
         let key_resp = self
             .rest
-            .send(RestRequest {
-                method: HttpMethod::Post,
-                path: "/api/v3/userDataStream".into(),
-                query: Vec::new(),
-                body: None,
-                signed: false,
-                weight: 2,
-            })
+            .send(RestRequest::api_key(
+                HttpMethod::Post,
+                "/api/v3/userDataStream",
+                2,
+            ))
             .await
             .map_err(net_to_port)?;
         let listen_key = parse_listen_key(&key_resp.body)
@@ -136,30 +136,44 @@ impl ExecutionClient for BinanceExecutionClient {
             }
         });
 
+        // Binance expires a listenKey after 60 min of no keepalive. Spawn a task that PUTs a
+        // keepalive every 30 min while the user stream is active; it stops when the client is
+        // dropped or `disconnect` aborts the handle.
+        let rest = self.rest.clone();
+        let key = listen_key.clone();
+        let keepalive = tokio::spawn(async move {
+            let period = std::time::Duration::from_secs(30 * 60);
+            loop {
+                tokio::time::sleep(period).await;
+                if let Err(e) = keepalive_listen_key(&rest, &key).await {
+                    // A failed keepalive is non-fatal here (the WS reconnect/resync path recovers);
+                    // surface it but keep trying so a transient blip does not kill the stream.
+                    eprintln!("listenKey keepalive failed: {e}");
+                }
+            }
+        });
+
         self.listen_key = Some(listen_key);
         self.ws = Some(ws);
+        self.keepalive = Some(keepalive);
         Ok(())
     }
 
     async fn submit_order(&self, cmd: SubmitOrder) -> PortResult<()> {
         let params = build_order_params(&cmd.order)
             .map_err(|e| PortError::Rejected(format!("build order params: {e}")))?;
-        let mut req = RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1);
+        // Mark the order POST idempotent so an ambiguous failure (transport timeout / 5xx) is
+        // auto-retried: the request carries a DETERMINISTIC `newClientOrderId` (single-owner
+        // OrderFactory), which Binance dedups — a re-POST of the same id is a venue no-op, not a
+        // double order. This is the ONE mutating call we opt in; cancel/listenKey stay non-idempotent.
+        let mut req = RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1).idempotent(true);
         req.query = params;
         self.rest.send(req).await.map_err(net_to_port)?;
         Ok(())
     }
 
     async fn cancel_order(&self, cmd: CancelOrder) -> PortResult<()> {
-        // Cancel by the deterministic client id (`origClientOrderId`). NOTE: Binance spot's
-        // `DELETE /api/v3/order` also requires a `symbol`; the `CancelOrder` port command only
-        // carries the `ClientOrderId` today, so a future port revision must thread the symbol
-        // through (tracked as a TODO). We send what the port provides.
-        let mut req = RestRequest::signed(HttpMethod::Delete, "/api/v3/order", 1);
-        req.query = vec![(
-            "origClientOrderId".to_string(),
-            cmd.client_order_id.as_str().to_string(),
-        )];
+        let req = build_cancel_params(&cmd);
         self.rest.send(req).await.map_err(net_to_port)?;
         Ok(())
     }
@@ -196,19 +210,18 @@ impl ExecutionClient for BinanceExecutionClient {
     }
 
     async fn disconnect(&mut self) -> PortResult<()> {
+        // Stop the keepalive task first so it cannot fire mid-teardown.
+        if let Some(handle) = self.keepalive.take() {
+            handle.abort();
+        }
         if let Some(mut ws) = self.ws.take() {
             ws.shutdown().await;
         }
-        // Best-effort listenKey close (DELETE /api/v3/userDataStream); ignore errors on shutdown.
+        // Best-effort listenKey close (DELETE /api/v3/userDataStream — api-key-only, not signed);
+        // ignore errors on shutdown.
         if let Some(key) = self.listen_key.take() {
-            let req = RestRequest {
-                method: HttpMethod::Delete,
-                path: "/api/v3/userDataStream".into(),
-                query: vec![("listenKey".to_string(), key)],
-                body: None,
-                signed: false,
-                weight: 2,
-            };
+            let req = RestRequest::api_key(HttpMethod::Delete, "/api/v3/userDataStream", 2)
+                .with_param("listenKey", key);
             let _ = self.rest.send(req).await;
         }
         Ok(())
@@ -229,6 +242,18 @@ fn net_to_port(e: NetError) -> PortError {
         }
         other => PortError::Io(other.to_string()),
     }
+}
+
+/// PURE: build the signed `DELETE /api/v3/order` cancel request from a `CancelOrder`. Binance spot
+/// MANDATES `symbol` on a cancel — omitting it is rejected with `-1102` — so we send both the
+/// `symbol` (from the command's instrument) and the deterministic `origClientOrderId`.
+pub fn build_cancel_params(cmd: &CancelOrder) -> RestRequest {
+    RestRequest::signed(HttpMethod::Delete, "/api/v3/order", 1)
+        .with_param("symbol", cmd.instrument_id.symbol.as_str().to_string())
+        .with_param(
+            "origClientOrderId",
+            cmd.client_order_id.as_str().to_string(),
+        )
 }
 
 /// PURE: build the signed REST params for `POST /api/v3/order` from an `Order`. The deterministic
@@ -296,6 +321,22 @@ fn tif_to_str(tif: TimeInForce) -> &'static str {
 /// Render a decimal as a trimmed string (no trailing zeros, no scientific notation) for the wire.
 fn trim_decimal(d: Decimal) -> String {
     d.normalize().to_string()
+}
+
+/// Build the api-key-only keepalive request for a listenKey (`PUT /api/v3/userDataStream`). PURE
+/// (no network); shared by the keepalive task and tests so the request shape is verifiable.
+pub fn keepalive_request(listen_key: &str) -> RestRequest {
+    RestRequest::api_key(HttpMethod::Put, "/api/v3/userDataStream", 2)
+        .with_param("listenKey", listen_key.to_string())
+}
+
+/// Send a listenKey keepalive (`PUT /api/v3/userDataStream` with the api-key header). Binance
+/// extends the key's validity by 60 min on each successful call.
+async fn keepalive_listen_key(rest: &RestClient, listen_key: &str) -> PortResult<()> {
+    rest.send(keepalive_request(listen_key))
+        .await
+        .map_err(net_to_port)?;
+    Ok(())
 }
 
 /// PURE: parse the listenKey from `POST /api/v3/userDataStream`'s body `{"listenKey":"..."}`.
@@ -575,5 +616,58 @@ mod tests {
             "pqia91ma19a5s61cv6a81va65sdf"
         );
         assert!(parse_listen_key("{}").is_err());
+    }
+
+    #[test]
+    fn cancel_request_includes_mandatory_symbol_and_orig_client_id() {
+        // Binance spot rejects a cancel without `symbol` (-1102); the request MUST carry it.
+        let cmd = CancelOrder {
+            client_order_id: ClientOrderId::from("s1-00000000000000000042"),
+            instrument_id: iid(),
+        };
+        let req = build_cancel_params(&cmd);
+        assert_eq!(req.method, HttpMethod::Delete);
+        assert_eq!(req.path, "/api/v3/order");
+        assert!(req.signed, "cancel is a signed trading endpoint");
+        let get = |k: &str| req.query.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
+        assert_eq!(get("symbol").as_deref(), Some("BTCUSDT"));
+        assert_eq!(
+            get("origClientOrderId").as_deref(),
+            Some("s1-00000000000000000042")
+        );
+        // A cancel carries no venue-dedup key, so it must stay NON-idempotent: an ambiguous failure
+        // (timeout / 5xx) must not blindly re-cancel; the caller reconciles instead.
+        assert!(!req.idempotent, "cancel must not auto-retry on ambiguous failure");
+    }
+
+    #[test]
+    fn order_submit_request_is_marked_idempotent_via_deterministic_client_id() {
+        // submit_order opts the order POST into auto-retry BECAUSE the deterministic
+        // newClientOrderId lets Binance dedup a re-POST. Mirror that construction here and assert the
+        // idempotent flag, so the call-site contract is locked in.
+        let req = RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1).idempotent(true);
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/v3/order");
+        assert!(req.signed);
+        assert!(
+            req.idempotent,
+            "order POST carries a deterministic newClientOrderId, so a retry is a venue no-op"
+        );
+    }
+
+    #[test]
+    fn listen_key_keepalive_request_carries_api_key_header_not_signature() {
+        // The keepalive PUT must be sent with the api-key header (api_key mode) but NOT signed —
+        // Binance's userDataStream endpoints require the key header and reject an HMAC signature.
+        let req = keepalive_request("pqia91ma19a5s61cv6a81va65sdf");
+        assert_eq!(req.method, HttpMethod::Put);
+        assert_eq!(req.path, "/api/v3/userDataStream");
+        assert!(req.api_key, "keepalive must attach X-MBX-APIKEY");
+        assert!(!req.signed, "keepalive must NOT be signed");
+        let get = |k: &str| req.query.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
+        assert_eq!(
+            get("listenKey").as_deref(),
+            Some("pqia91ma19a5s61cv6a81va65sdf")
+        );
     }
 }

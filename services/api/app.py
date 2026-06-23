@@ -29,7 +29,8 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # --------------------------------------------------------------------------------------------------
@@ -45,6 +46,68 @@ app = FastAPI(
 # Config follows the COINEXT__SECTION__KEY convention (see .env.example). We read lazily at call time so
 # the module imports without any environment set.
 REDIS_URL = os.environ.get("COINEXT__REDIS__URL", "redis://redis:6379/0")
+
+# --------------------------------------------------------------------------------------------------
+# Security — API-key auth on mutating/control endpoints + CORS
+# --------------------------------------------------------------------------------------------------
+#
+# This service binds 0.0.0.0:8000 and exposes operator controls (notably POST /control/killswitch, a
+# platform-wide trading halt). Mutating endpoints therefore require a shared secret passed in the
+# ``X-API-Key`` header, compared against COINEXT__API__KEY. Read-only probes (/health, GET stubs) stay
+# open so liveness checks and the UI's read path keep working without a key.
+API_KEY_HEADER = "X-API-Key"
+
+
+def _api_key() -> str | None:
+    """The configured API key (COINEXT__API__KEY), read lazily so tests can set it per-call.
+
+    Returns ``None`` when unset/blank — in which case auth is *closed* (every protected endpoint 503s)
+    rather than open, so a misconfigured deploy fails safe instead of exposing the kill-switch.
+    """
+    key = os.environ.get("COINEXT__API__KEY", "").strip()
+    return key or None
+
+
+def require_api_key(x_api_key: str | None = Header(default=None, alias=API_KEY_HEADER)) -> None:
+    """FastAPI dependency: require ``X-API-Key`` to match COINEXT__API__KEY.
+
+    * 503 if the server has no key configured (fail-closed: never silently unauthenticated).
+    * 401 if the header is missing or does not match.
+    """
+    expected = _api_key()
+    if expected is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "API authentication is not configured: set COINEXT__API__KEY to enable the "
+                "control plane's mutating endpoints."
+            ),
+        )
+    if not x_api_key or x_api_key != expected:
+        raise HTTPException(status_code=401, detail="missing or invalid API key")
+
+
+def _cors_origins() -> list[str]:
+    """Allowed CORS origins from COINEXT__API__CORS_ORIGINS (comma-separated). Default: none.
+
+    We intentionally never default to ``*`` — an unset value means no cross-origin browser access,
+    which is the safe posture for a trading-control surface.
+    """
+    raw = os.environ.get("COINEXT__API__CORS_ORIGINS", "").strip()
+    if not raw:
+        return []
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+# Restrict CORS to explicitly-configured origins (never "*"). With an empty list the middleware
+# allows no cross-origin requests, matching the locked-down default.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*", API_KEY_HEADER],
+)
 
 # Bus stream / channel names. These MUST agree with the Rust publishers (coinext-bus Envelope contract)
 # and the Python coinext_bus client. Centralised here as the api's view of the topology.
@@ -146,8 +209,13 @@ class KillSwitchState(BaseModel):
 
 
 @app.get("/health")
+@app.get("/healthz")
 def health() -> dict[str, Any]:
-    """Liveness + a quick capability probe (does the native extension import?)."""
+    """Liveness + a quick capability probe (does the native extension import?).
+
+    Served at both ``/health`` (documented for the UI) and ``/healthz`` (the path the Docker /
+    docker-compose healthcheck probes). Read-only and unauthenticated by design.
+    """
     have_native = False
     try:  # pragma: no cover - environment-dependent
         import coinext_py  # noqa: F401, WPS433
@@ -294,7 +362,7 @@ def latency() -> dict[str, Any]:
 # --------------------------------------------------------------------------------------------------
 
 
-@app.post("/backtest")
+@app.post("/backtest", dependencies=[Depends(require_api_key)])
 def run_backtest(req: BacktestRequest) -> dict[str, Any]:
     """Run an authoritative backtest of ``SmaCross`` and return the tear-sheet metrics as JSON.
 
@@ -368,7 +436,7 @@ def get_killswitch() -> KillSwitchState:
     return KillSwitchState(**_killswitch_state)
 
 
-@app.post("/control/killswitch")
+@app.post("/control/killswitch", dependencies=[Depends(require_api_key)])
 def control_killswitch(req: KillSwitchRequest) -> KillSwitchState:
     """Engage / release the platform-wide kill-switch by publishing ``CtrlKillSwitch`` on the bus.
 
@@ -382,20 +450,19 @@ def control_killswitch(req: KillSwitchRequest) -> KillSwitchState:
     actor = req.actor or "api"
     bus = _load_bus()
 
-    # TODO: build and publish the real CtrlKillSwitch Envelope (MsgType.CTRL) via coinext_bus once the
-    # publisher API lands. Shape kept explicit so the contract is reviewable.
-    payload = {
-        "kind": "CtrlKillSwitch",
-        "engaged": req.engage,
-        "reason": req.reason,
-        "source": "api",
-        "actor": actor,
-    }
-    if bus is not None:
+    # Build and publish the real CtrlKillSwitch command (a MsgType.CTRL Envelope) on STREAM_CONTROL.
+    # Every trader's in-core gate + the out-of-band risk-monitor honour it. The payload shape is the
+    # documented coinext_contracts.kill_switch_payload contract.
+    if bus is not None and hasattr(bus, "Publisher"):
         try:  # pragma: no cover - requires a running redis
-            # Expected coinext_bus surface: a Publisher that encodes a MsgType.CTRL Envelope onto STREAM_CONTROL.
-            publisher = bus.Publisher(REDIS_URL)  # type: ignore[attr-defined]
-            publisher.publish_control(STREAM_CONTROL, payload)
+            publisher = bus.Publisher(REDIS_URL)
+            publisher.publish_kill_switch(
+                STREAM_CONTROL,
+                engaged=req.engage,
+                reason=req.reason,
+                source="api",
+                actor=actor,
+            )
         except Exception as exc:  # noqa: BLE001 - surface bus/redis errors to the operator
             raise HTTPException(
                 status_code=503,

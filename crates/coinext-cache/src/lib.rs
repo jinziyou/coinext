@@ -3,7 +3,8 @@
 //! unrealized PnL. (In live it can be Redis-backed for crash recovery; the scaffold is in-memory.)
 
 use coinext_model::{
-    AccountState, ClientOrderId, Instrument, InstrumentId, Order, Position, Price, QuoteTick,
+    AccountState, ClientOrderId, Instrument, InstrumentId, Order, OrderBook, OrderBookDelta,
+    Position, Price, QuoteTick,
 };
 use fnv::FnvHashMap;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ pub struct Cache {
     instruments: FnvHashMap<InstrumentId, Arc<dyn Instrument>>,
     quotes: FnvHashMap<InstrumentId, QuoteTick>,
     marks: FnvHashMap<InstrumentId, Price>,
+    order_books: FnvHashMap<InstrumentId, OrderBook>,
     orders: FnvHashMap<ClientOrderId, Order>,
     positions: FnvHashMap<InstrumentId, Position>,
     account: Option<AccountState>,
@@ -47,6 +49,23 @@ impl Cache {
     }
     pub fn mark(&self, id: &InstrumentId) -> Option<Price> {
         self.marks.get(id).copied()
+    }
+
+    // --- L2 order books ---
+    /// Fold an order-book delta into the per-instrument [`OrderBook`] (creating it on first sight).
+    /// Returns `false` if the delta was stale and skipped. The book is NOT auto-promoted to the mark
+    /// — marks stay sourced from quotes/trades/bars so valuation semantics are unchanged.
+    pub fn apply_book_delta(&mut self, delta: &OrderBookDelta) -> bool {
+        self.order_books
+            .entry(delta.instrument_id.clone())
+            .or_insert_with(|| OrderBook::new(delta.instrument_id.clone()))
+            .apply(delta)
+    }
+    pub fn order_book(&self, id: &InstrumentId) -> Option<&OrderBook> {
+        self.order_books.get(id)
+    }
+    pub fn order_book_mut(&mut self, id: &InstrumentId) -> Option<&mut OrderBook> {
+        self.order_books.get_mut(id)
     }
 
     // --- orders ---
@@ -89,5 +108,38 @@ impl Cache {
     }
     pub fn account_mut(&mut self) -> Option<&mut AccountState> {
         self.account.as_mut()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coinext_model::{BookAction, OrderSide, Quantity, UnixNanos};
+
+    fn delta(action: BookAction, side: OrderSide, px: i64, sz: i64, seq: u64) -> OrderBookDelta {
+        OrderBookDelta {
+            instrument_id: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+            action,
+            side,
+            price: Price::from_raw(px, 2).unwrap(),
+            size: Quantity::from_raw(sz, 3).unwrap(),
+            sequence: seq,
+            ts_event: UnixNanos(seq),
+            ts_init: UnixNanos(seq),
+        }
+    }
+
+    #[test]
+    fn apply_book_delta_creates_and_maintains_the_book() {
+        let mut cache = Cache::new();
+        let iid = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+        assert!(cache.order_book(&iid).is_none());
+        assert!(cache.apply_book_delta(&delta(BookAction::Add, OrderSide::Buy, 10_000, 5, 1)));
+        assert!(cache.apply_book_delta(&delta(BookAction::Add, OrderSide::Sell, 10_010, 5, 2)));
+        let book = cache.order_book(&iid).unwrap();
+        assert_eq!(book.best_bid().unwrap().0.raw(), 10_000);
+        assert_eq!(book.best_ask().unwrap().0.raw(), 10_010);
+        // A stale (older-sequence) delta is rejected.
+        assert!(!cache.apply_book_delta(&delta(BookAction::Update, OrderSide::Buy, 10_000, 9, 0)));
     }
 }

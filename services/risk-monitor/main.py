@@ -30,6 +30,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
+from typing import Any
 
 logger = logging.getLogger("coinext.risk_monitor")
 
@@ -91,8 +92,18 @@ class AccountState:
         if self.day_start_equity == 0.0:
             self.day_start_equity = equity
 
+    def snapshot(self) -> Any:
+        """Project this account state onto a ``coinext_risk.PortfolioSnapshot`` (the shared view)."""
+        from coinext_risk import PortfolioSnapshot  # local import: keeps coinext_risk optional
+
+        return PortfolioSnapshot(
+            ts_ns=0, equity=self.equity, peak_equity=self.session_peak_equity
+        )
+
     @property
     def drawdown_pct(self) -> float:
+        """Observed peak-to-trough decline (for reporting). The *breach decision* lives in
+        ``coinext_risk.MaxDrawdown`` — this matches its ``(peak - equity) / peak`` definition."""
         if self.session_peak_equity <= 0.0:
             return 0.0
         return (self.session_peak_equity - self.equity) / self.session_peak_equity
@@ -124,9 +135,17 @@ class RiskSupervisor:
     tripped: bool = False
 
     def evaluate(self) -> list[Breach]:
-        """Return the list of breached limits for the current account state (empty == healthy)."""
+        """Return the list of breached limits for the current account state (empty == healthy).
+
+        The drawdown circuit-breaker is delegated to ``coinext_risk.MaxDrawdown`` — the single source
+        of truth for that math (see the reconciliation note in ``coinext_risk``). The account-wide
+        exposure / loss-of-day limits the protections pipeline does not model are evaluated here.
+        """
+        from coinext_risk import MaxDrawdown, ProtectionConfig  # local import: optional dep
+
         breaches: list[Breach] = []
-        if self.state.drawdown_pct > self.limits.max_drawdown_pct:
+        dd = MaxDrawdown(ProtectionConfig(max_drawdown_pct=self.limits.max_drawdown_pct))
+        if dd.evaluate(self.state.snapshot()).tripped:
             breaches.append(
                 Breach("max_drawdown", self.state.drawdown_pct, self.limits.max_drawdown_pct)
             )
@@ -182,28 +201,47 @@ def _load_bus():
         return None
 
 
+def _breach_reason(breaches: list[Breach]) -> str:
+    """The human-readable kill-switch reason for a set of ``breaches``."""
+    return "risk-monitor breach: " + "; ".join(str(b) for b in breaches)
+
+
 def _trip_kill_switch(bus, breaches: list[Breach]) -> None:
     """Publish a global ``CtrlKillSwitch`` (engaged) command in response to ``breaches``.
 
-    TODO: build and publish the real CtrlKillSwitch Envelope (MsgType.CTRL) via coinext_bus once the
-    publisher API lands. Shape kept explicit so the contract is reviewable.
+    Builds a real CtrlKillSwitch command (a ``MsgType.CTRL`` Envelope) via ``coinext_bus.Publisher``
+    and publishes it on ``STREAM_CONTROL``. Every ``trader``'s in-core gate honours it.
     """
-    reason = "; ".join(str(b) for b in breaches)
-    payload = {
-        "kind": "CtrlKillSwitch",
-        "engaged": True,
-        "reason": f"risk-monitor breach: {reason}",
-        "source": "risk-monitor",
-    }
+    reason = _breach_reason(breaches)
     if bus is None:  # pragma: no cover - environment-dependent
-        logger.critical("KILL-SWITCH (no bus to publish): %s", payload["reason"])
+        logger.critical("KILL-SWITCH (no bus to publish): %s", reason)
         return
     try:  # pragma: no cover - requires a running redis
-        publisher = bus.Publisher(REDIS_URL)  # type: ignore[attr-defined]
-        publisher.publish_control(STREAM_CONTROL, payload)
-        logger.critical("KILL-SWITCH ENGAGED and published: %s", payload["reason"])
+        publisher = bus.Publisher(REDIS_URL)
+        publisher.publish_kill_switch(
+            STREAM_CONTROL, engaged=True, reason=reason, source="risk-monitor"
+        )
+        logger.critical("KILL-SWITCH ENGAGED and published: %s", reason)
     except Exception as exc:  # noqa: BLE001 - last line of defense: log loudly, never swallow silently
-        logger.exception("failed to publish kill-switch (%s): %s", payload["reason"], exc)
+        logger.exception("failed to publish kill-switch (%s): %s", reason, exc)
+
+
+def process_message(supervisor: RiskSupervisor, payload: dict, bus) -> bool:
+    """Fold one telemetry ``payload`` into ``supervisor``, evaluate, and trip on the FIRST breach.
+
+    Pure-ish: the only side effect is publishing the kill-switch (via ``bus``) the single time the
+    supervisor latches ``tripped``. Returns True iff the kill-switch was tripped by THIS message, so
+    the consume loop never double-publishes. Unit-testable with a fake bus.
+    """
+    supervisor.fold_envelope(payload)
+    if supervisor.tripped:
+        return False
+    breaches = supervisor.evaluate()
+    if breaches:
+        _trip_kill_switch(bus, breaches)
+        supervisor.tripped = True
+        return True
+    return False
 
 
 # --------------------------------------------------------------------------------------------------
@@ -211,22 +249,44 @@ def _trip_kill_switch(bus, breaches: list[Breach]) -> None:
 # --------------------------------------------------------------------------------------------------
 
 
+def consume_loop(bus, supervisor: RiskSupervisor) -> None:
+    """Blocking consume loop: read telemetry off STREAM_TELEMETRY, fold, evaluate, trip on breach.
+
+    Drives ``bus.RedisBusClient.consume`` (consumer-group, at-least-once). Each :class:`StreamMessage`
+    carries a decoded Envelope; we msgpack-decode its payload and hand it to :func:`process_message`,
+    which trips the kill-switch exactly once on the first breach. Separated from :func:`run` so it is
+    testable with a fake bus that yields synthetic StreamMessages.
+    """
+    client = bus.RedisBusClient(REDIS_URL)
+    for message in client.consume([STREAM_TELEMETRY]):  # pragma: no branch
+        try:
+            payload = bus.decode_payload(message.envelope)
+        except Exception as exc:  # noqa: BLE001 - a malformed frame must not kill the supervisor
+            logger.warning("skipping undecodable telemetry frame: %s", exc)
+            continue
+        process_message(supervisor, payload, bus)
+
+
 async def run(poll_interval_s: float = 1.0) -> None:
     """Main supervisory loop: consume telemetry, evaluate limits, trip on breach.
 
-    Stub control flow (the bus consume + decode is a TODO):
+    Control flow:
 
-      1. subscribe to STREAM_TELEMETRY via coinext_bus (async consumer),
-      2. for each Envelope: decode → ``supervisor.fold_envelope(payload)``,
+      1. consume STREAM_TELEMETRY via ``coinext_bus.RedisBusClient`` (consumer group),
+      2. for each Envelope: msgpack-decode payload → ``supervisor.fold_envelope(payload)``,
       3. ``breaches = supervisor.evaluate()``,
-      4. if breaches and not already tripped: ``_trip_kill_switch(...)`` and latch ``tripped``,
+      4. on the FIRST breach: publish a real CtrlKillSwitch on STREAM_CONTROL and latch ``tripped``,
       5. export gauges/counters to Prometheus on :9104.
+
+    When ``coinext_bus`` (or redis/msgpack) is unavailable the supervisor falls back to an IDLE
+    keep-alive so the container stays up and /metrics is scrapeable. The blocking consume loop runs
+    in a worker thread so this coroutine stays cancellable.
     """
     bus = _load_bus()
     supervisor = RiskSupervisor()
     _maybe_start_metrics_server()
 
-    if bus is None or not hasattr(bus, "AsyncConsumer"):
+    if bus is None or not hasattr(bus, "RedisBusClient"):
         logger.warning(
             "coinext_bus unavailable; risk-monitor running in IDLE stub mode (no telemetry consumed). "
             "Limits=%s",
@@ -236,16 +296,8 @@ async def run(poll_interval_s: float = 1.0) -> None:
         while True:  # pragma: no cover - long-running
             await asyncio.sleep(poll_interval_s)
 
-    # TODO: real consume loop, e.g.:
-    #   async with bus.AsyncConsumer(REDIS_URL, STREAM_TELEMETRY) as consumer:
-    #       async for envelope in consumer:
-    #           supervisor.fold_envelope(coinext_bus.decode_payload(envelope))
-    #           breaches = supervisor.evaluate()
-    #           if breaches and not supervisor.tripped:
-    #               _trip_kill_switch(bus, breaches)
-    #               supervisor.tripped = True
-    while True:  # pragma: no cover - long-running
-        await asyncio.sleep(poll_interval_s)
+    logger.info("risk-monitor consuming telemetry on %s; limits=%s", STREAM_TELEMETRY, supervisor.limits)
+    await asyncio.to_thread(consume_loop, bus, supervisor)  # pragma: no cover - long-running
 
 
 def _maybe_start_metrics_server() -> None:

@@ -70,4 +70,7 @@ tokio = { version = "1", default-features = false, features = ["sync", "macros",
 [profile.release]
 lto = "thin"
 codegen-units = 1
-panic = "abort"
+# NOTE: do NOT set `panic = "abort"` here. The maturin --release wheel inherits this profile, and
+# under panic=abort a Rust panic inside the PyO3 bridge raises SIGABRT and kills the whole Python
+# interpreter instead of surfacing as a catchable Python exception. Keep the default (unwind) so
+# pyo3 can translate panics into Python exceptions.

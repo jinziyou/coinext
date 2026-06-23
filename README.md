@@ -14,6 +14,15 @@ The whole design turns on one invariant — **backtest↔live parity**:
 > the **Clock** (`HistoricalClock` vs live), the **Cache** contents, and the **Data/Execution
 > clients** behind byte-identical ports. Every design conflict is tie-broken in favor of parity.
 
+This parity is **enforced structurally** — there is one `Strategy` trait, one engine set, one core
+loop, and one `ExecutionClient` port that the simulated venue (`SimExecutionClientPort`), a sandbox
+venue, and the live `BinanceExecutionClient` all implement. It is **not yet verified end-to-end**
+against a live/sandbox exchange: the deterministic backtest core is the part that is heavily tested,
+the `LiveKernel` that drives the same engines over the ports is a working but **unexercised scaffold**
+(no real-venue run in CI), and the "mandatory sandbox-vs-backtest gate" today compares the backtest to
+a perturbed copy of itself rather than to live fills. Treat parity as a strong, structurally-enforced
+**design intent** with a verified backtest core — not a claim that live trading has been proven equal.
+
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design and rationale.
 
 ## Status
@@ -35,12 +44,13 @@ Rust and mirrored to Python, and a vertical slice runs **end-to-end in pure Rust
 | Data + execution engines (OMS, FSM driver, report folding) | `coinext-data-engine`, `coinext-exec-engine` | ✅ implemented |
 | **Simulated exchange** (BrokerageModel: OHLC limit matching, volume-participation partial fills, queue position, stop orders, range-scaled slippage; DelayedEventQueue) | `coinext-sim` | ✅ implemented + tested |
 | **Backtest kernel** (deterministic synchronous core loop; expiry settlement; liquidation) | `coinext-kernel` | ✅ implemented + tested |
+| **Live/sandbox kernel** (same engine set, driven over the Data/Execution ports) | `coinext-kernel` (`LiveKernel`) | 🚧 scaffold (compiles + unit-tested with fakes; no real-venue run) |
 | Runnable SMA-crossover backtest | `examples/backtest-sma` | ✅ runs |
-| PyO3 bridge (Python `Strategy` → same Rust kernel; OHLC + multi-instrument; parity proof) | `coinext-py` | ✅ implemented + tested |
-| Research control plane (backtest, data lake, parity gate, vectorized screen) | `python/coinext_{backtest,data,parity,screen}` | ✅ implemented + tested |
+| PyO3 bridge (Python `Strategy` → same Rust kernel; OHLC + multi-instrument) | `coinext-py` | ✅ implemented + tested (backtest) |
+| Research control plane (backtest, data lake, parity gate, vectorized screen) | `python/coinext_{backtest,data,parity,screen}` | ✅ implemented + tested (the parity gate compares backtest-vs-perturbed-backtest, not live) |
 | Analytics (trade stats, bias screens, tear sheet + plots) | `python/coinext_analytics` | ✅ implemented + tested |
 | Walk-forward optimization (rolling/anchored, OOS degradation, grid/Optuna) | `python/coinext_optimize` | ✅ implemented + tested |
-| Binance adapter (Data/Instrument/Execution ports; order-modify unsupported), WS/REST network framework, append-only persistence + Parquet | `coinext-adapters/binance`, `coinext-network`, `coinext-persistence` | ✅ implemented + tested |
+| Binance adapter (Data/Instrument/Execution ports; order-modify unsupported), WS/REST network framework, append-only persistence + Parquet | `coinext-adapters/binance`, `coinext-network`, `coinext-persistence` | ⚠️ implemented + unit-tested (PURE builders/parsers/fixtures); **excluded from the default workspace build**, never run against a live venue |
 | Ingest/exec service daemons + live wiring | `coinext-ingest`, `coinext-exec-svc` | 🚧 interface stubs |
 | FastAPI control plane + React dashboard + docker-compose + observability | `services/*`, `deploy/*` | 🚧 scaffolded |
 
@@ -57,7 +67,8 @@ cargo run -p coinext-example-backtest   # or: just backtest
 Expected output is a tear-sheet-style summary (orders, fills, equity, return, Sharpe, max drawdown)
 produced by running a native-Rust `Strategy` through the `SimulatedExecutionClient` with realistic
 fees, slippage, and **delayed fills interleaved on the time-frontier** — the same `Strategy` trait a
-Python strategy implements and the same path that runs live.
+Python strategy implements, and the same engines the `LiveKernel` drives over the ports (the live
+path is wired structurally but not yet exercised against a real venue — see the status table).
 
 ## Quick start (research: real data, reproducible backtests)
 
@@ -127,7 +138,8 @@ docs/        Roadmap + testnet runbook
   deferred (live/ops), and open questions.
 - [`docs/TESTNET.md`](docs/TESTNET.md) — the end-to-end testnet runbook + the parity promotion gate.
 - [`tests/parity/README.md`](tests/parity/README.md) — the two parity checks (advisory cross-check +
-  mandatory sandbox-vs-backtest gate).
+  the sandbox-vs-backtest gate, which today compares the backtest to a perturbed copy of itself, not
+  to live fills).
 - [`deploy/README.md`](deploy/README.md) / [`services/README.md`](services/README.md) — the
   dockerized multi-service stack and observability overlay.
 

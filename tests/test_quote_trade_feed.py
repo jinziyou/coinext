@@ -48,15 +48,23 @@ def test_equity_curve_stays_bar_cadence_with_ticks():
     assert len(res.equity_curve) == 40
 
 
-def test_trades_only_do_not_change_the_backtest():
-    # Trades fire on_trade and set the mark to the print price (= bar close) but add no bid/ask, so
-    # market orders (which reference the mark) and the equity curve are unchanged vs no ticks.
+def test_trades_only_add_no_book_but_can_price_a_pending_fill():
+    # Trades fire on_trade and add no bid/ask, so the equity curve still samples at BAR cadence and
+    # the fill COUNT is unchanged. But under no-look-ahead a market order decided on bar T's close
+    # rests `pending_open` and fills at the NEXT market event's open: with a trade print at T's close
+    # in the stream, that print is the next event, so the fill lands one bar EARLIER (at the print
+    # price) than the bar-only run (which fills at bar T+1's open). Same trade, different fill timing.
     from coinext_strategy import SmaCross
 
     bars = bt.synthetic_ohlc_bars(40)
     res = bt.run(SmaCross(5, 15), bars=bars, trades=bt.synth_trades(bars))
     plain = bt.run(SmaCross(5, 15), bars=bars)
-    assert list(res.equity_curve) == list(plain.equity_curve)
+    # Bar cadence and fill count are preserved (trades add no book, never a spurious extra fill).
+    assert len(res.equity_curve) == len(plain.equity_curve) == 40
+    assert res.fills == plain.fills == 1
+    # No-look-ahead: the trade print following the decision bar prices the pending fill one bar
+    # earlier than the bar-only run's next-open fill.
+    assert res.fills_log[0][0] < plain.fills_log[0][0]
 
 
 def test_quotes_set_the_market_reference_to_bid_ask():

@@ -12,6 +12,7 @@ pub mod identifiers;
 pub mod instrument;
 pub mod market_data;
 pub mod order;
+pub mod order_book;
 pub mod position;
 
 pub use account::AccountState;
@@ -23,6 +24,7 @@ pub use instrument::{
 };
 pub use market_data::*;
 pub use order::{Order, OrderEvent, OrderFlags};
+pub use order_book::OrderBook;
 pub use position::Position;
 
 // Re-export the shared error and core value types so downstream crates can `use coinext_model::*`.

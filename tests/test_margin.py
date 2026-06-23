@@ -51,7 +51,9 @@ def test_leverage_allows_within_the_limit():
 def test_maintenance_margin_liquidates():
     # Buy 1 @ ~50k with 10k; the price dips to 44k (equity ~4k < maint 44k×0.1 = 4.4k) -> liquidate.
     # The later recovery to 50k can't save the already-flattened account.
-    bars = _bars([50_000, 44_000, 50_000])
+    # No-look-ahead: the buy decided on bar 0's close fills at bar 1's open (still 50k), so an extra
+    # 50k bar precedes the dip.
+    bars = _bars([50_000, 50_000, 44_000, 50_000])
     res = bt.run(BuyOnce(1.0), bars=bars, starting_balance=10_000.0, maintenance_margin_rate=0.1)
     assert res.fills == 2  # entry + forced liquidation close
     assert res.final_equity < 5_000.0  # the loss is locked in
@@ -59,7 +61,8 @@ def test_maintenance_margin_liquidates():
 
 def test_no_liquidation_without_a_rate_recovers():
     # The IDENTICAL dip-and-recover, no maintenance rate -> the position rides through and recovers.
-    bars = _bars([50_000, 44_000, 50_000])
+    # No-look-ahead: the entry decided on bar 0's close fills at bar 1's open (still 50k).
+    bars = _bars([50_000, 50_000, 44_000, 50_000])
     res = bt.run(BuyOnce(1.0), bars=bars, starting_balance=10_000.0)
     assert res.fills == 1  # just the entry; never force-closed (spot has no expiry settlement)
     assert res.final_equity > 9_000.0  # recovered to ~breakeven

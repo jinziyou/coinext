@@ -154,4 +154,33 @@ pub enum BookAction {
     Add,
     Update,
     Delete,
+    /// Full-book reset / snapshot boundary: a consumer MUST discard every level it currently holds
+    /// for the instrument; the deltas that follow are the fresh snapshot. Emitted by adapters when a
+    /// REST depth snapshot is installed (initial sync or after a gap-triggered resync).
+    Clear,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn book_action_clear_round_trips_serde() {
+        // The snapshot-boundary variant must survive a JSON round-trip like the others.
+        let json = serde_json::to_string(&BookAction::Clear).unwrap();
+        assert_eq!(json, "\"Clear\"");
+        let back: BookAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, BookAction::Clear);
+
+        for action in [
+            BookAction::Add,
+            BookAction::Update,
+            BookAction::Delete,
+            BookAction::Clear,
+        ] {
+            let s = serde_json::to_string(&action).unwrap();
+            let round: BookAction = serde_json::from_str(&s).unwrap();
+            assert_eq!(round, action);
+        }
+    }
 }

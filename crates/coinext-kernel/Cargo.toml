@@ -18,8 +18,10 @@ coinext-exec-engine.workspace = true
 coinext-risk-engine.workspace = true
 coinext-portfolio.workspace = true
 rust_decimal.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 coinext-indicators.workspace = true
+async-trait.workspace = true
 rust_decimal.workspace = true
 rust_decimal_macros.workspace = true

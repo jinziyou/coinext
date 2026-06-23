@@ -26,6 +26,14 @@ fn quantize(d: Decimal, precision: u8) -> Result<i128, ModelError> {
     check_precision(precision)?;
     let mut q = d.round_dp(precision as u32);
     q.rescale(precision as u32); // force scale == precision so mantissa() is at `precision`
+                                 // `rescale` SILENTLY caps the scale when the 96-bit mantissa would overflow, yielding a
+                                 // wrong mantissa instead of erroring. If the resulting scale is not exactly `precision`,
+                                 // the value cannot be represented at the requested precision — fail fast.
+    if q.scale() != precision as u32 {
+        return Err(ModelError::OutOfRange(format!(
+            "value {d} cannot be represented at precision {precision}"
+        )));
+    }
     Ok(q.mantissa())
 }
 
@@ -39,13 +47,16 @@ pub struct Price {
 impl Price {
     pub fn from_raw(raw: i64, precision: u8) -> Result<Price, ModelError> {
         check_precision(precision)?;
+        if raw < 0 {
+            return Err(ModelError::Negative(format!("price raw {raw}")));
+        }
         Ok(Price { raw, precision })
     }
 
     pub fn from_decimal(d: Decimal, precision: u8) -> Result<Price, ModelError> {
         let raw = i64::try_from(quantize(d, precision)?)
             .map_err(|_| ModelError::OutOfRange(format!("price {d} overflows i64@{precision}")))?;
-        Ok(Price { raw, precision })
+        Price::from_raw(raw, precision)
     }
 
     /// f64 entry point — the ONLY place NaN/Inf is rejected (rust_decimal cannot hold them).
