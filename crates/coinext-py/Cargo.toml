@@ -20,7 +20,7 @@ coinext-kernel.workspace = true
 coinext-indicators.workspace = true
 coinext-derivatives.workspace = true
 rust_decimal.workspace = true
-pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
+pyo3 = { version = "0.29", features = ["extension-module"], optional = true }
 
 [features]
 # pyo3 is optional so the default `cargo test` builds coinext-py without linking libpython.

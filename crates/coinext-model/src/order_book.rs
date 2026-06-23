@@ -88,12 +88,18 @@ impl OrderBook {
 
     /// Best (highest) bid level, if any.
     pub fn best_bid(&self) -> Option<(Price, Quantity)> {
-        self.bids.iter().next_back().map(|(&raw, &q)| (self.price(raw), q))
+        self.bids
+            .iter()
+            .next_back()
+            .map(|(&raw, &q)| (self.price(raw), q))
     }
 
     /// Best (lowest) ask level, if any.
     pub fn best_ask(&self) -> Option<(Price, Quantity)> {
-        self.asks.iter().next().map(|(&raw, &q)| (self.price(raw), q))
+        self.asks
+            .iter()
+            .next()
+            .map(|(&raw, &q)| (self.price(raw), q))
     }
 
     /// Mid price `(best_bid + best_ask) / 2`. `None` unless both sides have a level.
@@ -112,7 +118,10 @@ impl OrderBook {
         match (self.best_bid(), self.best_ask()) {
             (Some((bid, _)), Some((ask, _))) => {
                 let raw = ask.raw().saturating_sub(bid.raw());
-                Some(Price::from_raw(raw, self.precision).unwrap_or_else(|_| Price::zero(self.precision)))
+                Some(
+                    Price::from_raw(raw, self.precision)
+                        .unwrap_or_else(|_| Price::zero(self.precision)),
+                )
             }
             _ => None,
         }
@@ -120,7 +129,10 @@ impl OrderBook {
 
     /// Bid levels, best (highest) first.
     pub fn bids(&self) -> impl Iterator<Item = (Price, Quantity)> + '_ {
-        self.bids.iter().rev().map(|(&raw, &q)| (self.price(raw), q))
+        self.bids
+            .iter()
+            .rev()
+            .map(|(&raw, &q)| (self.price(raw), q))
     }
 
     /// Ask levels, best (lowest) first.
