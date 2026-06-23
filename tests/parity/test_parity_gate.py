@@ -203,3 +203,80 @@ def test_empty_sessions_are_vacuously_consistent():
     # No fills on either side -> agreement is vacuously perfect; no deviation.
     assert metrics.signal_timing_agreement == pytest.approx(1.0)
     assert metrics.fill_price_deviation_bps == pytest.approx(0.0)
+
+
+# --------------------------------------------------------------------------------------------------
+# 6. Real-data path: fills at bar_ts + latency vs klines closing at :59.999 must NOT be dropped.
+#    Regression for the gate silently flattening both equity curves (-> corr 1.0, return_diff 0.0)
+#    on the ONLY real-data path. from_fills_and_bars snaps fills to the bar grid before bucketing.
+# --------------------------------------------------------------------------------------------------
+def test_from_fills_and_bars_snaps_real_kline_close_times():
+    base, step = 1_700_000_000_000_000_000, 60_000_000_000
+    close_offset = step - 1_000_000  # :59.999, like a real Binance kline closeTime
+    latency = 2_000_000  # event fills land at bar_open + ~2ms -> across the :59.999 boundary
+
+    # Real-style klines: timestamps at the minute close (:59.999); a clear up-then-down move so a
+    # buy then a sell change the position (and therefore the reconstructed equity).
+    closes = [100.0, 101.0, 103.0, 106.0, 110.0, 108.0]
+    bars = [(base + i * step + close_offset, c) for i, c in enumerate(closes)]
+
+    # Fills stamped at bar_open + latency: NONE equals any bar's :59.999 closeTime. Buy near bar 1,
+    # sell near bar 4 — these MUST survive snapping or the equity curve stays flat.
+    fills = [
+        (base + 1 * step + latency, +1, 0.5, 101.0),
+        (base + 4 * step + latency, -1, 0.5, 110.0),
+    ]
+    start = 100_000.0
+
+    session = SessionResult.from_fills_and_bars(fills, bars, start)
+
+    # Both fills survived the snap-and-bucket (without the fix, by_ts.get(bar_ts) misses every fill).
+    assert len(session.fills) == 2
+    # The equity curve is NOT flat: holding 0.5 from bar1->bar4 captures the 101->110 move minus
+    # fees. A flat curve (every point == start) would mean all fills were dropped.
+    equities = [eq for _ts, eq in session.equity_curve]
+    assert not all(eq == pytest.approx(start) for eq in equities), "all fills dropped -> flat curve"
+    assert max(equities) > start + 1.0  # the long position actually accrued PnL
+
+    # The snapped fills land on real bar timestamps (the :59.999 grid), not the raw +latency stamps.
+    grid = {ts for ts, _c in bars}
+    assert all(ts in grid for ts, *_ in session.fills)
+
+
+def test_real_kline_gate_reconstructs_nonflat_equity_and_real_return_diff():
+    # The headline symptom: with fills at bar_ts+latency vs :59.999 klines, the equity reconstruction
+    # collapses to FLAT on both sides, so the equity-derived criteria become vacuous -- return_diff
+    # is exactly 0.0 (both curves never move) regardless of how far the fill PRICES diverge. The gate
+    # would then weigh execution fidelity using a return signal that is structurally zero.
+    base, step = 1_700_000_000_000_000_000, 60_000_000_000
+    close_offset = step - 1_000_000
+    latency = 2_000_000
+    closes = [100.0, 102.0, 105.0, 104.0, 108.0, 112.0]
+    bars = [(base + i * step + close_offset, c) for i, c in enumerate(closes)]
+    bt_fills = [
+        (base + 1 * step + latency, +1, 0.5, 102.0),
+        (base + 4 * step + latency, -1, 0.5, 108.0),
+    ]
+    # Sandbox = same signal timestamps, real testnet prices off by +20 bps (well past the 5 bps cap).
+    sb_fills = [(ts, s, q, px * (1.0 + 20.0 / 1e4)) for (ts, s, q, px) in bt_fills]
+    start = 100_000.0
+
+    bt_session = SessionResult.from_fills_and_bars(bt_fills, bars, start)
+    sb_session = SessionResult.from_fills_and_bars(sb_fills, bars, start)
+
+    # Each side reconstructs a NON-flat equity curve (pre-fix both stay pinned at `start`).
+    assert bt_session.final_return() != pytest.approx(0.0)
+    assert sb_session.final_return() != pytest.approx(0.0)
+
+    metrics = parity_metrics(bt_session, sb_session)
+    # The +20 bps price gap now actually moves the reconstructed returns apart: return_diff is no
+    # longer the vacuous 0.0 it collapsed to when every fill was dropped.
+    assert metrics.return_diff > 0.0
+    # Fills are matched (not dropped) -> the +20 bps deviation is actually measured.
+    assert metrics.signal_timing_agreement == pytest.approx(1.0)
+    assert metrics.fill_price_deviation_bps == pytest.approx(20.0, abs=0.5)
+
+    # And the gate is no longer vacuously blind: the 20 bps blowout is caught and blocks promotion.
+    verdict = evaluate(metrics, AcceptanceCriterion())
+    assert not verdict.passed
+    assert any("fill_price_deviation_bps" in r for r in verdict.reasons)

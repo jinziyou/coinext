@@ -79,3 +79,93 @@ jobs:
 
       - name: Pytest
         run: uv run pytest
+
+  # The security-critical live-edge crates (network/venue adapter/persistence + the ingest/exec-svc
+  # daemons) are WORKSPACE-EXCLUDED in the root Cargo.toml (they pull heavy network/db deps), so the
+  # `rust` job above never compiles or tests them. They each have their OWN manifest + Cargo.lock, so
+  # we drive them via --manifest-path here. Without this job, contract drift in these crates (e.g. a
+  # field added to a shared coinext-network type) goes uncaught until a live deploy.
+  excluded-crates:
+    name: rust (excluded live-edge crates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      # Pure-domain crates with unit tests — build AND test them.
+      - name: Test coinext-network
+        run: cargo test --manifest-path crates/coinext-network/Cargo.toml
+      - name: Test coinext-adapters-binance
+        run: cargo test --manifest-path crates/coinext-adapters/binance/Cargo.toml
+      - name: Test coinext-persistence
+        run: cargo test --manifest-path crates/coinext-persistence/Cargo.toml
+
+      # Service daemons (scaffolds today) — at least build them so their entrypoints stay compilable.
+      - name: Build coinext-ingest
+        run: cargo build --manifest-path crates/coinext-ingest/Cargo.toml
+      - name: Build coinext-exec-svc
+        run: cargo build --manifest-path crates/coinext-exec-svc/Cargo.toml
+
+  # Supply-chain hygiene: scan Rust + Python dependencies for known advisories (RUSTSEC / PyPI).
+  supply-chain:
+    name: supply-chain audit (cargo + pip)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Audit the workspace lockfile plus each excluded crate's own lockfile (they vendor separately).
+      - name: cargo audit (workspace)
+        run: cargo audit
+      - name: cargo audit (excluded crates)
+        run: |
+          for f in \
+            crates/coinext-network/Cargo.lock \
+            crates/coinext-adapters/binance/Cargo.lock \
+            crates/coinext-persistence/Cargo.lock \
+            crates/coinext-ingest/Cargo.lock \
+            crates/coinext-exec-svc/Cargo.lock; do
+            if [ -f "$f" ]; then echo "::group::cargo audit $f"; cargo audit -f "$f"; echo "::endgroup::"; fi
+          done
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      # pip-audit over the resolved Python dependency set (the uv lockfile -> requirements).
+      - name: pip-audit (python deps)
+        run: |
+          uv export --all-extras --no-emit-project --format requirements-txt -o /tmp/requirements.txt
+          uvx pip-audit -r /tmp/requirements.txt
+
+  # Validate the docker-compose topology parses (services, build contexts, anchors, dev/obs overlays)
+  # WITHOUT building images. `env_file: .env` is required, so seed it from .env.example first.
+  compose-validate:
+    name: docker compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Seed .env from the example (compose services use env_file)"
+        run: cp .env.example .env
+
+      - name: Validate base compose
+        run: docker compose -f docker-compose.yml config -q
+      - name: Validate base + dev overlay
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
+      - name: Validate base + observability overlay
+        run: docker compose -f docker-compose.yml -f docker-compose.obs.yml config -q

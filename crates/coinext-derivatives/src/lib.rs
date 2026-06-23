@@ -140,8 +140,17 @@ pub fn implied_vol(
         rate,
         vol,
     };
-    // Below intrinsic (discounted) -> no real vol prices it.
-    if market_price < intrinsic(&mk(0.0), is_call) - 1e-9 {
+    // Below the discounted European intrinsic -> no real vol prices it. The lower no-arbitrage
+    // bound discounts the strike: put >= max(K e^{-rT} - S, 0), call >= max(S - K e^{-rT}, 0).
+    // Using the undiscounted max(K-S,0)/max(S-K,0) here would wrongly reject valid deep-ITM
+    // premiums when r > 0.
+    let disc_strike = strike * (-rate * t_years).exp();
+    let disc_intrinsic = if is_call {
+        (spot - disc_strike).max(0.0)
+    } else {
+        (disc_strike - spot).max(0.0)
+    };
+    if market_price < disc_intrinsic - 1e-9 {
         return None;
     }
     // Newton from a 0.2 seed.
@@ -252,6 +261,35 @@ mod tests {
             let iv = implied_vol(p, i.spot, i.strike, i.t_years, i.rate, is_call).unwrap();
             assert!((iv - vol).abs() < 1e-4, "iv {iv} != {vol}");
         }
+    }
+
+    #[test]
+    fn implied_vol_accepts_deep_itm_premium_above_discounted_intrinsic() {
+        // S=80, K=100, r=10%, T=1, put price=15.
+        // Undiscounted intrinsic max(K-S,0) = 20 would wrongly reject 15 as "below intrinsic".
+        // Discounted intrinsic max(K e^{-rT} - S, 0) = max(100*e^-0.10 - 80, 0) ~= 10.48, so a
+        // premium of 15 is a legitimate quote and must back out a positive iv.
+        let iv = implied_vol(15.0, 80.0, 100.0, 1.0, 0.10, false);
+        let iv = iv.expect("deep-ITM put premium above discounted intrinsic must yield an iv");
+        assert!(iv > 0.0, "iv must be positive, got {iv}");
+        // Sanity: the recovered vol must reprice the quote.
+        let p = price(
+            &BsInputs {
+                spot: 80.0,
+                strike: 100.0,
+                t_years: 1.0,
+                rate: 0.10,
+                vol: iv,
+            },
+            false,
+        );
+        assert!((p - 15.0).abs() < 1e-4, "reprice {p} != 15.0");
+    }
+
+    #[test]
+    fn implied_vol_rejects_below_discounted_intrinsic() {
+        // Below the discounted European intrinsic (~10.48) there is no real vol that prices it.
+        assert_eq!(implied_vol(5.0, 80.0, 100.0, 1.0, 0.10, false), None);
     }
 
     #[test]

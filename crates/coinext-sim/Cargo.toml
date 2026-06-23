@@ -12,6 +12,8 @@ coinext-model.workspace = true
 coinext-cache.workspace = true
 coinext-ports.workspace = true
 rust_decimal.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 rust_decimal_macros.workspace = true

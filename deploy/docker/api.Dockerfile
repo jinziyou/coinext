@@ -30,6 +30,9 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY python ./python
 COPY config ./config
+# The FastAPI app lives in services/api/app.py (exposes `app`); it imports the coinext_* packages
+# from python/ lazily. Copy it in and put it on the import path.
+COPY services/api ./api
 
 # API extras (fastapi + uvicorn) + bus (Envelope decode) + config + obs.
 RUN uv pip install --system --no-cache \
@@ -42,10 +45,11 @@ RUN uv pip install --system --no-cache \
 COPY --from=rust-builder /wheels/*.whl /tmp/wheels/
 RUN uv pip install --system --no-cache /tmp/wheels/*.whl && rm -rf /tmp/wheels
 
-ENV PYTHONPATH=/app/python
+ENV PYTHONPATH=/app/python:/app/api
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
-# TODO: coinext_api.main:app exposes /healthz, /metrics, and the run/positions/PnL routes consumed by ui.
-# Prod runs a single uvicorn worker (the control plane is light); scale horizontally if needed.
-ENTRYPOINT ["uvicorn", "coinext_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# services/api/app.py exposes `app` (FastAPI) with /health, /runs, /positions, /backtest, the
+# /control/killswitch routes, and the /ws/live stream consumed by the ui. Prod runs a single uvicorn
+# worker (the control plane is light); scale horizontally if needed.
+ENTRYPOINT ["uvicorn", "app:app", "--app-dir", "/app/api", "--host", "0.0.0.0", "--port", "8000"]

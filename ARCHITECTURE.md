@@ -21,6 +21,17 @@ The whole design turns on one invariant — **backtest↔live parity**:
 > **Cache** contents, and the **Data/Execution clients** behind byte-identical ports. Every design
 > conflict is tie-broken in favor of parity.
 
+**Status of the invariant (honest scope).** Parity is **enforced structurally**, not yet **verified
+end-to-end**. Structurally: there is one `Strategy` trait, one engine set, one core loop, and the
+`ExecutionClient` port is implemented by BOTH the simulated venue (`coinext-sim`'s
+`SimExecutionClientPort`) and the live `BinanceExecutionClient`; the `Environment` enum is matched by
+the kernel, and the `LiveKernel` drives the same engines over the ports. What is **not** yet done: the
+`LiveKernel` is a compiling, unit-tested scaffold that has never run against a real venue, and the
+"mandatory sandbox-vs-backtest gate" currently compares the backtest to a *perturbed copy of the
+backtest* — it does not yet compare live/sandbox fills to backtest fills. So the strong, well-tested
+artifact today is the **deterministic backtest core**; live parity is a structurally-enforced design
+intent awaiting a real venue run.
+
 A separate vectorized research screen (`python/coinext_screen`) exists for fast parameter sweeps,
 but it is **explicitly non-authoritative**: it does not pass through the engines and never validates
 a strategy for promotion. Only the event-driven runner is parity-valid.
@@ -90,9 +101,14 @@ which keeps `coinext-model` sync-only:
 - `coinext-sim` — the `SimulatedExchange`: a `BrokerageModel` + matching + `DelayedEventQueue`.
 - `coinext-derivatives` — Black-Scholes price/greeks/implied-vol (pure-`f64`, zero-dep pricing math).
 
-**Kernel (`coinext-kernel`).** Owns the `Environment` enum (`Backtest` / `Sandbox` / `Live`), the
-backtest wiring (`BacktestConfig`), and the deterministic synchronous core loop (§4). Only the
-Environment selects the Clock and the Data/Exec clients.
+**Kernel (`coinext-kernel`).** Owns the `Environment` enum (`Backtest` / `Sandbox` / `Live`) and two
+runtimes that share one engine set: the `BacktestKernel` (deterministic synchronous core loop, §4,
+fed by the inherent sim API on the time-frontier) and the `LiveKernel` (sandbox/live, the SAME
+engines + Strategy driven over the `DataClient`/`ExecutionClient` PORTS via `tokio::mpsc`). The
+`Environment` is matched to pick the runtime and the Clock (`HistoricalClock` vs `SystemClock`); the
+clients are injected. The `LiveKernel` is a working scaffold (unit-tested with in-memory fake clients
+and the sim port adapter); it does not yet run against a real venue or implement live-ops reconnect /
+out-of-band kill-switch control (those live in `coinext-exec-svc`).
 
 **Rust hot path vs Python control plane.** The Rust crates are the **source of truth** for the
 domain and the engines. The Python packages under `python/` build research, strategy authoring,
@@ -166,12 +182,14 @@ look-ahead.
   tear sheet + bias screens (coinext_analytics)  Redis Envelope fan-out → trader / api / risk-monitor
 ```
 
-The **only** differences between the columns are the three Kernel-injected things: Clock, Cache, and
-clients. Everything in the core loop is byte-for-byte identical. On the live side a standalone Rust
-`ingestor` normalizes Binance WS frames and republishes on the Redis bus; warm-up is served from the
-**local HistoryReader** (never live REST at handler time), so indicators are identical to backtest;
-on restart, `reconcile()` replays the event log and diffs venue truth; an out-of-band `risk-monitor`
-can trip the global kill-switch.
+By construction the differences between the columns are the three Kernel-injected things — Clock,
+Cache, and clients — and the engines/Strategy above the ports are the same code in both the
+`BacktestKernel` and the `LiveKernel`. The live column above is the **intended** topology; today the
+right-hand side is a scaffold: the `LiveKernel` consumes the ports and folds reports through the
+shared engines (unit-tested with fakes), but the standalone `ingestor`, the `reconcile()`-on-restart
+flow, and the out-of-band `risk-monitor` kill-switch are not yet wired against a live venue. Warm-up
+is served from the **local HistoryReader** (never live REST at handler time) so indicators are
+identical to backtest — this part is real in both paths.
 
 ## 5. Tech stack & key tradeoffs
 
@@ -203,11 +221,15 @@ Key tradeoffs made explicit:
    Kernel swaps Clock/Cache/clients. Every conflict is tie-broken toward parity.
 2. **No `f64` in the domain.** Prices/quantities/money are integer-backed in both Rust and the
    Python mirror; floats are display-only.
-3. **The `ExecutionClient` port is the only backtest-vs-live seam.** `SimulatedExecutionClient`
-   (backtest), a testnet variant (sandbox), and `BinanceExecutionClient` (live) implement it
-   identically; everything above it (OMS/Risk/Portfolio/Strategy) is byte-for-byte the same. The
-   `SimulatedExchange` is parameterized by a **`BrokerageModel`** (fees / slippage / fill / latency)
-   **shared with live config**, so backtest and live agree on venue *economics*, not just order flow.
+3. **The `ExecutionClient` port is the only backtest-vs-live seam.** The simulated venue
+   (`coinext-sim`: the deterministic backtest uses its inherent pull API; `SimExecutionClientPort`
+   wraps it to implement the port) and `BinanceExecutionClient` (live) both implement the ONE
+   `coinext_ports::ExecutionClient` trait; everything above it (OMS/Risk/Portfolio/Strategy) is the
+   same code. The `SimulatedExchange` is parameterized by a **`BrokerageModel`** (fees / slippage /
+   fill / latency) **shared with live config**, so backtest and live agree on venue *economics*, not
+   just order flow. Caveat: this seam is structurally in place and unit-tested, but has not yet been
+   exercised against a live venue, so end-to-end byte-identical live-vs-backtest fills are an
+   intent, not a measured result.
 4. **One history path.** Warm-up is always served from the local `HistoryReader`, in both backtest
    and live — never live REST at handler time — so streaming indicators are byte-identical across
    environments.
@@ -252,7 +274,7 @@ agreed module names. See [`deploy/README.md`](deploy/README.md) and [`services/R
   deferred (live/ops), and open questions.
 - [`docs/TESTNET.md`](docs/TESTNET.md) — the end-to-end testnet runbook and the parity promotion gate.
 - [`tests/parity/README.md`](tests/parity/README.md) — the two parity checks (advisory cross-check +
-  mandatory sandbox-vs-backtest gate).
+  the sandbox-vs-backtest gate, which currently compares backtest-vs-perturbed-backtest, not live).
 - Sub-package READMEs: [`crates/coinext-adapters`](crates/coinext-adapters/README.md),
   [`services/*`](services/README.md), [`deploy/`](deploy/README.md),
   [`notebooks/`](notebooks/README.md), [`data/sample/`](data/sample/README.md).

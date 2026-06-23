@@ -26,11 +26,12 @@ use coinext_network::{
 };
 use coinext_ports::{DataClient, PortError, PortResult, SubKind, Subscription};
 use rust_decimal::Decimal;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::str::FromStr;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
 
+use crate::book::{ApplyOutcome, DepthUpdate, LocalOrderBook};
 use crate::config::BinanceConfig;
 
 /// Default price/size precision used when normalizing public WS frames before an `Instrument` is
@@ -43,7 +44,8 @@ const WIRE_PRECISION: u8 = 8;
 /// pushes normalized `MarketEvent`s into `tx`; the core takes `rx` once via `take_stream`.
 pub struct BinanceDataClient {
     config: BinanceConfig,
-    rest: RestClient,
+    /// Shared so the WS pump's depth-resync task can fetch REST order-book snapshots.
+    rest: std::sync::Arc<RestClient>,
     /// Outbound side of the core data seam; the WS task holds a clone and pushes normalized events.
     tx: mpsc::Sender<MarketEvent>,
     /// Inbound side handed to the core exactly once at wiring (`take_stream`).
@@ -72,12 +74,28 @@ impl BinanceDataClient {
         .map_err(crate::net_to_port)?;
         Ok(BinanceDataClient {
             config,
-            rest,
+            rest: std::sync::Arc::new(rest),
             tx,
             rx: Some(rx),
             streams: Mutex::new(BTreeSet::new()),
             ws: None,
         })
+    }
+
+    /// Fetch a depth snapshot's `lastUpdateId` for `symbol` (`GET /api/v3/depth?symbol&limit=1000`).
+    async fn fetch_depth_snapshot_last_id(
+        rest: &RestClient,
+        symbol: &str,
+    ) -> PortResult<u64> {
+        let resp = rest
+            .send(
+                RestRequest::get("/api/v3/depth", 50)
+                    .with_param("symbol", symbol.to_string())
+                    .with_param("limit", "1000"),
+            )
+            .await
+            .map_err(crate::net_to_port)?;
+        parse_depth_snapshot_last_id(&resp.body).map_err(PortError::Io)
     }
 
     /// The Binance stream names for a subscription (combined-stream form, lower-cased symbol).
@@ -118,23 +136,27 @@ impl DataClient for BinanceDataClient {
         });
         let mut rx = ws.connect();
         let tx = self.tx.clone();
+        let rest = self.rest.clone();
 
-        // Spawn the normalize pump: combined-stream frames are `{"stream":..,"data":{..}}`.
+        // Spawn the normalize pump: combined-stream frames are `{"stream":..,"data":{..}}`. The
+        // pump owns a `DepthResyncer` so the live book is repaired (REST snapshot + diff replay) on
+        // any detected gap or reconnect — without this the book silently drifts after a dropped
+        // frame.
         tokio::spawn(async move {
+            let mut resyncer = DepthResyncer::new();
             while let Some(msg) = rx.recv().await {
                 match msg {
                     WsMessage::Text(text) => {
-                        if let Some(events) = normalize_combined_frame(&text, now_unix_ms()) {
-                            for ev in events {
-                                if tx.send(ev).await.is_err() {
-                                    return; // core dropped the receiver
-                                }
-                            }
+                        if process_frame(&text, &tx, &rest, &mut resyncer)
+                            .await
+                            .is_err()
+                        {
+                            return; // core dropped the receiver
                         }
                     }
-                    // On reconnect the book streams need resync; the data engine refetches a
-                    // snapshot. The pure resync state machine is `crate::book::LocalOrderBook`.
-                    WsMessage::Reconnected => {}
+                    // On reconnect every book stream is suspect: mark all for resync so the next
+                    // diff per symbol re-bridges from a fresh snapshot.
+                    WsMessage::Reconnected => resyncer.mark_all_for_resync(),
                 }
             }
         });
@@ -236,11 +258,74 @@ pub fn normalize_combined_frame(text: &str, ts_init_ms: u64) -> Option<Vec<Marke
         let tick = normalize_book_ticker(data, ts_init).ok()?;
         Some(vec![MarketEvent::Quote(tick)])
     } else if stream.contains("@depth") {
-        let deltas = normalize_depth(data, ts_init).ok()?;
+        let (_update, deltas) = normalize_depth(data, ts_init).ok()?;
         Some(deltas.into_iter().map(MarketEvent::Delta).collect())
     } else {
         None
     }
+}
+
+/// Process one WS frame: parse, dispatch trade/quote events directly, and run depth diffs through
+/// the gap state machine — fetching a REST snapshot and replaying buffered diffs on any gap so the
+/// emitted book deltas are correct. Returns `Err(())` only when the core dropped the receiver (the
+/// pump should stop). Frames that fail to parse are skipped, matching the prior best-effort policy.
+async fn process_frame(
+    text: &str,
+    tx: &mpsc::Sender<MarketEvent>,
+    rest: &RestClient,
+    resyncer: &mut DepthResyncer,
+) -> Result<(), ()> {
+    let ts_init_ms = now_unix_ms();
+    let frame: serde_json::Value = match serde_json::from_str(text) {
+        Ok(f) => f,
+        Err(_) => return Ok(()),
+    };
+    let Some(stream) = frame.get("stream").and_then(|v| v.as_str()) else {
+        return Ok(());
+    };
+    let Some(data) = frame.get("data") else {
+        return Ok(());
+    };
+    let ts_init = UnixNanos(ts_init_ms.saturating_mul(1_000_000));
+
+    if stream.contains("@depth") {
+        // Depth diff: thread the update ids through the resyncer before emitting deltas.
+        let (update, deltas) = match normalize_depth(data, ts_init) {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
+        let symbol = match str_field(data, "s") {
+            Ok(s) => s.to_string(),
+            Err(_) => return Ok(()),
+        };
+        let mut action = resyncer.on_diff(&symbol, update);
+        // Loop in case the first snapshot is already stale relative to the buffered diffs.
+        while action == DepthAction::NeedSnapshot {
+            match BinanceDataClient::fetch_depth_snapshot_last_id(rest, &symbol).await {
+                Ok(last_id) => action = resyncer.on_snapshot(&symbol, last_id),
+                Err(_) => return Ok(()), // snapshot fetch failed; try again on the next diff
+            }
+        }
+        // Only emit deltas once the book is bridged and applying in order.
+        if resyncer.is_synced(&symbol) {
+            for ev in deltas.into_iter().map(MarketEvent::Delta) {
+                if tx.send(ev).await.is_err() {
+                    return Err(());
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // Trade / quote: stateless, emit directly.
+    if let Some(events) = normalize_combined_frame(text, ts_init_ms) {
+        for ev in events {
+            if tx.send(ev).await.is_err() {
+                return Err(());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// PURE: a Binance `@trade` event -> `TradeTick`. The taker side is Buy unless the buyer is the
@@ -290,16 +375,30 @@ pub fn normalize_book_ticker(
     })
 }
 
-/// PURE: a Binance `@depth@100ms` diff event -> a flat `Vec<OrderBookDelta>` (bids then asks). A
-/// zero size means the level was removed (`BookAction::Delete`); otherwise it is an update. The
-/// diff's last update id `u` becomes each delta's `sequence`.
+/// PURE: a Binance `@depth@100ms` diff event -> the diff's update ids plus a flat
+/// `Vec<OrderBookDelta>` (bids then asks). A zero size means the level was removed
+/// (`BookAction::Delete`); otherwise it is an update. The diff's last update id `u` becomes each
+/// delta's `sequence`.
+///
+/// The returned [`DepthUpdate`] PRESERVES the diff's `U` (first update id) and `pu` (previous `u`,
+/// when present) so the caller's gap-detection state machine ([`crate::book::LocalOrderBook`]) can
+/// verify continuity — these ids are NOT carried on the per-level `OrderBookDelta`, so dropping them
+/// here would make gap detection impossible.
 pub fn normalize_depth(
     data: &serde_json::Value,
     ts_init: UnixNanos,
-) -> Result<Vec<OrderBookDelta>, String> {
+) -> Result<(DepthUpdate, Vec<OrderBookDelta>), String> {
     let symbol = str_field(data, "s")?;
     let id = instrument_id(symbol);
+    let first_update_id = num_field(data, "U")?;
     let sequence = num_field(data, "u")?;
+    // `pu` is only on the diff-depth stream; the legacy partial-depth stream omits it.
+    let prev_update_id = data.get("pu").and_then(|v| v.as_u64());
+    let update = DepthUpdate {
+        first_update_id,
+        last_update_id: sequence,
+        prev_update_id,
+    };
     let ts_event = UnixNanos(num_field(data, "E")?.saturating_mul(1_000_000));
 
     let mut out = Vec::new();
@@ -339,7 +438,121 @@ pub fn normalize_depth(
             });
         }
     }
-    Ok(out)
+    Ok((update, out))
+}
+
+/// What the depth handler must do after feeding one diff into the gap state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepthAction {
+    /// The diff was in-order (or harmlessly stale): nothing to do.
+    Continue,
+    /// A gap (or a not-yet-synced book) was detected: the caller MUST fetch a REST snapshot for
+    /// `symbol` and feed it back via [`DepthResyncer::on_snapshot`] before continuing.
+    NeedSnapshot,
+}
+
+/// Wires the pure [`LocalOrderBook`] gap state machine into the live depth-diff data path. Tracks a
+/// book per instrument; on a detected gap (or on the very first diff / a reconnect) it tells the
+/// caller to fetch a REST snapshot, then replays the buffered diffs over it.
+///
+/// The state transitions are SYNCHRONOUS and network-free (so they are unit-testable); the actual
+/// REST snapshot fetch is performed by the async caller in the WS pump.
+#[derive(Default)]
+pub struct DepthResyncer {
+    /// Per-symbol gap-detection book + buffered diffs awaiting a snapshot.
+    books: HashMap<String, BookState>,
+}
+
+#[derive(Default)]
+struct BookState {
+    book: LocalOrderBook,
+    /// Diffs buffered while a snapshot is in flight (replayed once it lands).
+    buffer: Vec<DepthUpdate>,
+    /// Whether we are currently awaiting a REST snapshot for this symbol.
+    awaiting_snapshot: bool,
+}
+
+impl DepthResyncer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Force every tracked book to resync (called on a WS `Reconnected`): the next diff per symbol
+    /// will trigger a fresh snapshot fetch.
+    pub fn mark_all_for_resync(&mut self) {
+        for state in self.books.values_mut() {
+            state.book = LocalOrderBook::new();
+            state.buffer.clear();
+            state.awaiting_snapshot = false;
+        }
+    }
+
+    /// Feed one parsed diff. Returns whether the caller must fetch a snapshot for `symbol`. While a
+    /// snapshot is awaited the diff is buffered for replay.
+    pub fn on_diff(&mut self, symbol: &str, update: DepthUpdate) -> DepthAction {
+        let state = self.books.entry(symbol.to_string()).or_default();
+        if state.awaiting_snapshot {
+            // Snapshot in flight: buffer and keep waiting.
+            state.buffer.push(update);
+            return DepthAction::NeedSnapshot;
+        }
+        if !state.book.is_synced() && state.book.last_update_id() == 0 {
+            // Never synced (fresh book / post-reconnect): need a snapshot to bridge from.
+            state.awaiting_snapshot = true;
+            state.buffer.push(update);
+            return DepthAction::NeedSnapshot;
+        }
+        match state.book.apply_diff(&update) {
+            ApplyOutcome::Applied | ApplyOutcome::Skipped => DepthAction::Continue,
+            ApplyOutcome::Resync => {
+                // A gap mid-stream: start buffering and ask for a fresh snapshot.
+                state.awaiting_snapshot = true;
+                state.buffer.clear();
+                state.buffer.push(update);
+                DepthAction::NeedSnapshot
+            }
+        }
+    }
+
+    /// Install a freshly fetched snapshot `lastUpdateId` and replay the buffered diffs over it,
+    /// dropping the stale ones. Returns `NeedSnapshot` if the snapshot was already stale relative to
+    /// the buffered diffs (the caller must fetch again).
+    pub fn on_snapshot(&mut self, symbol: &str, snapshot_last_id: u64) -> DepthAction {
+        let state = self.books.entry(symbol.to_string()).or_default();
+        state.book.install_snapshot(snapshot_last_id);
+        state.awaiting_snapshot = false;
+        let buffered = std::mem::take(&mut state.buffer);
+        for update in buffered {
+            // Drop diffs entirely at/before the snapshot; bridge with the first that spans it.
+            if update.last_update_id <= snapshot_last_id {
+                continue;
+            }
+            if state.book.apply_diff(&update) == ApplyOutcome::Resync {
+                // Snapshot is stale relative to the buffer: must refetch.
+                state.awaiting_snapshot = true;
+                state.buffer.clear();
+                return DepthAction::NeedSnapshot;
+            }
+        }
+        DepthAction::Continue
+    }
+
+    /// Whether the book for `symbol` has bridged a snapshot and is applying diffs in order.
+    pub fn is_synced(&self, symbol: &str) -> bool {
+        self.books
+            .get(symbol)
+            .map(|s| s.book.is_synced())
+            .unwrap_or(false)
+    }
+}
+
+/// PURE: extract `lastUpdateId` from a `GET /api/v3/depth` snapshot body.
+pub fn parse_depth_snapshot_last_id(body: &str) -> Result<u64, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid depth snapshot json: {e}"))?;
+    v.get("lastUpdateId")
+        .and_then(|x| x.as_u64())
+        .ok_or_else(|| "depth snapshot missing lastUpdateId".to_string())
 }
 
 /// PURE: a Binance kline row -> `Bar`. The REST `klines` row is a 12-element array:
@@ -415,6 +628,14 @@ mod tests {
         UnixNanos(1_700_000_000_000 * 1_000_000)
     }
 
+    fn upd(u_first: u64, u_last: u64, pu: Option<u64>) -> DepthUpdate {
+        DepthUpdate {
+            first_update_id: u_first,
+            last_update_id: u_last,
+            prev_update_id: pu,
+        }
+    }
+
     #[test]
     fn normalize_trade_sets_aggressor_from_maker_flag() {
         // m=false -> buyer is taker -> aggressor Buy.
@@ -463,7 +684,7 @@ mod tests {
                 "a":[["50001.00","2.00000000"]]}"#,
         )
         .unwrap();
-        let deltas = normalize_depth(&data, ti()).unwrap();
+        let (update, deltas) = normalize_depth(&data, ti()).unwrap();
         assert_eq!(deltas.len(), 3);
         // bids first
         assert_eq!(deltas[0].side, OrderSide::Buy);
@@ -478,6 +699,93 @@ mod tests {
         // sequence is the diff's last update id `u`.
         assert_eq!(deltas[0].sequence, 110);
         assert_eq!(deltas[0].ts_event, UnixNanos(1_700_000_000_200 * 1_000_000));
+        // The diff's U (first) and u (last) update ids are PRESERVED for gap detection.
+        assert_eq!(update.first_update_id, 100);
+        assert_eq!(update.last_update_id, 110);
+        // This (combined) depth frame omits `pu`, so it is None.
+        assert_eq!(update.prev_update_id, None);
+    }
+
+    #[test]
+    fn normalize_depth_preserves_pu_when_present() {
+        // The diff-depth stream carries `pu` (previous event's `u`); it must be preserved so the
+        // resync state machine can check contiguity (`pu == previous u`).
+        let data: serde_json::Value = serde_json::from_str(
+            r#"{"e":"depthUpdate","E":1,"s":"BTCUSDT","U":111,"u":120,"pu":110,
+                "b":[["49999.00","1.00000000"]],"a":[]}"#,
+        )
+        .unwrap();
+        let (update, _deltas) = normalize_depth(&data, ti()).unwrap();
+        assert_eq!(update.first_update_id, 111);
+        assert_eq!(update.last_update_id, 120);
+        assert_eq!(update.prev_update_id, Some(110));
+    }
+
+    #[test]
+    fn resyncer_needs_snapshot_then_bridges_and_applies() {
+        let mut r = DepthResyncer::new();
+        // First diff ever -> must fetch a snapshot.
+        assert_eq!(
+            r.on_diff("BTCUSDT", upd(99, 105, None)),
+            DepthAction::NeedSnapshot
+        );
+        assert!(!r.is_synced("BTCUSDT"));
+        // Snapshot lastUpdateId=100 bridges the buffered diff (U=99 <= 101 <= u=105).
+        assert_eq!(r.on_snapshot("BTCUSDT", 100), DepthAction::Continue);
+        assert!(r.is_synced("BTCUSDT"));
+        // Contiguous follow-up applies without a new snapshot.
+        assert_eq!(
+            r.on_diff("BTCUSDT", upd(106, 110, Some(105))),
+            DepthAction::Continue
+        );
+        assert!(r.is_synced("BTCUSDT"));
+    }
+
+    #[test]
+    fn resyncer_triggers_snapshot_on_simulated_gap() {
+        let mut r = DepthResyncer::new();
+        assert_eq!(
+            r.on_diff("BTCUSDT", upd(99, 105, None)),
+            DepthAction::NeedSnapshot
+        );
+        assert_eq!(r.on_snapshot("BTCUSDT", 100), DepthAction::Continue);
+        assert!(r.is_synced("BTCUSDT"));
+        // A GAP: pu=108 but the last applied u was 105 -> a dropped frame -> resync required.
+        assert_eq!(
+            r.on_diff("BTCUSDT", upd(109, 115, Some(108))),
+            DepthAction::NeedSnapshot
+        );
+        assert!(!r.is_synced("BTCUSDT"));
+        // A fresh snapshot past the gap re-bridges from the buffered diff (U=109 <= 113 <= u=115).
+        assert_eq!(r.on_snapshot("BTCUSDT", 112), DepthAction::Continue);
+        assert!(r.is_synced("BTCUSDT"));
+    }
+
+    #[test]
+    fn resyncer_reconnect_forces_fresh_snapshot() {
+        let mut r = DepthResyncer::new();
+        assert_eq!(
+            r.on_diff("BTCUSDT", upd(99, 105, None)),
+            DepthAction::NeedSnapshot
+        );
+        assert_eq!(r.on_snapshot("BTCUSDT", 100), DepthAction::Continue);
+        assert!(r.is_synced("BTCUSDT"));
+        // A reconnect invalidates every book: the next diff must re-fetch a snapshot.
+        r.mark_all_for_resync();
+        assert!(!r.is_synced("BTCUSDT"));
+        assert_eq!(
+            r.on_diff("BTCUSDT", upd(120, 130, Some(110))),
+            DepthAction::NeedSnapshot
+        );
+    }
+
+    #[test]
+    fn parse_depth_snapshot_last_id_extracts_field() {
+        assert_eq!(
+            parse_depth_snapshot_last_id(r#"{"lastUpdateId":160,"bids":[],"asks":[]}"#).unwrap(),
+            160
+        );
+        assert!(parse_depth_snapshot_last_id("{}").is_err());
     }
 
     #[test]

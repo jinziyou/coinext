@@ -28,8 +28,8 @@ RUN npm run build
 
 # --- stage 2: serve static files with nginx ---
 FROM nginx:alpine AS runtime
-# SPA-friendly nginx config (history-API fallback to index.html). Provided by the UI area;
-# falls back to the image default if absent.
+# SPA-friendly nginx config: history-API fallback to index.html + a /api/ reverse proxy to the
+# `api` service (so a same-origin VITE_API_BASE=/api avoids CORS). See services/ui/nginx.conf.
 COPY services/ui/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/ui/dist /usr/share/nginx/html
 

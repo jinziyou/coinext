@@ -60,6 +60,11 @@ pub struct RestRequest {
     pub body: Option<String>,
     /// Whether this endpoint requires request signing (trading endpoints do).
     pub signed: bool,
+    /// Whether to attach the `X-MBX-APIKEY` header WITHOUT signing the request. Binance's
+    /// `userDataStream` (listenKey create/keepalive/close) endpoints are api-key-only: they need the
+    /// key header but reject a signature/timestamp. `signed` requests always attach the key too, so
+    /// this flag is only meaningful when `signed == false`.
+    pub api_key: bool,
     /// Venue weight cost, charged against the [`RateLimiter`] before sending.
     pub weight: u32,
 }
@@ -73,11 +78,12 @@ impl RestRequest {
             query: Vec::new(),
             body: None,
             signed: false,
+            api_key: false,
             weight,
         }
     }
 
-    /// A signed request (order submit/cancel, openOrders, user-stream listenKey).
+    /// A signed request (order submit/cancel, openOrders).
     pub fn signed(method: HttpMethod, path: impl Into<String>, weight: u32) -> Self {
         RestRequest {
             method,
@@ -85,6 +91,22 @@ impl RestRequest {
             query: Vec::new(),
             body: None,
             signed: true,
+            api_key: false,
+            weight,
+        }
+    }
+
+    /// An api-key-only request: attaches `X-MBX-APIKEY` but does NOT sign (no HMAC/timestamp). Used
+    /// for Binance's `userDataStream` listenKey create/keepalive/close, which require the key header
+    /// but reject a signature.
+    pub fn api_key(method: HttpMethod, path: impl Into<String>, weight: u32) -> Self {
+        RestRequest {
+            method,
+            path: path.into(),
+            query: Vec::new(),
+            body: None,
+            signed: false,
+            api_key: true,
             weight,
         }
     }
@@ -192,9 +214,11 @@ impl RestClient {
             }
 
             let mut headers = HeaderMap::new();
-            if req.signed {
+            // Signed requests AND api-key-only requests both attach the key header; only signed
+            // requests also append the HMAC signature (done in `build_query_string`).
+            if req.signed || req.api_key {
                 let key = self.creds.api_key.as_deref().ok_or_else(|| {
-                    NetError::Auth("signing requested but no api key configured".into())
+                    NetError::Auth("api key required but none configured".into())
                 })?;
                 headers.insert(
                     "X-MBX-APIKEY",
@@ -307,6 +331,18 @@ mod tests {
         assert!(q.starts_with(unsigned), "got: {q}");
         let expected_sig = Signer::new("SECRET").sign(unsigned);
         assert!(q.ends_with(&format!("signature={expected_sig}")), "got: {q}");
+    }
+
+    #[test]
+    fn api_key_request_is_unsigned_but_flagged() {
+        // An api-key-only request (listenKey) carries the key header flag but is NOT signed, so its
+        // query stays plain (no recvWindow/timestamp/signature appended).
+        let c = client_with_secret();
+        let req = RestRequest::api_key(HttpMethod::Post, "/api/v3/userDataStream", 2);
+        assert!(req.api_key, "api_key flag must be set");
+        assert!(!req.signed, "api_key request must not be signed");
+        let q = c.build_query_string(&req, 1_700_000_000_000).unwrap();
+        assert_eq!(q, "", "unsigned api-key request appends no signature/timestamp");
     }
 
     #[test]

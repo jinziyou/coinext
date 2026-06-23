@@ -61,9 +61,10 @@ services:
     volumes:
       - ./python:/app/python:ro
       - ./config:/app/config:ro
+      - ./services/trader:/app/trader:ro
       - ./data:/data
     # Restart-to-reload by default. For auto-reload uncomment:
-    # command: ["uv", "run", "watchfiles", "coinext live run", "python"]
+    # command: ["uv", "run", "watchfiles", "python -m main", "python", "trader"]
 
   risk-monitor:
     ports:
@@ -73,6 +74,7 @@ services:
     volumes:
       - ./python:/app/python:ro
       - ./config:/app/config:ro
+      - ./services/risk-monitor:/app/risk_monitor:ro
 
   api:
     ports:
@@ -82,9 +84,10 @@ services:
     volumes:
       - ./python:/app/python:ro
       - ./config:/app/config:ro
+      - ./services/api:/app/api:ro
       - ./data:/data
-    # uvicorn auto-reload on bind-mounted python/ (pure-Python changes only; see header note).
-    command: ["uvicorn", "coinext_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/python"]
+    # uvicorn auto-reload on the bind-mounted app + python/ tree (pure-Python changes only; see header note).
+    command: ["uvicorn", "app:app", "--app-dir", "/app/api", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/api", "--reload-dir", "/app/python"]
 
   # --- UI: serve the built bundle on :3000; use host `npm run dev` for HMR ---
   ui:

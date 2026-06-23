@@ -1,10 +1,16 @@
 //! `coinext-kernel` — the single place backtest vs live differs, and the deterministic synchronous core
-//! loop. For backtest it merge-sorts four event sources by timestamp — incoming market data, due
-//! delayed execution reports from the sim's DelayedEventQueue, due timers from the
+//! loop. For backtest the [`BacktestKernel`] merge-sorts four event sources by timestamp — incoming
+//! market data, due delayed execution reports from the sim's DelayedEventQueue, due timers from the
 //! HistoricalClock, and due dated-contract expiry/settlement from the expiry schedule — and
-//! dispatches each to the engines and the Strategy SYNCHRONOUSLY. The same
-//! engines, Strategy, RiskEngine and Cache are used in live; only the Clock and Data/Execution
-//! clients are swapped (the parity invariant).
+//! dispatches each to the engines and the Strategy SYNCHRONOUSLY.
+//!
+//! For sandbox/live the [`LiveKernel`] runs the SAME engine set + Strategy, but driven by the
+//! `coinext_ports::DataClient`/`ExecutionClient` PORTS (market events + execution reports arrive over
+//! `tokio::mpsc` instead of the inherent sim queue). [`Environment`] selects which kernel is used;
+//! only the Clock and the Data/Execution clients change — the OMS/Risk/Portfolio/Strategy above the
+//! `ExecutionClient` seam are byte-for-byte identical (the parity invariant). NOTE: the live path is
+//! a structural scaffold — it consumes the ports and folds reports through the shared engines, but
+//! end-to-end live/sandbox trading against a real venue is not yet exercised.
 
 use coinext_bus::InProcBus;
 use coinext_cache::Cache;
@@ -26,13 +32,21 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-/// Environment the kernel targets. Reserved for the live kernel — the current BacktestKernel does
-/// not switch on this yet.
+/// Environment the kernel targets. `Backtest` runs the deterministic [`BacktestKernel`];
+/// `Sandbox`/`Live` run the [`LiveKernel`], which consumes the SAME engine set through the
+/// `ExecutionClient`/`DataClient` ports (the shared seam).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
     Backtest,
     Sandbox,
     Live,
+}
+
+impl Environment {
+    /// True for the port-driven live/sandbox path (everything except deterministic backtest).
+    pub fn is_live(self) -> bool {
+        matches!(self, Environment::Sandbox | Environment::Live)
+    }
 }
 
 /// Backtest wiring configuration.
@@ -47,6 +61,9 @@ pub struct BacktestConfig {
 }
 
 impl BacktestConfig {
+    /// Construct with UNLIMITED risk limits — an explicit, test/example-friendly default. Production
+    /// wiring should prefer [`BacktestConfig::with_env_risk`] (or set `.risk` explicitly) so the
+    /// notional/position/gross/leverage limits are actually enforced rather than inert.
     pub fn new(
         venue: Venue,
         instruments: Vec<Arc<dyn Instrument>>,
@@ -62,6 +79,19 @@ impl BacktestConfig {
             brokerage: Box::new(DefaultBrokerageModel::default()),
             start_ns: UnixNanos::ZERO,
         }
+    }
+
+    /// Like [`BacktestConfig::new`] but populates the risk limits from the environment
+    /// (`RiskLimits::from_env`), so configured notional/position/gross/leverage caps are enforced.
+    pub fn with_env_risk(
+        venue: Venue,
+        instruments: Vec<Arc<dyn Instrument>>,
+        settle: Currency,
+        starting_balance: Money,
+    ) -> Self {
+        let mut cfg = Self::new(venue, instruments, settle, starting_balance);
+        cfg.risk = RiskLimits::from_env(settle);
+        cfg
     }
 }
 
@@ -187,6 +217,15 @@ impl BacktestKernel {
     /// Access the in-process bus (e.g. to subscribe an analytics/observer before running).
     pub fn bus(&self) -> &InProcBus {
         &self.bus
+    }
+
+    /// Engage (or release) the global kill-switch on the authoritative RiskGate. Once engaged,
+    /// `RiskGate::check` denies EVERY subsequent order (`DenyReason::KillSwitchEngaged`) until it is
+    /// released, halting new exposure in-process. (Cross-service bus/exec-svc propagation is a live
+    /// concern handled where those stubs are wired.)
+    pub fn set_kill_switch(&self, engaged: bool) {
+        use coinext_ports::RiskEngine;
+        self.risk.set_kill_switch(engaged);
     }
 
     /// Current portfolio equity = starting balance + realized + unrealized (settlement ccy, f64).
@@ -511,6 +550,251 @@ impl BacktestKernel {
     }
 }
 
+/// The live/sandbox kernel — the SAME engine set + Strategy as [`BacktestKernel`], driven by the
+/// `ExecutionClient`/`DataClient` PORTS instead of the inherent sim API. This is the structural
+/// enforcement of the parity seam: market data and execution reports flow over the ports, while the
+/// DataEngine / ExecutionEngine / RiskGate / Portfolio / Strategy above them are byte-for-byte the
+/// same code the backtest runs.
+///
+/// It is generic over no concrete venue (it holds `Box<dyn ExecutionClient>` + `Box<dyn DataClient>`),
+/// so it compiles in the default workspace build WITHOUT pulling in the excluded venue/network crates;
+/// a real venue (e.g. `coinext-adapters-binance`) is injected by the live service that owns those deps.
+///
+/// SCAFFOLD: the run loop is single-threaded (the core is `Rc`/`RefCell`, deterministic-by-design),
+/// connects the clients, takes their streams, and drains BOTH — folding reports through the same OMS
+/// `apply_report` and dispatching market events to the same DataEngine + Strategy. It does not yet
+/// implement reconnect/reconcile or out-of-band kill-switch control; those are live-ops concerns
+/// wired by `coinext-exec-svc`. Crucially, `Environment` is now MATCHED and the live path CONSUMES
+/// the port, so the shared seam is structurally real rather than aspirational.
+pub struct LiveKernel {
+    env: Environment,
+    clock: Rc<dyn Clock>,
+    cache: Rc<RefCell<Cache>>,
+    bus: InProcBus,
+    data_engine: DataEngine,
+    exec_engine: ExecutionEngine,
+    risk: RiskGate,
+    portfolio: PortfolioState,
+    strategy: Box<dyn Strategy>,
+    ctx: StrategyContext,
+    exec_client: Box<dyn coinext_ports::ExecutionClient>,
+    data_client: Box<dyn coinext_ports::DataClient>,
+}
+
+impl LiveKernel {
+    /// Build a live/sandbox kernel. Panics if `env` is `Backtest` (use [`BacktestKernel`] for that —
+    /// the two paths are intentionally distinct: backtest is deterministic-synchronous, live is
+    /// port-driven). The clock is the wall clock; the clients are the injected venue ports.
+    pub fn build(
+        env: Environment,
+        config: BacktestConfig,
+        strategy_id: StrategyId,
+        strategy: Box<dyn Strategy>,
+        exec_client: Box<dyn coinext_ports::ExecutionClient>,
+        data_client: Box<dyn coinext_ports::DataClient>,
+    ) -> Self {
+        assert!(
+            env.is_live(),
+            "LiveKernel requires Environment::Sandbox or ::Live; use BacktestKernel for Backtest"
+        );
+        let clock: Rc<dyn Clock> = Rc::new(coinext_core::SystemClock::new());
+        let cache = Rc::new(RefCell::new(Cache::new()));
+        {
+            let mut c = cache.borrow_mut();
+            for inst in &config.instruments {
+                c.add_instrument(inst.clone());
+            }
+            let mut account = coinext_model::AccountState::new(
+                coinext_model::AccountId::from("LIVE"),
+                config.settle,
+            );
+            account.set_balance(config.starting_balance);
+            c.set_account(account);
+        }
+        let risk = RiskGate::new(cache.clone(), config.risk);
+        let portfolio = PortfolioState::new(cache.clone(), config.settle);
+        let data_engine = DataEngine::new(cache.clone());
+        let exec_engine = ExecutionEngine::new(cache.clone());
+        let ctx = StrategyContext::new(strategy_id, clock.clone(), cache.clone());
+        LiveKernel {
+            env,
+            clock,
+            cache,
+            bus: InProcBus::new(),
+            data_engine,
+            exec_engine,
+            risk,
+            portfolio,
+            strategy,
+            ctx,
+            exec_client,
+            data_client,
+        }
+    }
+
+    /// The environment this kernel targets (`Sandbox` or `Live`).
+    pub fn environment(&self) -> Environment {
+        self.env
+    }
+
+    pub fn bus(&self) -> &InProcBus {
+        &self.bus
+    }
+
+    /// Connect the clients, take their streams, and drain the unified event loop until both streams
+    /// close. Market events feed the DataEngine + Strategy; execution reports are folded through the
+    /// SAME OMS `apply_report`; strategy order intents are routed through the RiskGate to the
+    /// `ExecutionClient` port. Single-threaded by design (the core is `Rc`/`RefCell`).
+    pub async fn run(&mut self) -> coinext_ports::PortResult<()> {
+        // Connect both ports, then take their (single-consumer) streams.
+        self.data_client.connect().await?;
+        self.exec_client.connect().await?;
+        let mut market_rx = self.data_client.take_stream();
+        let mut report_rx = self.exec_client.take_reports();
+
+        // On startup reconcile venue truth into the OMS before accepting new flow (no-op for the sim).
+        let now = self.clock.now_ns();
+        for report in self.exec_client.reconcile().await? {
+            for ev in self.exec_engine.apply_report(report, now) {
+                self.notify_event(&ev);
+            }
+        }
+
+        self.strategy.on_start(&mut self.ctx);
+        self.route_outbox().await?;
+
+        // Drain both inbound streams until both close. Reports are folded first (so a fill is visible
+        // before the next strategy decision), then the market event drives the Strategy.
+        loop {
+            tokio::select! {
+                biased;
+                report = report_rx.recv() => match report {
+                    Some(report) => {
+                        let now = self.clock.now_ns();
+                        for ev in self.exec_engine.apply_report(report, now) {
+                            self.notify_event(&ev);
+                        }
+                        self.route_outbox().await?;
+                    }
+                    None => break,
+                },
+                market = market_rx.recv() => match market {
+                    Some(ev) => {
+                        self.data_engine.process(&ev, &self.bus);
+                        self.dispatch_market(&ev);
+                        self.route_outbox().await?;
+                    }
+                    None => break,
+                },
+            }
+        }
+
+        self.strategy.on_stop(&mut self.ctx);
+        self.route_outbox().await?;
+        self.data_client.disconnect().await?;
+        self.exec_client.disconnect().await?;
+        Ok(())
+    }
+
+    fn dispatch_market(&mut self, ev: &MarketEvent) {
+        match ev {
+            MarketEvent::Quote(q) => self.strategy.on_quote(q, &mut self.ctx),
+            MarketEvent::Trade(t) => self.strategy.on_trade(t, &mut self.ctx),
+            MarketEvent::Bar(b) => self.strategy.on_bar(b, &mut self.ctx),
+            MarketEvent::Delta(_) => {}
+        }
+    }
+
+    fn notify_event(&mut self, ev: &OrderEvent) {
+        match ev {
+            OrderEvent::Filled(f) | OrderEvent::PartiallyFilled(f) => {
+                self.strategy.on_order_filled(f, &mut self.ctx);
+                self.strategy.on_order_event(ev, &mut self.ctx);
+            }
+            _ => self.strategy.on_order_event(ev, &mut self.ctx),
+        }
+        self.bus.publish(
+            Topic::OrderEvent(self.ctx.strategy_id.clone()),
+            BusMsg::Order(Arc::new(ev.clone())),
+        );
+    }
+
+    /// Drain the strategy outbox, running each intent through the SAME pre-trade RiskGate as backtest
+    /// and routing approved orders/cancels to the `ExecutionClient` PORT (not the inherent sim API).
+    async fn route_outbox(&mut self) -> coinext_ports::PortResult<()> {
+        let cmds = self.ctx.drain_outbox();
+        if cmds.is_empty() {
+            return Ok(());
+        }
+        let now = self.clock.now_ns();
+        for cmd in cmds {
+            match cmd {
+                StrategyCommand::Submit(mut order) => {
+                    // Idempotency: a re-submit of an already-tracked order is a no-op (mirrors the OMS).
+                    if self.cache.borrow().order(&order.client_order_id).is_some() {
+                        continue;
+                    }
+                    let inst = self.cache.borrow().instrument(&order.instrument_id);
+                    let Some(inst) = inst else { continue };
+                    let decision = {
+                        use coinext_ports::RiskEngine;
+                        self.risk.check(&order, &self.portfolio, &*inst)
+                    };
+                    match decision {
+                        coinext_ports::RiskDecision::Approved => {
+                            let ev = OrderEvent::Submitted { ts: now };
+                            let _ = order.apply(ev.clone());
+                            self.cache.borrow_mut().add_order(order.clone());
+                            self.notify_event(&ev);
+                            self.exec_client
+                                .submit_order(coinext_ports::SubmitOrder { order })
+                                .await?;
+                        }
+                        coinext_ports::RiskDecision::Denied(reason) => {
+                            let ev = OrderEvent::Denied {
+                                reason: reason.to_string(),
+                                ts: now,
+                            };
+                            let _ = order.apply(ev.clone());
+                            self.cache.borrow_mut().add_order(order);
+                            self.notify_event(&ev);
+                        }
+                    }
+                }
+                StrategyCommand::Cancel(coid) => {
+                    let iid = self
+                        .cache
+                        .borrow()
+                        .order(&coid)
+                        .map(|o| o.instrument_id.clone());
+                    if let Some(instrument_id) = iid {
+                        let ev = OrderEvent::PendingCancel { ts: now };
+                        let applied = self
+                            .cache
+                            .borrow_mut()
+                            .order_mut(&coid)
+                            .map(|o| o.apply(ev.clone()).is_ok())
+                            .unwrap_or(false);
+                        if applied {
+                            self.notify_event(&ev);
+                        }
+                        self.exec_client
+                            .cancel_order(coinext_ports::CancelOrder {
+                                client_order_id: coid,
+                                instrument_id,
+                            })
+                            .await?;
+                    }
+                }
+                StrategyCommand::Modify { .. } => {
+                    // Cancel-replace on the live venue; not modeled here in the scaffold.
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,9 +1004,9 @@ mod tests {
             bought: false,
         });
         let events = vec![
-            bar(&opt_iid, "1000", 1_000_000_000), // premium; strategy buys here
+            bar(&opt_iid, "1000", 1_000_000_000), // premium; strategy decides to buy on this close
             bar(&under_iid, "52000", 1_000_000_000),
-            bar(&opt_iid, "1500", 2_000_000_000),
+            bar(&opt_iid, "1500", 2_000_000_000), // no-look-ahead: the buy fills at THIS bar's open (1500)
             bar(&under_iid, "54000", 2_000_000_000), // last underlying mark before the 2.5e9 expiry
             bar(&under_iid, "55000", 3_000_000_000), // after expiry (option already settled)
         ];
@@ -734,9 +1018,10 @@ mod tests {
         );
         let res = kernel.run();
         assert_eq!(res.fills, 2, "one buy + one settlement fill");
-        // Settled at intrinsic 4000, bought at ~1000 (zero fees) -> realized ~3000.
+        // No-look-ahead: the buy fills at the next opt bar's open (1500), not the decision close
+        // (1000). Settled at intrinsic 4000 -> realized ~2500 (vs ~3000 under the old close-fill).
         assert!(
-            (res.realized_pnl - 3000.0).abs() < 1.0,
+            (res.realized_pnl - 2500.0).abs() < 1.0,
             "realized {}",
             res.realized_pnl
         );
@@ -754,8 +1039,9 @@ mod tests {
             bought: false,
         });
         let events = vec![
-            bar(&opt_iid, "1000", 1_000_000_000),
+            bar(&opt_iid, "1000", 1_000_000_000), // decide to buy on this close
             bar(&under_iid, "48000", 1_000_000_000),
+            bar(&opt_iid, "1000", 2_000_000_000), // no-look-ahead: the buy fills at THIS open (1000)
             bar(&under_iid, "48000", 2_000_000_000),
         ];
         let mut kernel = BacktestKernel::build(
@@ -766,7 +1052,7 @@ mod tests {
         );
         let res = kernel.run();
         assert_eq!(res.fills, 2);
-        // Settled worthless (0), bought at ~1000 -> realized ~ -1000.
+        // Settled worthless (0), bought at ~1000 (next opt bar's open) -> realized ~ -1000.
         assert!(
             (res.realized_pnl + 1000.0).abs() < 1.0,
             "realized {}",
@@ -793,11 +1079,13 @@ mod tests {
             bought: false,
         });
         // The price dips to 44k (breaching maintenance) THEN recovers to 50k — but liquidation is
-        // irreversible, so the recovery does not save the account.
+        // irreversible, so the recovery does not save the account. No-look-ahead: the buy decided on
+        // bar 1's close fills at bar 2's open (still 50k), so an extra 50k bar precedes the dip.
         let events = vec![
-            bar(&fut_iid, "50000", 1_000_000_000),
-            bar(&fut_iid, "44000", 2_000_000_000), // equity ~4k < maint ~4.4k -> liquidated
-            bar(&fut_iid, "50000", 3_000_000_000), // recovers, but already flat
+            bar(&fut_iid, "50000", 1_000_000_000), // decide to buy on this close
+            bar(&fut_iid, "50000", 2_000_000_000), // entry fills at this open (50k)
+            bar(&fut_iid, "44000", 3_000_000_000), // equity ~4k < maint ~4.4k -> liquidated
+            bar(&fut_iid, "50000", 4_000_000_000), // recovers, but already flat
         ];
         let mut kernel = BacktestKernel::build(config, StrategyId::from("liq"), strat, events);
         let res = kernel.run();
@@ -825,12 +1113,15 @@ mod tests {
             buys: 0,
             max_buys: 2,
         });
+        // No-look-ahead: each buy decided on a 50k close fills at the NEXT bar's open, so every
+        // entry is preceded by a second 50k bar before the dip that liquidates it.
         let events = vec![
-            bar(&fut_iid, "50000", 1_000_000_000), // buy #1
-            bar(&fut_iid, "44000", 2_000_000_000), // liquidate #1
-            bar(&fut_iid, "50000", 3_000_000_000), // flat -> buy #2 (then liquidated as unaffordable)
-            bar(&fut_iid, "44000", 4_000_000_000),
-            bar(&fut_iid, "50000", 5_000_000_000),
+            bar(&fut_iid, "50000", 1_000_000_000), // flat -> decide buy #1
+            bar(&fut_iid, "50000", 2_000_000_000), // buy #1 fills at this open (50k)
+            bar(&fut_iid, "44000", 3_000_000_000), // liquidate #1
+            bar(&fut_iid, "50000", 4_000_000_000), // flat -> decide buy #2
+            bar(&fut_iid, "50000", 5_000_000_000), // buy #2 fills at this open (50k)
+            bar(&fut_iid, "44000", 6_000_000_000), // liquidate #2
         ];
         let mut kernel = BacktestKernel::build(config, StrategyId::from("liq2"), strat, events);
         let res = kernel.run();
@@ -899,15 +1190,18 @@ mod tests {
     #[test]
     fn future_cash_settles_to_mark_at_expiry() {
         // Buy a future @ 50000, price rises to 52000 by expiry -> cash-settle realizes ~2000.
-        let fut = fut_inst(2_500_000_000);
+        // No-look-ahead: the buy decided on bar 1's close fills at bar 2's open (still 50000), so a
+        // third bar is needed to carry the price up to 52000 before the 3.5e9 expiry.
+        let fut = fut_inst(3_500_000_000);
         let fut_iid = fut.id();
         let strat = Box::new(BuyOnceStrategy {
             iid: fut_iid.clone(),
             bought: false,
         });
         let events = vec![
-            bar(&fut_iid, "50000", 1_000_000_000),
-            bar(&fut_iid, "52000", 2_000_000_000), // last mark before the 2.5e9 expiry
+            bar(&fut_iid, "50000", 1_000_000_000), // decide to buy on this close
+            bar(&fut_iid, "50000", 2_000_000_000), // fills at this open (50000)
+            bar(&fut_iid, "52000", 3_000_000_000), // last mark before the 3.5e9 expiry
         ];
         let mut kernel = BacktestKernel::build(
             cfg(vec![fut], "BINANCE"),
@@ -922,6 +1216,317 @@ mod tests {
             (1990.0..2000.0).contains(&res.realized_pnl),
             "realized {}",
             res.realized_pnl
+        );
+    }
+
+    // FIX 5: engaging the kill-switch on the kernel's RiskGate denies every order, so nothing fills.
+    #[test]
+    fn kill_switch_denies_all_orders_in_kernel() {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let i = inst();
+        let iid = i.id();
+        let cfg = BacktestConfig::new(
+            Venue::from("BINANCE"),
+            vec![i],
+            usdt,
+            Money::from_decimal(dec!(100000), usdt).unwrap(),
+        );
+        let strat = Box::new(BuyOnceStrategy {
+            iid: iid.clone(),
+            bought: false,
+        });
+        let events = vec![
+            bar(&iid, "50000", 1_000_000_000),
+            bar(&iid, "51000", 2_000_000_000),
+            bar(&iid, "52000", 3_000_000_000),
+        ];
+        let mut kernel = BacktestKernel::build(cfg, StrategyId::from("kill"), strat, events);
+        kernel.set_kill_switch(true);
+        let res = kernel.run();
+        assert_eq!(res.orders_submitted, 1);
+        assert_eq!(res.orders_denied, 1, "kill-switch denies the order");
+        assert_eq!(res.fills, 0, "no fills while killed");
+    }
+
+    // FIX 5: a configured max-order-notional limit (via BacktestConfig.risk) is enforced -> denied.
+    #[test]
+    fn configured_notional_limit_denies_oversized_order() {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let i = inst();
+        let iid = i.id();
+        let mut cfg = BacktestConfig::new(
+            Venue::from("BINANCE"),
+            vec![i],
+            usdt,
+            Money::from_decimal(dec!(100000), usdt).unwrap(),
+        );
+        // qty 1 @ ~50000 -> notional ~50000 > 40000 cap.
+        cfg.risk.max_order_notional = Some(Money::from_decimal(dec!(40000), usdt).unwrap());
+        let strat = Box::new(BuyOnceStrategy {
+            iid: iid.clone(),
+            bought: false,
+        });
+        let events = vec![
+            bar(&iid, "50000", 1_000_000_000),
+            bar(&iid, "51000", 2_000_000_000),
+        ];
+        let mut kernel = BacktestKernel::build(cfg, StrategyId::from("cap"), strat, events);
+        let res = kernel.run();
+        assert_eq!(res.orders_denied, 1, "over-notional order denied by config");
+        assert_eq!(res.fills, 0);
+    }
+
+    // ---- LiveKernel (port-driven sandbox/live path) -------------------------------------------
+
+    use coinext_model::{Fill, LiquiditySide, TradeId, VenueOrderId};
+    use coinext_ports::{
+        CancelOrder, DataClient, ExecutionClient, ExecutionReport, ModifyOrder, PortResult,
+        SubmitOrder, Subscription,
+    };
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+    use tokio::sync::mpsc;
+
+    /// A fake DataClient that replays a fixed list of market events, then closes the stream.
+    struct ReplayDataClient {
+        tx: Option<mpsc::Sender<MarketEvent>>,
+        rx: Option<mpsc::Receiver<MarketEvent>>,
+        events: Vec<MarketEvent>,
+    }
+    impl ReplayDataClient {
+        fn new(events: Vec<MarketEvent>) -> Self {
+            let (tx, rx) = mpsc::channel(64);
+            ReplayDataClient {
+                tx: Some(tx),
+                rx: Some(rx),
+                events,
+            }
+        }
+    }
+    #[async_trait::async_trait]
+    impl DataClient for ReplayDataClient {
+        async fn connect(&mut self) -> PortResult<()> {
+            // Push all events now; dropping the sender afterwards closes the stream so `run` returns.
+            let tx = self.tx.take().expect("connect called twice");
+            for ev in self.events.drain(..) {
+                tx.send(ev).await.ok();
+            }
+            Ok(())
+        }
+        async fn subscribe(&mut self, _sub: Subscription) -> PortResult<()> {
+            Ok(())
+        }
+        async fn unsubscribe(&mut self, _sub: Subscription) -> PortResult<()> {
+            Ok(())
+        }
+        async fn request_bars(
+            &self,
+            _bar_type: BarType,
+            _start: UnixNanos,
+            _end: UnixNanos,
+        ) -> PortResult<Vec<Bar>> {
+            Ok(Vec::new())
+        }
+        fn take_stream(&mut self) -> mpsc::Receiver<MarketEvent> {
+            self.rx.take().expect("take_stream called twice")
+        }
+        async fn disconnect(&mut self) -> PortResult<()> {
+            Ok(())
+        }
+    }
+
+    /// A fake ExecutionClient that, on each submit, emits an Accepted then a Fill at the order's
+    /// quantity and a fixed price — proving the LiveKernel routes intents to the PORT and folds the
+    /// returned reports through the SAME OMS. Counts submits so the test can assert the port was used.
+    struct InstantFillExec {
+        tx: Option<mpsc::Sender<ExecutionReport>>,
+        report_tx: mpsc::Sender<ExecutionReport>,
+        rx: Option<mpsc::Receiver<ExecutionReport>>,
+        submits: std::sync::Arc<AtomicUsize>,
+        price: Price,
+        settle: Currency,
+        trade_seq: AtomicU64,
+    }
+    impl InstantFillExec {
+        fn new(price: Price, settle: Currency, submits: std::sync::Arc<AtomicUsize>) -> Self {
+            let (tx, rx) = mpsc::channel(64);
+            InstantFillExec {
+                report_tx: tx.clone(),
+                tx: Some(tx),
+                rx: Some(rx),
+                submits,
+                price,
+                settle,
+                trade_seq: AtomicU64::new(0),
+            }
+        }
+    }
+    #[async_trait::async_trait]
+    impl ExecutionClient for InstantFillExec {
+        fn venue(&self) -> Venue {
+            Venue::from("BINANCE")
+        }
+        async fn connect(&mut self) -> PortResult<()> {
+            // Keep a sender alive on `self` (report_tx); drop the extra so only the held one remains.
+            self.tx.take();
+            Ok(())
+        }
+        async fn submit_order(&self, cmd: SubmitOrder) -> PortResult<()> {
+            self.submits.fetch_add(1, AtomicOrdering::SeqCst);
+            let o = &cmd.order;
+            self.report_tx
+                .send(ExecutionReport::Accepted {
+                    client_order_id: o.client_order_id.clone(),
+                    venue_order_id: VenueOrderId::from("V-1"),
+                })
+                .await
+                .ok();
+            let seq = self.trade_seq.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+            let fill = Fill {
+                trade_id: TradeId::from(format!("T-{seq}")),
+                client_order_id: o.client_order_id.clone(),
+                venue_order_id: VenueOrderId::from("V-1"),
+                instrument_id: o.instrument_id.clone(),
+                side: o.side,
+                last_px: self.price,
+                last_qty: o.quantity,
+                fee: Money::zero(self.settle),
+                liquidity: LiquiditySide::Taker,
+                ts_event: UnixNanos(0),
+                ts_init: UnixNanos(0),
+            };
+            self.report_tx.send(ExecutionReport::Fill(fill)).await.ok();
+            Ok(())
+        }
+        async fn cancel_order(&self, _cmd: CancelOrder) -> PortResult<()> {
+            Ok(())
+        }
+        async fn modify_order(&self, _cmd: ModifyOrder) -> PortResult<()> {
+            Ok(())
+        }
+        async fn reconcile(&self) -> PortResult<Vec<ExecutionReport>> {
+            Ok(Vec::new())
+        }
+        fn take_reports(&mut self) -> mpsc::Receiver<ExecutionReport> {
+            self.rx.take().expect("take_reports called twice")
+        }
+        async fn disconnect(&mut self) -> PortResult<()> {
+            Ok(())
+        }
+    }
+
+    /// Records fills the Strategy is notified of, so the test can assert the live path delivered the
+    /// port's reports all the way back up to the user Strategy (the shared seam end-to-end).
+    struct CountingBuyStrategy {
+        iid: InstrumentId,
+        bought: bool,
+        fills: std::sync::Arc<AtomicUsize>,
+    }
+    impl Strategy for CountingBuyStrategy {
+        fn on_bar(&mut self, _b: &Bar, ctx: &mut StrategyContext) {
+            if !self.bought {
+                self.bought = true;
+                ctx.submit_market(
+                    self.iid.clone(),
+                    OrderSide::Buy,
+                    Quantity::from_decimal(dec!(1), 3).unwrap(),
+                );
+            }
+        }
+        fn on_order_filled(&mut self, _f: &Fill, _ctx: &mut StrategyContext) {
+            self.fills.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn live_kernel_consumes_ports_and_folds_fills_through_the_same_engines() {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let i = inst();
+        let iid = i.id();
+        let submits = std::sync::Arc::new(AtomicUsize::new(0));
+        let strat_fills = std::sync::Arc::new(AtomicUsize::new(0));
+
+        let exec = Box::new(InstantFillExec::new(
+            Price::from_decimal(dec!(50000), 2).unwrap(),
+            usdt,
+            submits.clone(),
+        ));
+        let data = Box::new(ReplayDataClient::new(vec![
+            bar(&iid, "50000", 1_000_000_000),
+            bar(&iid, "51000", 2_000_000_000),
+        ]));
+        let strat = Box::new(CountingBuyStrategy {
+            iid: iid.clone(),
+            bought: false,
+            fills: strat_fills.clone(),
+        });
+
+        let mut kernel = LiveKernel::build(
+            Environment::Sandbox,
+            BacktestConfig::new(
+                Venue::from("BINANCE"),
+                vec![i],
+                usdt,
+                Money::from_decimal(dec!(100000), usdt).unwrap(),
+            ),
+            StrategyId::from("live"),
+            strat,
+            exec,
+            data,
+        );
+        assert_eq!(kernel.environment(), Environment::Sandbox);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&rt, async move {
+            kernel.run().await.unwrap();
+            // The strategy submitted exactly one order over the PORT, and its Fill flowed back through
+            // the SAME OMS `apply_report` into a long position the strategy was notified of.
+            assert_eq!(
+                submits.load(AtomicOrdering::SeqCst),
+                1,
+                "one order routed to the port"
+            );
+            assert_eq!(
+                strat_fills.load(AtomicOrdering::SeqCst),
+                1,
+                "fill delivered to the Strategy"
+            );
+            let pos = kernel.cache.borrow().position(&iid).cloned();
+            let pos = pos.expect("position opened from the port's fill");
+            assert_eq!(pos.side, PositionSide::Long);
+            assert_eq!(pos.quantity, Quantity::from_decimal(dec!(1), 3).unwrap());
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "LiveKernel requires")]
+    fn live_kernel_rejects_backtest_environment() {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let i = inst();
+        let submits = std::sync::Arc::new(AtomicUsize::new(0));
+        let exec = Box::new(InstantFillExec::new(
+            Price::from_decimal(dec!(50000), 2).unwrap(),
+            usdt,
+            submits,
+        ));
+        let data = Box::new(ReplayDataClient::new(vec![]));
+        let _ = LiveKernel::build(
+            Environment::Backtest,
+            BacktestConfig::new(
+                Venue::from("BINANCE"),
+                vec![i],
+                usdt,
+                Money::from_decimal(dec!(100000), usdt).unwrap(),
+            ),
+            StrategyId::from("x"),
+            Box::new(BuyOnceStrategy {
+                iid: InstrumentId::parse("BTCUSDT.BINANCE").unwrap(),
+                bought: false,
+            }),
+            exec,
+            data,
         );
     }
 }

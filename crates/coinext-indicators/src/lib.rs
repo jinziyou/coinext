@@ -39,6 +39,11 @@ impl Sma {
 
 impl Indicator for Sma {
     fn update(&mut self, value: f64) {
+        // Reject non-finite ticks: NaN/Inf would permanently poison the running sum
+        // (NaN-NaN=NaN, Inf-Inf=NaN). Skip the update, keeping the last good state.
+        if !value.is_finite() {
+            return;
+        }
         self.buf.push_back(value);
         self.sum += value;
         if self.buf.len() > self.period {
@@ -79,6 +84,10 @@ impl Ema {
 
 impl Indicator for Ema {
     fn update(&mut self, value: f64) {
+        // Skip non-finite ticks so a bad observation can't poison the recursive state.
+        if !value.is_finite() {
+            return;
+        }
         self.count += 1;
         self.current = Some(match self.current {
             None => value,
@@ -119,6 +128,10 @@ impl Rsi {
 
 impl Indicator for Rsi {
     fn update(&mut self, value: f64) {
+        // Skip non-finite ticks so a bad observation can't poison the smoothed averages.
+        if !value.is_finite() {
+            return;
+        }
         let prev = match self.prev {
             None => {
                 self.prev = Some(value);
@@ -176,6 +189,10 @@ impl Atr {
     }
 
     pub fn update_hlc(&mut self, high: f64, low: f64, close: f64) {
+        // Skip the bar if any leg is non-finite, leaving the smoothed ATR untouched.
+        if !high.is_finite() || !low.is_finite() || !close.is_finite() {
+            return;
+        }
         let tr = match self.prev_close {
             None => high - low,
             Some(pc) => (high - low).max((high - pc).abs()).max((low - pc).abs()),
@@ -216,6 +233,11 @@ impl Macd {
     }
 
     pub fn update(&mut self, value: f64) {
+        // Skip non-finite ticks entirely so neither the component EMAs nor the signal EMA
+        // advance on a poisoned observation.
+        if !value.is_finite() {
+            return;
+        }
         self.fast.update(value);
         self.slow.update(value);
         // Feed the signal EMA the macd line only once both EMAs are warm.
@@ -259,6 +281,10 @@ impl Bollinger {
     }
 
     pub fn update(&mut self, value: f64) {
+        // Reject non-finite ticks: they would permanently poison the running sum / sum-of-squares.
+        if !value.is_finite() {
+            return;
+        }
         self.buf.push_back(value);
         self.sum += value;
         self.sum_sq += value * value;
@@ -308,6 +334,10 @@ impl Vwap {
     }
 
     pub fn update(&mut self, price: f64, volume: f64) {
+        // Reject non-finite price/volume: they would permanently poison the running sums.
+        if !price.is_finite() || !volume.is_finite() {
+            return;
+        }
         self.win.push_back((price, volume));
         self.sum_pv += price * volume;
         self.sum_v += volume;
@@ -408,5 +438,134 @@ mod tests {
         v.update(100.0, 1.0);
         v.update(110.0, 3.0); // (100*1 + 110*3) / (1+3) = 430/4 = 107.5
         assert_eq!(v.value(), Some(107.5));
+    }
+
+    // A single non-finite tick must NOT poison the running state: the indicator should ignore it
+    // and end up exactly where it would have without the bad tick. Without input validation,
+    // running-sum indicators would return NaN forever even after the bad tick leaves the window.
+    #[test]
+    fn non_finite_ticks_are_ignored_not_poisoning() {
+        // A series long enough to warm every indicator (MACD(3,6,4) needs ~10 obs).
+        let clean: Vec<f64> = (1..=20).map(|i| i as f64).collect();
+        let poison = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+
+        // Build a series that interleaves the poison ticks among the clean ones.
+        let dirty: Vec<f64> = {
+            let mut v = Vec::new();
+            for (idx, &x) in clean.iter().enumerate() {
+                v.push(x);
+                if idx < poison.len() {
+                    v.push(poison[idx]);
+                }
+            }
+            v
+        };
+
+        // SMA
+        {
+            let (mut a, mut b) = (Sma::new(3), Sma::new(3));
+            clean.iter().for_each(|&x| a.update(x));
+            dirty.iter().for_each(|&x| b.update(x));
+            let av = a.value().unwrap();
+            let bv = b.value().unwrap();
+            assert!(bv.is_finite());
+            assert!((av - bv).abs() < 1e-12, "sma {av} != {bv}");
+        }
+
+        // EMA
+        {
+            let (mut a, mut b) = (Ema::new(3), Ema::new(3));
+            clean.iter().for_each(|&x| a.update(x));
+            dirty.iter().for_each(|&x| b.update(x));
+            let av = a.value().unwrap();
+            let bv = b.value().unwrap();
+            assert!(bv.is_finite());
+            assert!((av - bv).abs() < 1e-12, "ema {av} != {bv}");
+        }
+
+        // RSI
+        {
+            let (mut a, mut b) = (Rsi::new(3), Rsi::new(3));
+            clean.iter().for_each(|&x| a.update(x));
+            dirty.iter().for_each(|&x| b.update(x));
+            let av = a.value().unwrap();
+            let bv = b.value().unwrap();
+            assert!(bv.is_finite());
+            assert!((av - bv).abs() < 1e-12, "rsi {av} != {bv}");
+        }
+
+        // MACD
+        {
+            let (mut a, mut b) = (Macd::new(3, 6, 4), Macd::new(3, 6, 4));
+            clean.iter().for_each(|&x| a.update(x));
+            dirty.iter().for_each(|&x| b.update(x));
+            let (am, asig, ah) = a.value().unwrap();
+            let (bm, bsig, bh) = b.value().unwrap();
+            assert!(bm.is_finite() && bsig.is_finite() && bh.is_finite());
+            assert!((am - bm).abs() < 1e-12, "macd {am} != {bm}");
+            assert!((asig - bsig).abs() < 1e-12, "signal {asig} != {bsig}");
+            assert!((ah - bh).abs() < 1e-12, "hist {ah} != {bh}");
+        }
+
+        // Bollinger
+        {
+            let (mut a, mut b) = (Bollinger::new(3, 2.0), Bollinger::new(3, 2.0));
+            clean.iter().for_each(|&x| a.update(x));
+            dirty.iter().for_each(|&x| b.update(x));
+            let (alo, amid, aup) = a.value().unwrap();
+            let (blo, bmid, bup) = b.value().unwrap();
+            assert!(blo.is_finite() && bmid.is_finite() && bup.is_finite());
+            assert!((alo - blo).abs() < 1e-12, "boll lo {alo} != {blo}");
+            assert!((amid - bmid).abs() < 1e-12, "boll mid {amid} != {bmid}");
+            assert!((aup - bup).abs() < 1e-12, "boll up {aup} != {bup}");
+        }
+
+        // ATR (update_hlc): inject a non-finite leg into one bar.
+        {
+            let (mut a, mut b) = (Atr::new(3), Atr::new(3));
+            let bars = [
+                (10.0, 8.0, 9.0),
+                (11.0, 9.0, 10.0),
+                (12.0, 10.0, 11.0),
+                (13.0, 11.0, 12.0),
+                (14.0, 12.0, 13.0),
+            ];
+            for &(h, l, c) in &bars {
+                a.update_hlc(h, l, c);
+            }
+            // Same 5 bars, but with extra fully-poisoned bars slipped in that must be ignored.
+            b.update_hlc(10.0, 8.0, 9.0);
+            b.update_hlc(f64::NAN, 10.0, 11.0); // poisoned high -> ignored
+            b.update_hlc(11.0, 9.0, 10.0);
+            b.update_hlc(12.0, 10.0, 11.0);
+            b.update_hlc(13.0, f64::INFINITY, 12.0); // poisoned low -> ignored
+            b.update_hlc(13.0, 11.0, 12.0);
+            b.update_hlc(10.0, 9.0, f64::NAN); // poisoned close -> ignored
+            b.update_hlc(14.0, 12.0, 13.0);
+            let av = a.value().unwrap();
+            let bv = b.value().unwrap();
+            assert!(bv.is_finite());
+            assert!((av - bv).abs() < 1e-12, "atr {av} != {bv}");
+        }
+
+        // VWAP (price, volume): inject non-finite price/volume that must be ignored.
+        {
+            let (mut a, mut b) = (Vwap::new(3), Vwap::new(3));
+            let bars = [(100.0, 1.0), (110.0, 2.0), (120.0, 3.0), (130.0, 4.0)];
+            for &(p, v) in &bars {
+                a.update(p, v);
+            }
+            // Same 4 bars, but with extra poisoned ticks slipped in that must be ignored.
+            b.update(100.0, 1.0);
+            b.update(f64::NAN, 2.0); // poisoned price -> ignored
+            b.update(110.0, 2.0);
+            b.update(120.0, 3.0);
+            b.update(125.0, f64::INFINITY); // poisoned volume -> ignored
+            b.update(130.0, 4.0);
+            let av = a.value().unwrap();
+            let bv = b.value().unwrap();
+            assert!(bv.is_finite());
+            assert!((av - bv).abs() < 1e-12, "vwap {av} != {bv}");
+        }
     }
 }

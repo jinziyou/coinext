@@ -129,7 +129,13 @@ async fn main() {
 
     // Cancel.
     println!("→ cancelling coid={coid}");
-    if let Err(e) = exec.cancel_order(CancelOrder { client_order_id: coid.clone() }).await {
+    if let Err(e) = exec
+        .cancel_order(CancelOrder {
+            client_order_id: coid.clone(),
+            instrument_id: iid.clone(),
+        })
+        .await
+    {
         eprintln!("cancel_order failed: {e}");
     }
     if let Some(r) = wait_report(&mut reports, 8).await {

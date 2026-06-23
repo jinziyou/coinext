@@ -31,7 +31,9 @@ impl DataEngine {
                     cache.set_mark(t.instrument_id.clone(), t.price);
                 }
                 MarketEvent::Bar(b) => {
-                    // Fill-at-close convention: the mark is the bar close.
+                    // The mark (for valuation/PnL) is the bar close. NOTE: this does NOT set the
+                    // fill price — a marketable order decided on this close fills at the NEXT bar's
+                    // OPEN in the sim (no intra-bar look-ahead), not at this close.
                     cache.set_mark(b.bar_type.instrument_id.clone(), b.close);
                 }
                 MarketEvent::Delta(_) => { /* order-book maintenance: extension point */ }

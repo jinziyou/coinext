@@ -152,7 +152,20 @@ impl Position {
             return Ok(());
         }
         let mult = inst.multiplier().as_decimal();
-        let notional = self.signed() * mark.as_decimal() * mult;
+        // Funding is charged on the position NOTIONAL in the settlement currency. For a linear perp
+        // that notional is `qty*mark*mult` (quote ccy); for an inverse (coin-margined) perp it is
+        // `qty*mult/mark` (coin ccy) — the same shape as `notional()`. Using the linear formula on
+        // an inverse perp would charge funding in the wrong dimension and magnitude.
+        let mark_d = mark.as_decimal();
+        let notional = if inst.is_inverse() {
+            if mark_d.is_zero() {
+                Decimal::ZERO
+            } else {
+                self.signed() * mult / mark_d
+            }
+        } else {
+            self.signed() * mark_d * mult
+        };
         let payment = -(notional * rate); // long pays when rate>0
         let m = Money::from_decimal(payment, inst.settlement_currency())?;
         self.realized_pnl = self.realized_pnl.checked_add(m)?;
@@ -196,5 +209,128 @@ impl Position {
             qty * mark.as_decimal() * mult
         };
         Money::from_decimal(value, settle).unwrap_or_else(|_| Money::zero(settle))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enums::{LiquiditySide, OrderSide};
+    use crate::identifiers::{ClientOrderId, TradeId, VenueOrderId};
+    use crate::instrument::CryptoPerpetual;
+    use coinext_core::{Currency, UnixNanos};
+    use rust_decimal_macros::dec;
+
+    /// An inverse (coin-margined) BTCUSD perp: quoted in USD, SETTLED in BTC. Multiplier 1 USD
+    /// per contract, so coin notional = qty/price BTC.
+    fn inverse_perp() -> CryptoPerpetual {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let btc = Currency::new("BTC", 8).unwrap();
+        CryptoPerpetual {
+            id: InstrumentId::parse("BTCUSD.BINANCE").unwrap(),
+            base: btc,
+            quote: usdt,
+            settlement: btc, // coin-margined -> settles in the base coin
+            price_precision: 1,
+            size_precision: 0,
+            price_increment: Price::from_decimal(dec!(0.1), 1).unwrap(),
+            size_increment: Quantity::from_decimal(dec!(1), 0).unwrap(),
+            min_notional: None,
+            multiplier: Quantity::from_raw(1, 0).unwrap(),
+            maker_fee: dec!(0.0002),
+            taker_fee: dec!(0.0004),
+            is_inverse: true,
+            funding_interval_ns: 0,
+        }
+    }
+
+    fn fill(side: OrderSide, px: &str, qty: &str, settle: Currency) -> Fill {
+        Fill {
+            trade_id: TradeId::from("T"),
+            client_order_id: ClientOrderId::from("C"),
+            venue_order_id: VenueOrderId::from("V"),
+            instrument_id: InstrumentId::parse("BTCUSD.BINANCE").unwrap(),
+            side,
+            last_px: Price::from_decimal(px.parse().unwrap(), 1).unwrap(),
+            last_qty: Quantity::from_decimal(qty.parse().unwrap(), 0).unwrap(),
+            fee: Money::zero(settle),
+            liquidity: LiquiditySide::Taker,
+            ts_event: UnixNanos(0),
+            ts_init: UnixNanos(0),
+        }
+    }
+
+    fn flat_pos(inst: &CryptoPerpetual) -> Position {
+        Position::flat(
+            PositionId::from("P"),
+            inst.id.clone(),
+            inst.price_precision,
+            inst.size_precision,
+            inst.settlement_currency(),
+        )
+    }
+
+    // Inverse PnL: long 100 contracts (100 USD) from 50000 -> 25000 doubles the coin value.
+    // realized = qty*mult*(1/entry - 1/exit) = 100*(1/50000 - 1/25000) ... but closing realizes the
+    // favorable move. Long from 50000, mark 25000 is a LOSS in coin terms (price fell). Use a clean
+    // case: long from 50000, close at 100000 -> coin PnL = 100*(1/50000 - 1/100000) = +0.001 BTC.
+    #[test]
+    fn inverse_realized_pnl_is_in_coin() {
+        let inst = inverse_perp();
+        let btc = inst.settlement_currency();
+        let mut pos = flat_pos(&inst);
+        pos.apply_fill(&fill(OrderSide::Buy, "50000", "100", btc), &inst)
+            .unwrap();
+        // Close the 100 contracts at 100000.
+        pos.apply_fill(&fill(OrderSide::Sell, "100000", "100", btc), &inst)
+            .unwrap();
+        assert_eq!(pos.side, PositionSide::Flat);
+        // 100*(1/50000 - 1/100000) = 100 * (2 - 1)/100000 = 100/100000 = 0.001 BTC.
+        assert_eq!(pos.realized_pnl.currency(), btc);
+        assert_eq!(pos.realized_pnl.amount(), dec!(0.001));
+    }
+
+    // Inverse unrealized PnL uses the same coin formula.
+    #[test]
+    fn inverse_unrealized_pnl_is_in_coin() {
+        let inst = inverse_perp();
+        let btc = inst.settlement_currency();
+        let mut pos = flat_pos(&inst);
+        pos.apply_fill(&fill(OrderSide::Buy, "50000", "100", btc), &inst)
+            .unwrap();
+        let mark = Price::from_decimal(dec!(100000), 1).unwrap();
+        let u = pos.unrealized_pnl(mark, &inst);
+        assert_eq!(u.currency(), btc);
+        assert_eq!(u.amount(), dec!(0.001));
+    }
+
+    // Inverse notional is the COIN notional qty*mult/price, NOT the linear qty*price.
+    #[test]
+    fn inverse_notional_is_coin_notional() {
+        let inst = inverse_perp();
+        let btc = inst.settlement_currency();
+        let mut pos = flat_pos(&inst);
+        pos.apply_fill(&fill(OrderSide::Buy, "50000", "100", btc), &inst)
+            .unwrap();
+        let mark = Price::from_decimal(dec!(50000), 1).unwrap();
+        let n = pos.notional(mark, &inst);
+        assert_eq!(n.currency(), btc);
+        assert_eq!(n.amount(), dec!(0.002)); // 100/50000 BTC
+    }
+
+    // Inverse funding is charged on the COIN notional (qty*mult/mark), in the coin currency. A long
+    // paying a positive rate is DEBITED `rate * coin_notional` BTC.
+    #[test]
+    fn inverse_funding_is_charged_on_coin_notional() {
+        let inst = inverse_perp();
+        let btc = inst.settlement_currency();
+        let mut pos = flat_pos(&inst);
+        pos.apply_fill(&fill(OrderSide::Buy, "100", "100", btc), &inst)
+            .unwrap();
+        let mark = Price::from_decimal(dec!(100), 1).unwrap();
+        // coin notional = 100/100 = 1 BTC. rate 0.01 -> long pays 0.01 BTC.
+        pos.apply_funding(dec!(0.01), mark, &inst).unwrap();
+        assert_eq!(pos.realized_pnl.currency(), btc);
+        assert_eq!(pos.realized_pnl.amount(), dec!(-0.01));
     }
 }

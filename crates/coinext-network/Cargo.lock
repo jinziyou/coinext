@@ -180,6 +180,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "coinext-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "serde",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "coinext-network"
+version = "0.1.0"
+dependencies = [
+ "coinext-core",
+ "futures-util",
+ "governor",
+ "hex",
+ "hmac",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1009,36 +1039,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "coinext-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "coinext-network"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "governor",
- "hex",
- "hmac",
- "coinext-core",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite",
- "url",
 ]
 
 [[package]]

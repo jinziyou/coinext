@@ -117,8 +117,9 @@ SLO histograms surfaced on the dashboard: `strategy_dispatch_ns`, `submit_to_ack
 - The Rust service crates (`coinext-ingest`, `coinext-exec-svc`) are workspace-excluded **stubs** today; their
   Dockerfiles are valid scaffolding and are not expected to build until the venue adapters
   (`coinext-network`, `coinext-adapters/binance`) and persistence land.
-- The Python service entrypoints (`coinext_live`, `coinext_api`, `coinext_risk.monitor`) and the UI source
-  (`services/ui/`) are scaffolded by their respective areas; the Dockerfiles reference the agreed
-  module/entrypoint names.
+- The Python service entrypoints live under `services/`: `services/api/app.py` (`uvicorn app:app`),
+  `services/trader/main.py` and `services/risk-monitor/main.py` (`python -m main`). The UI source is
+  `services/ui/` (served by nginx via `services/ui/nginx.conf`). The Dockerfiles copy each in and
+  reference these real modules.
 - Secrets management (SOPS/Vault) is an open question (`docs/ARCHITECTURE.md`); for now secrets come
   from `.env` (git-ignored).

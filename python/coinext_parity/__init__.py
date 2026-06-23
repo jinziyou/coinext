@@ -79,9 +79,21 @@ class SessionResult:
         rebuilt by walking the same bars. Applying the IDENTICAL reconstruction to the backtest
         fills isolates the only real difference — the fill prices — so the gate measures execution
         fidelity rather than accounting artifacts.
+
+        Fills are snapped to the bar grid before bucketing (``coinext_screen._snap_fills_to_grid``):
+        event-driven fills land at ``bar_ts + execution_latency``, but REAL Binance klines close at
+        ``:59.999``, so that latency pushes the fill across the minute boundary and an EXACT
+        ``ts == bar_ts`` match would drop EVERY fill — leaving a flat equity curve and a vacuously
+        blind gate on the only real-data path. Snapping each fill to its nearest bar restores the
+        BAR that triggered it.
         """
+        import numpy as np
+        from coinext_screen import _snap_fills_to_grid
+
+        bar_ts = np.fromiter((int(ts) for ts, _close in bars), dtype=np.int64, count=len(bars))
+        snapped = _snap_fills_to_grid(fills, bar_ts) if len(bar_ts) else list(fills)
         by_ts: dict[int, list[tuple[int, float, float]]] = {}
-        for ts, side, qty, px in fills:
+        for ts, side, qty, px in snapped:
             by_ts.setdefault(int(ts), []).append((int(side), float(qty), float(px)))
         cash = float(starting_balance)
         pos = 0.0
@@ -98,7 +110,8 @@ class SessionResult:
                     pos -= qty
             curve.append((int(ts), cash + pos * float(close)))
         return cls(
-            equity_curve=curve, fills=[(int(t), int(s), float(q), float(p)) for t, s, q, p in fills]
+            equity_curve=curve,
+            fills=[(int(t), int(s), float(q), float(p)) for t, s, q, p in snapped],
         )
 
     def final_return(self) -> float:

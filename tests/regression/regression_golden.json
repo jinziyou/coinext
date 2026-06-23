@@ -6,8 +6,8 @@
     "qty": 0.5,
     "starting_balance": 100000.0
   },
-  "final_equity": 97141.373264,
+  "final_equity": 95772.07339,
   "fills": 13,
   "orders_submitted": 13,
-  "_note": "Auto-pinned on first run. Delete to intentionally re-pin."
+  "_note": "Re-pinned for the no-look-ahead execution model: a target decided on a bar's close now fills at the NEXT bar's open (was: same-bar close). Fills/orders unchanged (13); final_equity moved 97141.373264 -> 95772.07339. Delete to intentionally re-pin."
 }

@@ -28,6 +28,9 @@ pub struct SubmitOrder {
 #[derive(Debug, Clone)]
 pub struct CancelOrder {
     pub client_order_id: ClientOrderId,
+    /// The instrument the order rests on. Venues like Binance spot require the `symbol` on a cancel
+    /// (cancel-by-`origClientOrderId` alone is rejected `-1102`), so the command must carry it.
+    pub instrument_id: InstrumentId,
 }
 
 #[derive(Debug, Clone)]
@@ -150,7 +153,8 @@ pub struct RiskLimits {
 }
 
 impl RiskLimits {
-    /// No limits (kill-switch still applies). Useful for tests/examples.
+    /// No limits (kill-switch still applies). Useful for tests/examples — must be an EXPLICIT opt-in
+    /// so production wiring never silently runs with inert limits.
     pub fn unlimited() -> Self {
         RiskLimits {
             max_position_qty: None,
@@ -161,5 +165,68 @@ impl RiskLimits {
             leverage: None,
             maintenance_margin_rate: None,
         }
+    }
+
+    /// Build risk limits from environment variables, denominating the money limits in `settle`.
+    /// Any unset/blank/unparseable variable leaves that limit unset (so a partial config is fine).
+    /// Recognized variables:
+    ///   * `COINEXT_MAX_ORDER_NOTIONAL`      — per-order notional cap (settle ccy)
+    ///   * `COINEXT_MAX_POSITION_QTY`        — absolute position size cap
+    ///   * `COINEXT_MAX_GROSS_EXPOSURE`      — account gross-exposure cap (settle ccy)
+    ///   * `COINEXT_LEVERAGE`                — max account leverage (initial-margin gate)
+    ///   * `COINEXT_MAINTENANCE_MARGIN_RATE` — maintenance margin as a fraction of gross notional
+    pub fn from_env(settle: coinext_model::Currency) -> Self {
+        use std::str::FromStr;
+        let dec = |k: &str| -> Option<rust_decimal::Decimal> {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| rust_decimal::Decimal::from_str(v.trim()).ok())
+        };
+        let money =
+            |k: &str| -> Option<Money> { dec(k).and_then(|d| Money::from_decimal(d, settle).ok()) };
+        let qty = |k: &str| -> Option<Quantity> {
+            dec(k).and_then(|d| Quantity::from_decimal(d, settle.precision()).ok())
+        };
+        RiskLimits {
+            max_position_qty: qty("COINEXT_MAX_POSITION_QTY"),
+            max_position_notional: None,
+            max_order_notional: money("COINEXT_MAX_ORDER_NOTIONAL"),
+            max_orders_per_sec: None,
+            max_gross_exposure: money("COINEXT_MAX_GROSS_EXPOSURE"),
+            leverage: dec("COINEXT_LEVERAGE"),
+            maintenance_margin_rate: dec("COINEXT_MAINTENANCE_MARGIN_RATE"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coinext_model::Currency;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+
+    // from_env reads the configured limits (and leaves unset variables as None).
+    #[test]
+    fn risk_limits_from_env_reads_configured_caps() {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        // SAFETY: single-threaded test process for these uniquely-named vars.
+        std::env::set_var("COINEXT_MAX_ORDER_NOTIONAL", "40000");
+        std::env::set_var("COINEXT_LEVERAGE", "5");
+        std::env::remove_var("COINEXT_MAX_GROSS_EXPOSURE");
+        std::env::remove_var("COINEXT_MAX_POSITION_QTY");
+        std::env::remove_var("COINEXT_MAINTENANCE_MARGIN_RATE");
+
+        let limits = RiskLimits::from_env(usdt);
+        assert_eq!(
+            limits.max_order_notional.map(|m| m.amount()),
+            Some(Decimal::from_str("40000").unwrap())
+        );
+        assert_eq!(limits.leverage, Some(Decimal::from_str("5").unwrap()));
+        assert!(limits.max_gross_exposure.is_none());
+        assert!(limits.max_position_qty.is_none());
+
+        std::env::remove_var("COINEXT_MAX_ORDER_NOTIONAL");
+        std::env::remove_var("COINEXT_LEVERAGE");
     }
 }

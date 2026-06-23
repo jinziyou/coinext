@@ -17,6 +17,7 @@ pub use value::{Currency, Money, Price, Quantity, MAX_PRECISION};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
 
     #[test]
@@ -88,6 +89,55 @@ mod tests {
         let m = Money::from_decimal(dec!(12345.6789), usdt).unwrap();
         assert_eq!(m.amount(), dec!(12345.67890000));
         assert_eq!(m.currency().code(), "USDT");
+    }
+
+    #[test]
+    fn money_from_decimal_rejects_unrepresentable_large_value() {
+        // 1e21 at precision 8 would need a mantissa of 1e29, which overflows rust_decimal's
+        // 96-bit mantissa. `rescale` used to SILENTLY cap the scale and return a 10x-wrong
+        // value; quantize must now fail fast instead.
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let huge = Decimal::from_f64_retain(1e21).unwrap();
+        assert!(matches!(
+            Money::from_decimal(huge, usdt),
+            Err(ModelError::OutOfRange(_))
+        ));
+    }
+
+    #[test]
+    fn money_from_decimal_large_but_representable_is_exact() {
+        // Control: a large notional that *does* fit at the requested scale must still round-trip.
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let m = Money::from_decimal(dec!(1000000000.12345678), usdt).unwrap();
+        assert_eq!(m.amount(), dec!(1000000000.12345678));
+    }
+
+    #[test]
+    fn price_from_decimal_rejects_unrepresentable_large_value() {
+        let huge = Decimal::from_f64_retain(1e21).unwrap();
+        assert!(matches!(
+            Price::from_decimal(huge, 8),
+            Err(ModelError::OutOfRange(_))
+        ));
+    }
+
+    #[test]
+    fn price_from_raw_rejects_negative() {
+        assert!(matches!(
+            Price::from_raw(-1, 2),
+            Err(ModelError::Negative(_))
+        ));
+        // zero and positive remain valid
+        assert!(Price::from_raw(0, 2).is_ok());
+        assert!(Price::from_raw(100, 2).is_ok());
+    }
+
+    #[test]
+    fn price_from_decimal_rejects_negative() {
+        assert!(matches!(
+            Price::from_decimal(dec!(-1.5), 2),
+            Err(ModelError::Negative(_))
+        ));
     }
 
     #[test]

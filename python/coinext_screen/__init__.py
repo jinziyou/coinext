@@ -93,6 +93,7 @@ def vector_backtest(
     *,
     starting_balance: float = 100_000.0,
     fee_rate: float = 0.0004,
+    exec_lag: int = 1,
 ) -> VectorResult:
     """Vectorized mark-to-market PnL of holding ``positions[i]`` over bar ``i → i+1``.
 
@@ -100,6 +101,12 @@ def vector_backtest(
     starting balance plus the cumulative ``position * price_change`` less a flat ``fee_rate`` on the
     notional of each position CHANGE. Fills are synthesized at the bars where the position changes
     (so the result has the same shape as an event-driven session for the cross-check).
+
+    ``exec_lag`` mirrors the AUTHORITATIVE event-driven runner's NO-LOOK-AHEAD execution: a target
+    decided from bar ``i``'s close cannot fill on that same close — it fills at the next bar's open.
+    With the default ``exec_lag=1`` the supplied ``positions[i]`` (the signal/target as-of bar ``i``)
+    is realized from bar ``i+1`` onward, so the synthesized fills land on the SAME bars the runner
+    fills on. Pass ``exec_lag=0`` to test the raw same-bar PnL math directly.
     """
     ts, close = _closes(bars)
     n = len(close)
@@ -108,6 +115,11 @@ def vector_backtest(
     pos = np.asarray(positions, dtype=float)
     if len(pos) != n:
         raise ValueError(f"positions length {len(pos)} != bars length {n}")
+    if exec_lag:
+        # No-look-ahead: shift the realized position forward by `exec_lag` bars (flat until then).
+        lagged = np.zeros_like(pos)
+        lagged[exec_lag:] = pos[:-exec_lag] if exec_lag < n else 0.0
+        pos = lagged
 
     dprice = np.diff(close, prepend=close[0])  # price change into bar i (0 at i=0)
     pnl = pos.copy()

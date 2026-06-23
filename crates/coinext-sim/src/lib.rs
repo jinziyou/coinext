@@ -6,9 +6,12 @@
 //! faithful rather than cosmetic.
 //!
 //! State is behind `RefCell` so methods take `&self`, matching the single-threaded deterministic
-//! core. The kernel uses the inherent synchronous API (`on_submit`/`on_market`/`drain_due`); the
-//! same client is conceptually behind the identical `ExecutionClient` port the live adapter
-//! implements (the parity seam).
+//! core. The deterministic backtest kernel uses the inherent synchronous API
+//! (`on_submit`/`on_market`/`drain_due`) BY DESIGN — pull-based, time-frontier-merged, no channels.
+//! The SAME venue is ALSO exposed behind the identical `coinext_ports::ExecutionClient` port (the
+//! parity seam) via [`SimExecutionClientPort`], so the sim and the live `BinanceExecutionClient`
+//! implement ONE trait; a sandbox/live runtime drains the sim's reports over a `tokio::mpsc` channel
+//! exactly as it would a real venue's.
 
 use coinext_cache::Cache;
 use coinext_core::{Clock, Price, Quantity, UnixNanos};
@@ -100,6 +103,11 @@ struct Resting {
     venue_order_id: VenueOrderId,
     /// `Some` only for a `TrailingStopMarket`: its trailing distance + high/low-water mark.
     trail: Option<TrailState>,
+    /// A marketable order (Market, or a Limit marketable at submission) submitted while processing
+    /// bar T must NOT fill at bar T's close (the strategy decided on that close — it had no chance to
+    /// act on it). It rests `pending_open` and fills at the NEXT market event's OPEN (+ slippage),
+    /// avoiding intra-bar look-ahead. Cleared once that next event prices it.
+    pending_open: bool,
 }
 
 struct SimState {
@@ -146,6 +154,12 @@ impl SimulatedExecutionClient {
 
     pub fn venue(&self) -> Venue {
         self.venue.clone()
+    }
+
+    /// The sim's current simulated time (its shared `Clock`). Used by the `SimExecutionClientPort`
+    /// adapter to know up to which frontier reports are due.
+    pub fn now_ns(&self) -> UnixNanos {
+        self.clock.now_ns()
     }
 
     /// The reference price for `instrument`: prefer the side-appropriate quote, else the mark.
@@ -201,10 +215,17 @@ impl SimulatedExecutionClient {
     /// `now + latency`. Non-marketable limit orders rest until a future market event crosses them.
     pub fn on_submit(&self, order: Order) {
         let now = self.clock.now_ns();
-        let inst = match self.cache.borrow().instrument(&order.instrument_id) {
-            Some(i) => i,
-            None => return, // unknown instrument: silently ignore (kernel validates upstream)
-        };
+        // Guard: unknown instrument -> silently ignore (the kernel validates upstream). The price is
+        // no longer determined here — a marketable order rests `pending_open` and is priced at the
+        // next market event's open (no intra-bar look-ahead).
+        if self
+            .cache
+            .borrow()
+            .instrument(&order.instrument_id)
+            .is_none()
+        {
+            return;
+        }
         let mut state = self.state.borrow_mut();
         let venue_order_id = Self::next_venue_id(&mut state);
         let ack_at = now.saturating_add_ns(self.model.latency_ns(CommandKind::Submit));
@@ -230,54 +251,19 @@ impl SimulatedExecutionClient {
         };
 
         if marketable {
-            let last_bar = state.last_bar.get(&order.instrument_id).copied();
-            let (fill_px, liquidity, first_chunk) = match order.order_type {
-                OrderType::Market => {
-                    // OHLC-aware slippage from the most recent bar's (low, high).
-                    let bar_range = last_bar.map(|(lo, hi, _v)| (lo, hi));
-                    let px = self.model.fill_price(
-                        &order,
-                        ref_px.unwrap_or_else(|| order.price.unwrap()),
-                        bar_range,
-                        &*inst,
-                    );
-                    // Volume participation: a large market order takes at most a share of the last
-                    // bar's volume now; the rest rests as an aggressive remainder (filled over later
-                    // bars). No bar/volume known yet -> fill in full (the pre-participation path).
-                    let chunk = match last_bar {
-                        Some((_, _, vol)) => self.model.fillable_qty(order.quantity, vol, &*inst),
-                        None => order.quantity,
-                    };
-                    (px, LiquiditySide::Taker, chunk)
-                }
-                _ => (order.price.unwrap(), LiquiditySide::Taker, order.quantity),
-            };
-            let fill_at = now.saturating_add_ns(self.model.latency_ns(CommandKind::Submit));
-            let fill = self.make_fill(
-                &mut state,
-                &order,
-                venue_order_id.clone(),
-                fill_px,
-                first_chunk,
-                liquidity,
-                fill_at,
-                &*inst,
-            );
-            state.queue.push(fill_at, fill);
-            // A market order that couldn't fully fill this bar rests its remainder AGGRESSIVELY
-            // (order_type Market, no price): it fills at each later bar's market price (taker),
-            // capped by participation — never sits passively at a limit.
-            if let Ok(remaining) = order.quantity.checked_sub(first_chunk) {
-                if remaining.is_positive() {
-                    state.resting.push(Resting {
-                        order,
-                        remaining,
-                        queue_ahead: None,
-                        venue_order_id,
-                        trail: None,
-                    });
-                }
-            }
+            // No look-ahead: a marketable order decided on bar T's close must NOT fill at that same
+            // close (the strategy could not have acted on it). Rest it `pending_open` and let the
+            // NEXT market event's OPEN price it (in `on_market`). This defers the reference PRICE,
+            // not just the report latency. Determinism is preserved: the fill is scheduled relative
+            // to the next event's timestamp via the normal `on_market` path.
+            state.resting.push(Resting {
+                order: order.clone(),
+                remaining: order.quantity,
+                queue_ahead: None,
+                venue_order_id,
+                trail: None,
+                pending_open: true,
+            });
         } else {
             // Passive resting order (limit / stop / trailing stop). Partial fills decrement
             // `remaining`; the queue-ahead is seeded lazily on the first crossing bar.
@@ -314,6 +300,7 @@ impl SimulatedExecutionClient {
                 queue_ahead: None,
                 venue_order_id,
                 trail,
+                pending_open: false,
             });
         }
     }
@@ -356,6 +343,15 @@ impl SimulatedExecutionClient {
         let Some((low, high, close)) = market_px else {
             return;
         };
+        // The OPEN of this event — the price a `pending_open` marketable order (submitted on the
+        // PRIOR bar's close) is allowed to fill at, with no intra-bar look-ahead. Bars carry a true
+        // open; for a trade/quote the single tick price is its own open.
+        let open = match ev {
+            MarketEvent::Bar(b) => b.open,
+            MarketEvent::Trade(t) => t.price,
+            MarketEvent::Quote(q) => q.mid(),
+            MarketEvent::Delta(_) => return,
+        };
         // The traded volume available to resting orders this event (only bars carry it; quotes/
         // trades cap nothing here -> `None` means fill the full remaining).
         let bar_volume = match ev {
@@ -387,8 +383,60 @@ impl SimulatedExecutionClient {
         let mut to_activate: Vec<usize> = Vec::new();
         // TrailingStopMarket ratchets: (resting index, new extreme, new trigger) to write back.
         let mut to_trail: Vec<(usize, Price, Price)> = Vec::new();
+        // `pending_open` marketable orders priced against THIS event's open: indices to clear the
+        // flag on (after which any unfilled remainder reverts to its normal resting behavior).
+        let mut to_clear_pending: Vec<usize> = Vec::new();
         for (i, r) in state.resting.iter().enumerate() {
             if r.order.instrument_id != id {
+                continue;
+            }
+            // A marketable order submitted on the PRIOR bar's close fills at THIS event's OPEN (plus
+            // slippage), never at the close it was decided on. After this event prices it, the flag
+            // clears so any volume-capped remainder rests normally (aggressive market / passive
+            // limit) for subsequent bars.
+            if r.pending_open {
+                to_clear_pending.push(i);
+                // A marketable LIMIT must never fill WORSE than its limit. If the open gapped so the
+                // order is no longer marketable, don't take it at the open — clear the flag and let
+                // it rest as a normal passive limit (handled by the limit branch on later bars).
+                let limit = r.order.price;
+                let still_marketable = match limit {
+                    None => true, // pure market order: always takes the open
+                    Some(lim) => match r.order.side {
+                        OrderSide::Buy => open <= lim,
+                        OrderSide::Sell => open >= lim,
+                    },
+                };
+                if !still_marketable {
+                    continue; // reverts to a resting limit (flag cleared below)
+                }
+                let fill_qty = match bar_volume {
+                    Some(v) => self.model.fillable_qty(r.remaining, v, &*inst),
+                    None => r.remaining,
+                };
+                if fill_qty.is_positive() {
+                    // OHLC-aware slippage anchored at the OPEN (bounded by this bar's range), then
+                    // capped at the limit price for a marketable limit (a market order has no cap).
+                    let raw_px = self
+                        .model
+                        .fill_price(&r.order, open, Some((low, high)), &*inst);
+                    let fill_px = match limit {
+                        Some(lim) => match r.order.side {
+                            OrderSide::Buy => raw_px.min(lim),
+                            OrderSide::Sell => raw_px.max(lim),
+                        },
+                        None => raw_px,
+                    };
+                    decisions.push((
+                        i,
+                        r.venue_order_id.clone(),
+                        r.order.clone(),
+                        fill_px,
+                        fill_qty,
+                        None,
+                        LiquiditySide::Taker,
+                    ));
+                }
                 continue;
             }
             // Stop orders rest until the market crosses their trigger.
@@ -544,6 +592,11 @@ impl SimulatedExecutionClient {
             ));
         }
 
+        // Clear the `pending_open` flag on orders priced this event: their remainder (if any) now
+        // rests with normal semantics from the next bar on.
+        for &i in &to_clear_pending {
+            state.resting[i].pending_open = false;
+        }
         // Activate triggered StopLimit orders -> they rest as plain Limits from here on.
         for &i in &to_activate {
             state.resting[i].order.order_type = OrderType::Limit;
@@ -596,6 +649,154 @@ impl SimulatedExecutionClient {
     /// Drain all reports due at or before `frontier`.
     pub fn drain_due(&self, frontier: UnixNanos) -> Vec<ExecutionReport> {
         self.state.borrow_mut().queue.drain_due(frontier)
+    }
+}
+
+/// Adapter that makes the simulated venue speak the SAME `coinext_ports::ExecutionClient` port the
+/// live `BinanceExecutionClient` implements — so backtest and live share ONE trait at the seam.
+///
+/// ## Why an adapter (not a direct `impl` on `SimulatedExecutionClient`)
+/// `SimulatedExecutionClient` holds `Rc<dyn Clock>` and `Rc<RefCell<Cache>>` (it is intentionally
+/// single-threaded `!Send`), and the deterministic backtest kernel consumes it through the inherent
+/// PULL API (`on_submit` / `on_market` / `drain_due` / `peek_due`) so reports interleave on the
+/// time-frontier. The port is `Send` and PUSHES `ExecutionReport`s over a `tokio::mpsc` channel.
+/// Bolting the push model onto the hot path (or making the sim `Send`) would perturb the
+/// deterministic core, so the deterministic backtest keeps using the inherent API BY DESIGN and the
+/// port is provided here as a separate, owned wrapper.
+///
+/// `SimDriver` is the small `Send` seam the adapter owns instead of the `!Send` sim: it carries the
+/// exact knobs needed to build + step a sim (venue, brokerage, instruments, latency clock) on its
+/// own thread/runtime. The adapter drains the sim's `DelayedEventQueue` after each command and
+/// forwards every due `ExecutionReport` onto the report channel taken via [`take_reports`], so a live
+/// runtime drains the SAME report stream shape whether the venue is the sim or Binance.
+///
+/// This is a wiring SCAFFOLD: it bridges the port to the sim mechanism (and proves the sim CAN speak
+/// the port), but a full sandbox runtime that advances the clock from a live data feed is future
+/// work — see the kernel's `LiveKernel`.
+pub struct SimExecutionClientPort {
+    venue: Venue,
+    /// Builds the `!Send` sim lazily on the runtime thread (`connect`), keeping the adapter `Send`.
+    build: Box<dyn FnMut() -> SimulatedExecutionClient + Send>,
+    sim: RefCell<Option<SimulatedExecutionClient>>,
+    tx: tokio::sync::mpsc::Sender<ExecutionReport>,
+    rx: Option<tokio::sync::mpsc::Receiver<ExecutionReport>>,
+}
+
+// SAFETY: the adapter only ever touches the `!Send` `SimulatedExecutionClient` from within its own
+// async methods on the runtime thread that called `connect`; the sim is never shared or moved across
+// threads. The `build` closure and the channel are `Send`, so the wrapper is sound to move between
+// tasks before `connect`. The deterministic backtest does NOT use this type — it uses the inherent
+// sync API directly — so this assertion never affects the hot path's determinism guarantees.
+unsafe impl Send for SimExecutionClientPort {}
+// SAFETY: see `Send` above — the adapter is only ever driven from a single runtime thread (the one
+// that called `connect`), so the `!Sync` interior (the sim behind a `RefCell`) is never accessed
+// concurrently. `Sync` is required because the port's `&self` async methods hold `&self` across an
+// await point, which the `async_trait` desugaring requires to be `Send`.
+unsafe impl Sync for SimExecutionClientPort {}
+
+impl SimExecutionClientPort {
+    /// Construct the adapter. `build` is invoked once on `connect` (on the runtime thread) to create
+    /// the underlying sim, so the `!Send` sim is never constructed until it is pinned to that thread.
+    pub fn new(
+        venue: Venue,
+        build: impl FnMut() -> SimulatedExecutionClient + Send + 'static,
+    ) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(2048);
+        SimExecutionClientPort {
+            venue,
+            build: Box::new(build),
+            sim: RefCell::new(None),
+            tx,
+            rx: Some(rx),
+        }
+    }
+
+    /// Drain every report the sim has scheduled up to/through `frontier` and push it onto the report
+    /// channel (the live-shaped seam). Best-effort: a closed receiver simply stops the forwarding.
+    fn pump_reports(&self, frontier: UnixNanos) {
+        let reports = match self.sim.borrow().as_ref() {
+            Some(sim) => sim.drain_due(frontier),
+            None => return,
+        };
+        for r in reports {
+            if self.tx.try_send(r).is_err() {
+                break;
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl coinext_ports::ExecutionClient for SimExecutionClientPort {
+    fn venue(&self) -> Venue {
+        self.venue.clone()
+    }
+
+    async fn connect(&mut self) -> coinext_ports::PortResult<()> {
+        if self.sim.borrow().is_none() {
+            let sim = (self.build)();
+            *self.sim.borrow_mut() = Some(sim);
+        }
+        Ok(())
+    }
+
+    async fn submit_order(&self, cmd: coinext_ports::SubmitOrder) -> coinext_ports::PortResult<()> {
+        match self.sim.borrow().as_ref() {
+            Some(sim) => sim.on_submit(cmd.order),
+            None => return Err(coinext_ports::PortError::NotConnected),
+        }
+        // Forward any immediately-due reports (e.g. an Accepted scheduled at now+latency once the
+        // clock has advanced) onto the channel. Fills follow as the data feed steps the clock.
+        let now = self
+            .sim
+            .borrow()
+            .as_ref()
+            .map(|s| s.now_ns())
+            .unwrap_or(UnixNanos::ZERO);
+        self.pump_reports(now);
+        Ok(())
+    }
+
+    async fn cancel_order(&self, cmd: coinext_ports::CancelOrder) -> coinext_ports::PortResult<()> {
+        match self.sim.borrow().as_ref() {
+            Some(sim) => sim.on_cancel(cmd.client_order_id),
+            None => return Err(coinext_ports::PortError::NotConnected),
+        }
+        let now = self
+            .sim
+            .borrow()
+            .as_ref()
+            .map(|s| s.now_ns())
+            .unwrap_or(UnixNanos::ZERO);
+        self.pump_reports(now);
+        Ok(())
+    }
+
+    async fn modify_order(
+        &self,
+        _cmd: coinext_ports::ModifyOrder,
+    ) -> coinext_ports::PortResult<()> {
+        // The scaffold sim does not model order modify (the deterministic kernel skips it too); the
+        // live path handles cancel-replace. Explicitly unsupported so callers fail fast.
+        Err(coinext_ports::PortError::Unsupported(
+            "SimulatedExecutionClient does not model order modify".into(),
+        ))
+    }
+
+    async fn reconcile(&self) -> coinext_ports::PortResult<Vec<ExecutionReport>> {
+        // The sim is the source of truth in-process; there is no external venue to diff against.
+        Ok(Vec::new())
+    }
+
+    fn take_reports(&mut self) -> tokio::sync::mpsc::Receiver<ExecutionReport> {
+        self.rx
+            .take()
+            .expect("SimExecutionClientPort::take_reports called more than once")
+    }
+
+    async fn disconnect(&mut self) -> coinext_ports::PortResult<()> {
+        *self.sim.borrow_mut() = None;
+        Ok(())
     }
 }
 
@@ -653,7 +854,7 @@ mod tests {
         );
         let mut factory = OrderFactory::new(StrategyId::from("s1"));
         let order = factory.market(
-            id,
+            id.clone(),
             OrderSide::Buy,
             Quantity::from_decimal(dec!(1), 3).unwrap(),
             UnixNanos(0),
@@ -663,11 +864,21 @@ mod tests {
         sim.on_submit(order);
         // Nothing due at t=0 (latency > 0).
         assert!(sim.drain_due(UnixNanos(0)).is_empty());
-        // Advance well past latency -> Accepted + Fill drain.
+        // After latency the ACCEPTED drains, but NOT the fill: a market order submitted on a bar's
+        // close is `pending_open` and only fills at the NEXT market event's open (no look-ahead).
         let reports = sim.drain_due(UnixNanos(10_000_000));
-        assert_eq!(reports.len(), 2);
+        assert_eq!(reports.len(), 1, "only Accepted before any next bar");
         assert!(matches!(reports[0], ExecutionReport::Accepted { .. }));
-        assert!(matches!(reports[1], ExecutionReport::Fill(_)));
+        // Next bar arrives -> the order fills at that bar's open (+ slippage).
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar(&id, "49000", "51000", "50000", 1_000_000_000));
+        let reports = sim.drain_due(UnixNanos(1_100_000_000));
+        assert_eq!(
+            reports.len(),
+            1,
+            "the deferred fill arrives on the next bar"
+        );
+        assert!(matches!(reports[0], ExecutionReport::Fill(_)));
     }
 
     fn bar(iid: &InstrumentId, low: &str, high: &str, close: &str, ts: u64) -> MarketEvent {
@@ -953,8 +1164,9 @@ mod tests {
 
     #[test]
     fn market_order_participation_fills_over_bars() {
-        // A market BUY for qty 3.0 against volume-4 bars at participation 0.25 takes 1.0 now and
-        // rests an aggressive remainder that fills 1.0/bar at the market price over the next bars.
+        // A market BUY for qty 3.0 against volume-4 bars at participation 0.25 fills 1.0/bar. With
+        // no-look-ahead deferral the order is submitted on bar 1's close and its FIRST chunk fills at
+        // bar 2's open (not at submit), so it completes 1.0/bar across bars 2, 3, 4.
         let (clock, cache, id, _inst) = setup();
         let clock_dyn: Rc<dyn Clock> = clock.clone();
         let sim = SimulatedExecutionClient::new(
@@ -979,7 +1191,7 @@ mod tests {
         sim.on_market(&bar_vol(&id, "49900", "50100", "50000", "4", 1_000_000_000));
         assert!(drain_qtys(&sim, 1_100_000_000).is_empty());
 
-        // Submit a market buy for 3.0: first chunk (cap 1.0) fills now; 2.0 rests aggressively.
+        // Submit a market buy for 3.0 on bar 1's close: NOTHING fills at submit (pending_open).
         let mut factory = OrderFactory::new(StrategyId::from("s1"));
         let order = factory.market(
             id.clone(),
@@ -988,13 +1200,12 @@ mod tests {
             UnixNanos(1_000_000_000),
         );
         sim.on_submit(order);
-        assert_eq!(
-            drain_qtys(&sim, 1_200_000_000),
-            vec![one],
-            "first chunk fills at submit"
+        assert!(
+            drain_qtys(&sim, 1_200_000_000).is_empty(),
+            "no fill at submit — deferred to the next bar's open"
         );
 
-        // Bars 2 and 3 each fill 1.0 of the aggressive remainder.
+        // Bars 2, 3 and 4 each fill 1.0 (first chunk at bar 2's open, then the aggressive remainder).
         clock.advance_to(UnixNanos(2_000_000_000));
         sim.on_market(&bar_vol(&id, "49900", "50100", "50000", "4", 2_000_000_000));
         assert_eq!(
@@ -1008,15 +1219,187 @@ mod tests {
         assert_eq!(
             drain_qtys(&sim, 3_200_000_000),
             vec![one],
-            "bar 3 completes the order"
+            "bar 3 fills 1.0"
         );
 
-        // Bar 4: nothing left to fill.
         clock.advance_to(UnixNanos(4_000_000_000));
         sim.on_market(&bar_vol(&id, "49900", "50100", "50000", "4", 4_000_000_000));
+        assert_eq!(
+            drain_qtys(&sim, 4_200_000_000),
+            vec![one],
+            "bar 4 completes the order"
+        );
+
+        // Bar 5: nothing left to fill.
+        clock.advance_to(UnixNanos(5_000_000_000));
+        sim.on_market(&bar_vol(&id, "49900", "50100", "50000", "4", 5_000_000_000));
         assert!(
-            drain_qtys(&sim, 4_200_000_000).is_empty(),
+            drain_qtys(&sim, 5_200_000_000).is_empty(),
             "order complete -> no more fills"
+        );
+    }
+
+    /// Bar with a DISTINCT open (vs the `bar`/`bar_vol` helpers where open == close), to prove a
+    /// marketable order fills at the NEXT bar's open, not the close it was decided on.
+    fn bar_open(
+        id: &InstrumentId,
+        open: &str,
+        low: &str,
+        high: &str,
+        close: &str,
+        ts: u64,
+    ) -> MarketEvent {
+        use coinext_model::{AggregationSource, Bar, BarAggregation, BarSpec, BarType, PriceType};
+        let p = |s: &str| Price::from_decimal(s.parse().unwrap(), 2).unwrap();
+        MarketEvent::Bar(Bar {
+            bar_type: BarType {
+                instrument_id: id.clone(),
+                spec: BarSpec {
+                    step: 1,
+                    aggregation: BarAggregation::Minute,
+                    price_type: PriceType::Last,
+                },
+                source: AggregationSource::External,
+            },
+            open: p(open),
+            high: p(high),
+            low: p(low),
+            close: p(close),
+            volume: Quantity::from_decimal(dec!(100), 3).unwrap(),
+            ts_event: UnixNanos(ts),
+            ts_init: UnixNanos(ts),
+        })
+    }
+
+    // FIX 3: a market order submitted while processing bar T fills at bar T+1's OPEN, never at bar
+    // T's close (no intra-bar look-ahead).
+    #[test]
+    fn market_order_fills_at_next_bar_open_not_this_close() {
+        let (clock, cache, id, _inst) = setup();
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            // Disable slippage so the fill price equals the open EXACTLY (clean assertion).
+            Box::new(DefaultBrokerageModel {
+                slippage_bps: Decimal::ZERO,
+                range_impact: Decimal::ZERO,
+                ..DefaultBrokerageModel::default()
+            }),
+        );
+
+        // Bar T: close 50000 (the strategy "decides" here and submits a market buy on this close).
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_open(
+            &id,
+            "49500",
+            "49000",
+            "50500",
+            "50000",
+            1_000_000_000,
+        ));
+        let _ = sim.drain_due(UnixNanos(1_100_000_000));
+
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        let order = factory.market(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(1), 3).unwrap(),
+            UnixNanos(1_000_000_000),
+        );
+        sim.on_submit(order);
+        // No fill yet — the order must NOT fill at bar T's close (50000).
+        let pre: Vec<_> = sim
+            .drain_due(UnixNanos(1_200_000_000))
+            .into_iter()
+            .filter(|r| matches!(r, ExecutionReport::Fill(_)))
+            .collect();
+        assert!(pre.is_empty(), "no fill at the decision bar's close");
+
+        // Bar T+1 opens at 50200 -> the fill prices against THIS open.
+        clock.advance_to(UnixNanos(2_000_000_000));
+        sim.on_market(&bar_open(
+            &id,
+            "50200",
+            "50100",
+            "50800",
+            "50600",
+            2_000_000_000,
+        ));
+        let fills: Vec<_> = sim
+            .drain_due(UnixNanos(2_200_000_000))
+            .into_iter()
+            .filter_map(|r| match r {
+                ExecutionReport::Fill(f) => Some(f.last_px),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills.len(), 1, "fills exactly once, on the next bar");
+        assert_eq!(
+            fills[0],
+            Price::from_decimal(dec!(50200), 2).unwrap(),
+            "fills at bar T+1's open (50200), not bar T's close (50000)"
+        );
+    }
+
+    // FIX 3: a marketable-on-submission LIMIT also defers to the next bar's open, but never fills
+    // WORSE than its limit — when open+slippage would exceed the limit, the fill is capped there.
+    #[test]
+    fn marketable_limit_defers_and_caps_at_limit() {
+        let (clock, cache, id, _inst) = setup(); // mark 50000
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+        // Slippage ON: a taker buy would normally pay above the open, but the limit caps it.
+        let sim = SimulatedExecutionClient::new(
+            Venue::from("BINANCE"),
+            clock_dyn,
+            cache,
+            Box::new(DefaultBrokerageModel::default()),
+        );
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        // Buy limit @ 50500 with mark 50000 -> marketable at submission (50000 <= 50500).
+        let order = factory.limit(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(1), 3).unwrap(),
+            Price::from_decimal(dec!(50500), 2).unwrap(),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            UnixNanos(0),
+        );
+        sim.on_submit(order);
+        // No immediate fill (deferred), only the Accepted.
+        let pre: Vec<_> = sim
+            .drain_due(UnixNanos(10_000_000))
+            .into_iter()
+            .filter(|r| matches!(r, ExecutionReport::Fill(_)))
+            .collect();
+        assert!(pre.is_empty(), "marketable limit defers to the next bar");
+
+        // Next bar opens AT the limit (50500); a taker buy's slippage would push the fill above the
+        // limit, but it is capped at 50500 (never worse than the limit).
+        clock.advance_to(UnixNanos(1_000_000_000));
+        sim.on_market(&bar_open(
+            &id,
+            "50500",
+            "50400",
+            "50800",
+            "50600",
+            1_000_000_000,
+        ));
+        let fills: Vec<_> = sim
+            .drain_due(UnixNanos(1_100_000_000))
+            .into_iter()
+            .filter_map(|r| match r {
+                ExecutionReport::Fill(f) => Some(f.last_px),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills.len(), 1);
+        assert_eq!(
+            fills[0],
+            Price::from_decimal(dec!(50500), 2).unwrap(),
+            "marketable limit fill capped at its limit, not open+slippage"
         );
     }
 
@@ -1321,5 +1704,84 @@ mod tests {
             "base slippage preserved even when close == high: {at_high:?}"
         );
         assert_eq!(at_high, Price::from_decimal(dec!(51005.10), 2).unwrap());
+    }
+
+    /// The sim speaks the SAME `coinext_ports::ExecutionClient` port the live Binance client does:
+    /// a `SimExecutionClientPort` connects, accepts a submit, the data feed steps the market, and the
+    /// adapter forwards the sim's scheduled reports onto the port's report channel (`take_reports`).
+    /// This proves the shared seam is real — both venues implement ONE trait — without touching the
+    /// deterministic kernel's inherent pull API.
+    ///
+    /// Uses ZERO latency so the Accepted (and the next-bar fill) are due at t=0 and pumpable without
+    /// advancing the clock across threads (the `build` closure must be `Send`, so its `!Send` Rc
+    /// clock cannot be smuggled out — the test instead steps the sim via its own borrowed handle).
+    #[test]
+    fn sim_port_adapter_implements_execution_client_and_streams_reports() {
+        use coinext_ports::{ExecutionClient, SubmitOrder};
+
+        let mut port = SimExecutionClientPort::new(Venue::from("BINANCE"), || {
+            let (clock, cache, _id, _inst) = setup();
+            let clock_dyn: Rc<dyn Clock> = clock;
+            SimulatedExecutionClient::new(
+                Venue::from("BINANCE"),
+                clock_dyn,
+                cache,
+                // Zero latency: reports are due at the current sim time (t=0) immediately.
+                Box::new(DefaultBrokerageModel {
+                    latency_ns: 0,
+                    ..DefaultBrokerageModel::default()
+                }),
+            )
+        });
+
+        assert_eq!(port.venue(), Venue::from("BINANCE"));
+        let mut reports = port.take_reports();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&rt, async move {
+            port.connect().await.unwrap();
+
+            // Submit a market buy. With zero latency the sim schedules an Accepted due at t=0, which
+            // the adapter pumps onto the channel right after the submit.
+            let id = InstrumentId::parse("BTCUSDT.BINANCE").unwrap();
+            let mut factory = OrderFactory::new(StrategyId::from("s1"));
+            let order = factory.market(
+                id.clone(),
+                OrderSide::Buy,
+                Quantity::from_decimal(dec!(1), 3).unwrap(),
+                UnixNanos(0),
+            );
+            port.submit_order(SubmitOrder { order }).await.unwrap();
+
+            // The data feed steps the market: the `pending_open` marketable order fills at this bar's
+            // open (scheduled at now+0 = t=0). In a real sandbox runtime the DataClient drives this.
+            let market = bar(&id, "49000", "51000", "50000", 0);
+            port.sim.borrow().as_ref().unwrap().on_market(&market);
+            // A cancel for an unknown id is a match-no-op but triggers a fresh report pump (the
+            // adapter forwards everything due to the channel — the live-shaped report stream).
+            port.cancel_order(coinext_ports::CancelOrder {
+                client_order_id: coinext_model::ClientOrderId::from("none"),
+                instrument_id: id,
+            })
+            .await
+            .unwrap();
+
+            // We must have received the Accepted and the Fill over the port channel — exactly the
+            // stream shape a live runtime drains from `take_reports`.
+            let mut got_accepted = false;
+            let mut got_fill = false;
+            while let Ok(r) = reports.try_recv() {
+                match r {
+                    ExecutionReport::Accepted { .. } => got_accepted = true,
+                    ExecutionReport::Fill(_) => got_fill = true,
+                    _ => {}
+                }
+            }
+            assert!(got_accepted, "Accepted forwarded over the port channel");
+            assert!(got_fill, "Fill forwarded over the port channel");
+        });
     }
 }
