@@ -17,10 +17,10 @@ mod imp {
     use coinext_indicators::{Atr, Bollinger, Ema, Indicator, Macd, Rsi, Sma, Vwap};
     use coinext_kernel::{BacktestConfig, BacktestKernel};
     use coinext_model::{
-        AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, Equity,
+        AggregationSource, Bar, BarAggregation, BarSpec, BarType, BookAction, CurrencyPair, Equity,
         FuturesContract, Instrument, InstrumentId, MarketEvent, OptionContract, OptionRight,
-        OrderEvent, OrderSide, PositionSide, PriceType, QuoteTick, StrategyId, Symbol, TradeId,
-        TradeTick, Venue,
+        OrderBookDelta, OrderEvent, OrderSide, PositionSide, PriceType, QuoteTick, StrategyId,
+        Symbol, TradeId, TradeTick, Venue,
     };
     use coinext_ports::{Strategy, StrategyContext};
     use pyo3::prelude::*;
@@ -111,6 +111,31 @@ mod imp {
         pub price: f64,
         #[pyo3(get)]
         pub size: f64,
+        #[pyo3(get)]
+        pub ts: u64,
+    }
+
+    /// The maintained L2 order book, delivered to `on_book` after a depth delta is folded in.
+    /// `bids`/`asks` are `(price, size)` lists, best-first; `best_*`/`mid` are `None` when that side
+    /// (or both) is empty.
+    #[pyclass(unsendable, name = "OrderBook")]
+    pub struct PyOrderBook {
+        #[pyo3(get)]
+        pub symbol: String,
+        #[pyo3(get)]
+        pub best_bid: Option<f64>,
+        #[pyo3(get)]
+        pub best_ask: Option<f64>,
+        #[pyo3(get)]
+        pub best_bid_size: Option<f64>,
+        #[pyo3(get)]
+        pub best_ask_size: Option<f64>,
+        #[pyo3(get)]
+        pub mid: Option<f64>,
+        #[pyo3(get)]
+        pub bids: Vec<(f64, f64)>,
+        #[pyo3(get)]
+        pub asks: Vec<(f64, f64)>,
         #[pyo3(get)]
         pub ts: u64,
     }
@@ -783,6 +808,29 @@ mod imp {
             });
         }
 
+        fn on_book(&mut self, book: &coinext_model::OrderBook, ctx: &mut StrategyContext) {
+            // Snapshot the book into owned primitives BEFORE acquiring the GIL (same pattern as the
+            // other handlers): full depth as (price, size) lists, plus convenience top-of-book.
+            let symbol = book.instrument_id().symbol.as_str().to_string();
+            let bb = book.best_bid();
+            let ba = book.best_ask();
+            let pb = PyOrderBook {
+                symbol,
+                best_bid: bb.map(|(p, _)| p.as_f64()),
+                best_ask: ba.map(|(p, _)| p.as_f64()),
+                best_bid_size: bb.map(|(_, q)| q.as_f64()),
+                best_ask_size: ba.map(|(_, q)| q.as_f64()),
+                mid: book.mid().map(|p| p.as_f64()),
+                bids: book.bids().map(|(p, q)| (p.as_f64(), q.as_f64())).collect(),
+                asks: book.asks().map(|(p, q)| (p.as_f64(), q.as_f64())).collect(),
+                ts: book.ts_last().as_u64(),
+            };
+            self.run_handler(ctx, move |py, obj, pyctx| {
+                let py_book = Py::new(py, pb)?;
+                obj.call_method1("on_book", (py_book, pyctx)).map(|_| ())
+            });
+        }
+
         fn on_order_filled(&mut self, f: &coinext_model::Fill, ctx: &mut StrategyContext) {
             let v = (
                 f.instrument_id.symbol.as_str().to_string(),
@@ -1070,6 +1118,45 @@ mod imp {
         }))
     }
 
+    /// Build an `OrderBookDelta` market event — folds into the cached L2 book and fires `on_book`.
+    /// `side` is `+1` bid / `-1` ask; `action` is `0` add / `1` update / `2` delete / `3` clear
+    /// (a snapshot boundary that wipes the book; the `Add`s that follow rebuild it).
+    fn build_delta_event(
+        meta: &InstrumentMeta,
+        ts: u64,
+        side: i8,
+        price: f64,
+        size: f64,
+        sequence: u64,
+        action: u8,
+    ) -> PyResult<MarketEvent> {
+        let action = match action {
+            0 => BookAction::Add,
+            1 => BookAction::Update,
+            2 => BookAction::Delete,
+            3 => BookAction::Clear,
+            other => {
+                return Err(vexc(format!(
+                    "unknown book action {other} (0=add 1=update 2=delete 3=clear)"
+                )))
+            }
+        };
+        Ok(MarketEvent::Delta(OrderBookDelta {
+            instrument_id: meta.iid.clone(),
+            action,
+            side: if side < 0 {
+                OrderSide::Sell
+            } else {
+                OrderSide::Buy
+            },
+            price: Price::from_f64(price, meta.price_precision).map_err(vexc)?,
+            size: Quantity::from_f64(size.max(0.0), meta.size_precision).map_err(vexc)?,
+            sequence,
+            ts_event: UnixNanos(ts),
+            ts_init: UnixNanos(ts),
+        }))
+    }
+
     /// Assemble and run the kernel over `events` (kernel sorts by `ts_event`), returning the result.
     #[allow(clippy::too_many_arguments)]
     fn run_kernel(
@@ -1141,7 +1228,7 @@ mod imp {
     #[pyo3(signature = (
         strategy, symbol, venue, starting_balance, bars,
         price_precision=2, size_precision=3, maker_fee=0.0002, taker_fee=0.0004,
-        queue_ahead_factor=0.0, quotes=vec![], trades=vec![],
+        queue_ahead_factor=0.0, quotes=vec![], trades=vec![], deltas=vec![],
         asset_class="spot".to_string(), multiplier=1.0, strike=None, option_right=None,
         expiry_ns=None, underlying=None, leverage=0.0, maintenance_margin_rate=0.0,
     ))]
@@ -1163,6 +1250,9 @@ mod imp {
         // ask_size)` fire `on_quote`; trades `(ts, price, size, aggressor[+1/-1])` fire `on_trade`.
         quotes: Vec<(u64, f64, f64, f64, f64)>,
         trades: Vec<(u64, f64, f64, i8)>,
+        // Optional L2 depth deltas `(ts, side[+1 bid/-1 ask], price, size, sequence, action[0=add
+        // 1=update 2=delete 3=clear])` — fold into the cached book and fire `on_book`.
+        deltas: Vec<(u64, i8, f64, f64, u64, u8)>,
         // Instrument kind: spot (default) / equity / future / option. Derivatives scale PnL by
         // `multiplier`; futures need `expiry_ns`; options need `strike`/`option_right`/`expiry_ns`/
         // `underlying`. The traded `bars`/ticks ARE that instrument's own price series.
@@ -1193,7 +1283,8 @@ mod imp {
             expiry_ns,
             underlying,
         )?;
-        let mut events = Vec::with_capacity(bars.len() + quotes.len() + trades.len());
+        let mut events =
+            Vec::with_capacity(bars.len() + quotes.len() + trades.len() + deltas.len());
         for (ts, open, high, low, close, volume) in bars {
             events.push(build_bar_event(&meta, ts, open, high, low, close, volume)?);
         }
@@ -1202,6 +1293,11 @@ mod imp {
         }
         for (seq, (ts, price, size, side)) in trades.into_iter().enumerate() {
             events.push(build_trade_event(&meta, ts, price, size, side, seq as u64)?);
+        }
+        for (ts, side, price, size, sequence, action) in deltas {
+            events.push(build_delta_event(
+                &meta, ts, side, price, size, sequence, action,
+            )?);
         }
         let starting = Money::from_decimal(
             Decimal::from_f64(starting_balance).unwrap_or(Decimal::ZERO),
@@ -1348,6 +1444,7 @@ mod imp {
         m.add_class::<PyTimer>()?;
         m.add_class::<PyQuote>()?;
         m.add_class::<PyTrade>()?;
+        m.add_class::<PyOrderBook>()?;
         m.add_class::<PySma>()?;
         m.add_class::<PyEma>()?;
         m.add_class::<PyRsi>()?;

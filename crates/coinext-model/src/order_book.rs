@@ -153,6 +153,11 @@ impl OrderBook {
         self.last_sequence
     }
 
+    /// Venue timestamp of the last applied delta (`UnixNanos(0)` if none applied yet).
+    pub fn ts_last(&self) -> UnixNanos {
+        self.ts_last
+    }
+
     /// Derive a top-of-book [`QuoteTick`] from the best bid/ask. `None` unless both sides have a
     /// level. Display/derivation helper — the book never auto-overwrites the cached mark.
     pub fn to_quote(&self, ts_init: UnixNanos) -> Option<QuoteTick> {

@@ -7,8 +7,8 @@ use crate::commands::StrategyCommand;
 use coinext_cache::Cache;
 use coinext_core::{Clock, Price, Quantity, TimerId, UnixNanos};
 use coinext_model::{
-    ClientOrderId, Instrument, InstrumentId, Order, OrderFlags, OrderSide, OrderType, Position,
-    QuoteTick, StrategyId, TimeInForce,
+    ClientOrderId, Instrument, InstrumentId, Order, OrderBook, OrderFlags, OrderSide, OrderType,
+    Position, QuoteTick, StrategyId, TimeInForce,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -216,6 +216,11 @@ impl StrategyContext {
     }
     pub fn mark(&self, id: &InstrumentId) -> Option<Price> {
         self.cache.borrow().mark(id)
+    }
+    /// The maintained L2 order book for `id` (cloned). Cheap top-of-book is also in `on_book`'s
+    /// passed-by-reference book; this read lets other handlers query depth on demand.
+    pub fn order_book(&self, id: &InstrumentId) -> Option<OrderBook> {
+        self.cache.borrow().order_book(id).cloned()
     }
     pub fn instrument(&self, id: &InstrumentId) -> Option<Arc<dyn Instrument>> {
         self.cache.borrow().instrument(id)

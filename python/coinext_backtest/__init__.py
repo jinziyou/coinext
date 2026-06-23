@@ -126,6 +126,7 @@ def run(
     queue_ahead_factor: float = 0.0,
     quotes: list[tuple] | None = None,
     trades: list[tuple] | None = None,
+    deltas: list[tuple] | None = None,
     instrument: Instrument | None = None,
     leverage: float = 0.0,
     maintenance_margin_rate: float = 0.0,
@@ -144,6 +145,11 @@ def run(
     they fire ``on_quote`` / ``on_trade`` and also drive the mark + resting-limit fills against tick
     prices. Synthesize them from bars (:func:`synth_quotes`, :func:`synth_trades`) or feed real ones
     (``coinext_data.fetch_binance_agg_trades``).
+
+    ``deltas`` (``(ts, side[+1 bid/-1 ask], price, size, sequence, action[0=add/1=update/2=delete/
+    3=clear])``) is an optional L2 depth stream: each delta is folded into the maintained order book
+    (``ctx.order_book(symbol)``) and fires ``on_book``. ``clear`` (a snapshot boundary) wipes the
+    book so the ``add``s that follow rebuild it.
 
     ``instrument`` (an :class:`Instrument`) selects the asset class — spot (default), equity,
     future, or option. Derivatives scale PnL by the contract ``multiplier``; the ``bars`` are that
@@ -179,6 +185,10 @@ def run(
             for ts, b, a, bs, az in (quotes or [])
         ],
         trades=[(int(ts), float(p), float(s), int(side)) for ts, p, s, side in (trades or [])],
+        deltas=[
+            (int(ts), int(side), float(px), float(sz), int(seq), int(action))
+            for ts, side, px, sz, seq, action in (deltas or [])
+        ],
     )
 
 

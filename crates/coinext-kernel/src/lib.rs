@@ -344,7 +344,15 @@ impl BacktestKernel {
             MarketEvent::Quote(q) => self.strategy.on_quote(q, &mut self.ctx),
             MarketEvent::Trade(t) => self.strategy.on_trade(t, &mut self.ctx),
             MarketEvent::Bar(b) => self.strategy.on_bar(b, &mut self.ctx),
-            MarketEvent::Delta(_) => {}
+            MarketEvent::Delta(d) => {
+                // The DataEngine already folded this delta into the cached L2 book; hand the strategy
+                // the maintained book (by reference — the cache borrow is held only over the handler,
+                // which queues commands via the outbox and never re-borrows the cache mutably).
+                let cache = self.cache.borrow();
+                if let Some(book) = cache.order_book(&d.instrument_id) {
+                    self.strategy.on_book(book, &mut self.ctx);
+                }
+            }
         }
     }
 
@@ -701,7 +709,15 @@ impl LiveKernel {
             MarketEvent::Quote(q) => self.strategy.on_quote(q, &mut self.ctx),
             MarketEvent::Trade(t) => self.strategy.on_trade(t, &mut self.ctx),
             MarketEvent::Bar(b) => self.strategy.on_bar(b, &mut self.ctx),
-            MarketEvent::Delta(_) => {}
+            MarketEvent::Delta(d) => {
+                // The DataEngine already folded this delta into the cached L2 book; hand the strategy
+                // the maintained book (by reference — the cache borrow is held only over the handler,
+                // which queues commands via the outbox and never re-borrows the cache mutably).
+                let cache = self.cache.borrow();
+                if let Some(book) = cache.order_book(&d.instrument_id) {
+                    self.strategy.on_book(book, &mut self.ctx);
+                }
+            }
         }
     }
 
@@ -800,8 +816,9 @@ mod tests {
     use super::*;
     use coinext_core::{Price, Quantity};
     use coinext_model::{
-        AggregationSource, Bar, BarAggregation, BarSpec, BarType, CurrencyPair, FuturesContract,
-        InstrumentId, OptionContract, OptionRight, OrderSide, PriceType,
+        AggregationSource, Bar, BarAggregation, BarSpec, BarType, BookAction, CurrencyPair,
+        FuturesContract, InstrumentId, OptionContract, OptionRight, OrderBookDelta, OrderSide,
+        PriceType,
     };
     use rust_decimal_macros::dec;
 
@@ -936,6 +953,44 @@ mod tests {
         })
     }
 
+    /// Top-of-book `(best_bid, best_ask)` seen on an `on_book`, shared back to the test via `Rc`.
+    type SeenTops = Rc<RefCell<Vec<(Option<f64>, Option<f64>)>>>;
+
+    /// Records the top-of-book it is handed on each `on_book`.
+    struct RecordBook {
+        seen: SeenTops,
+    }
+    impl Strategy for RecordBook {
+        fn on_book(&mut self, book: &coinext_model::OrderBook, _ctx: &mut StrategyContext) {
+            self.seen.borrow_mut().push((
+                book.best_bid().map(|(p, _)| p.as_f64()),
+                book.best_ask().map(|(p, _)| p.as_f64()),
+            ));
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn delta(
+        iid: &InstrumentId,
+        action: BookAction,
+        side: OrderSide,
+        px: &str,
+        sz: &str,
+        seq: u64,
+        ts: u64,
+    ) -> MarketEvent {
+        MarketEvent::Delta(OrderBookDelta {
+            instrument_id: iid.clone(),
+            action,
+            side,
+            price: Price::from_decimal(px.parse().unwrap(), 2).unwrap(),
+            size: Quantity::from_decimal(sz.parse().unwrap(), 3).unwrap(),
+            sequence: seq,
+            ts_event: UnixNanos(ts),
+            ts_init: UnixNanos(ts),
+        })
+    }
+
     fn bar(iid: &InstrumentId, close: &str, ts: u64) -> MarketEvent {
         let p = |s: &str| Price::from_decimal(s.parse().unwrap(), 2).unwrap();
         MarketEvent::Bar(Bar {
@@ -990,6 +1045,76 @@ mod tests {
             res.starting_equity
         );
         assert!(!res.equity_curve.is_empty());
+    }
+
+    #[test]
+    fn strategy_on_book_receives_maintained_l2_book() {
+        let usdt = Currency::new("USDT", 8).unwrap();
+        let i = inst();
+        let iid = i.id();
+        let cfg = BacktestConfig::new(
+            Venue::from("BINANCE"),
+            vec![i],
+            usdt,
+            Money::from_decimal(dec!(100000), usdt).unwrap(),
+        );
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let strat = Box::new(RecordBook { seen: seen.clone() });
+        // A snapshot boundary (Clear) then a rebuild, then a better bid on the next sequence.
+        let events = vec![
+            delta(
+                &iid,
+                BookAction::Clear,
+                OrderSide::Buy,
+                "0",
+                "0",
+                100,
+                1_000_000_000,
+            ),
+            delta(
+                &iid,
+                BookAction::Add,
+                OrderSide::Buy,
+                "50000",
+                "1",
+                100,
+                1_000_000_000,
+            ),
+            delta(
+                &iid,
+                BookAction::Add,
+                OrderSide::Sell,
+                "50010",
+                "1",
+                100,
+                1_000_000_000,
+            ),
+            delta(
+                &iid,
+                BookAction::Add,
+                OrderSide::Buy,
+                "50005",
+                "2",
+                101,
+                2_000_000_000,
+            ),
+        ];
+        let mut kernel = BacktestKernel::build(cfg, StrategyId::from("book"), strat, events);
+        let _ = kernel.run();
+
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 4, "on_book fires once per delta");
+        assert_eq!(seen[0], (None, None), "empty book right after Clear");
+        assert_eq!(
+            seen[2],
+            (Some(50000.0), Some(50010.0)),
+            "book rebuilt from the snapshot Adds"
+        );
+        assert_eq!(
+            seen[3],
+            (Some(50005.0), Some(50010.0)),
+            "the better bid becomes the top of book"
+        );
     }
 
     #[test]

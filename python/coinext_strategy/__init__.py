@@ -48,6 +48,18 @@ class Trade(Protocol):
     ts: int
 
 
+class OrderBook(Protocol):
+    symbol: str
+    best_bid: float | None
+    best_ask: float | None
+    best_bid_size: float | None
+    best_ask_size: float | None
+    mid: float | None
+    bids: list[tuple[float, float]]  # (price, size), best-first
+    asks: list[tuple[float, float]]
+    ts: int
+
+
 class Fill(Protocol):
     symbol: str
     side: int  # +1 buy / -1 sell
@@ -107,6 +119,10 @@ class Strategy:
         pass
 
     def on_trade(self, trade: Trade, ctx: Ctx) -> None:  # pragma: no cover - feed-dependent
+        pass
+
+    def on_book(self, book: OrderBook, ctx: Ctx) -> None:  # pragma: no cover - feed-dependent
+        """The maintained L2 book after a depth delta (fires only when the feed provides deltas)."""
         pass
 
     def on_order_filled(self, fill: Fill, ctx: Ctx) -> None:
