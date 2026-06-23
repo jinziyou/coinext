@@ -82,11 +82,15 @@ impl BinanceDataClient {
         })
     }
 
-    /// Fetch a depth snapshot's `lastUpdateId` for `symbol` (`GET /api/v3/depth?symbol&limit=1000`).
-    async fn fetch_depth_snapshot_last_id(
+    /// Fetch a depth snapshot for `symbol` (`GET /api/v3/depth?symbol&limit=1000`) and parse it into
+    /// its `lastUpdateId` plus the full level set as `OrderBookDelta`s (a `Clear` followed by one
+    /// `Add` per level) so the core L2 book can be rebuilt from the snapshot.
+    async fn fetch_depth_snapshot(
         rest: &RestClient,
         symbol: &str,
-    ) -> PortResult<u64> {
+        ts_event: UnixNanos,
+        ts_init: UnixNanos,
+    ) -> PortResult<(u64, Vec<OrderBookDelta>)> {
         let resp = rest
             .send(
                 RestRequest::get("/api/v3/depth", 50)
@@ -95,7 +99,7 @@ impl BinanceDataClient {
             )
             .await
             .map_err(crate::net_to_port)?;
-        parse_depth_snapshot_last_id(&resp.body).map_err(PortError::Io)
+        normalize_depth_snapshot(symbol, &resp.body, ts_event, ts_init).map_err(PortError::Io)
     }
 
     /// The Binance stream names for a subscription (combined-stream form, lower-cased symbol).
@@ -298,17 +302,37 @@ async fn process_frame(
             Ok(s) => s.to_string(),
             Err(_) => return Ok(()),
         };
+        // The snapshot rebuild deltas reuse the diff frame's event time so they order just before the
+        // live diffs in the time-frontier; fall back to ingest time if `E` is absent.
+        let snap_ts_event = match num_field(data, "E") {
+            Ok(e) => UnixNanos(e.saturating_mul(1_000_000)),
+            Err(_) => ts_init,
+        };
         let mut action = resyncer.on_diff(&symbol, update);
+        // Snapshot deltas (Clear + per-level Add) of the snapshot that actually bridged the book.
+        // Carried so they can be flushed to the core BEFORE the live diff deltas, rebuilding the L2
+        // book from the snapshot. Each refetch (stale snapshot) replaces these.
+        let mut snapshot_deltas: Vec<OrderBookDelta> = Vec::new();
         // Loop in case the first snapshot is already stale relative to the buffered diffs.
         while action == DepthAction::NeedSnapshot {
-            match BinanceDataClient::fetch_depth_snapshot_last_id(rest, &symbol).await {
-                Ok(last_id) => action = resyncer.on_snapshot(&symbol, last_id),
+            match BinanceDataClient::fetch_depth_snapshot(rest, &symbol, snap_ts_event, ts_init)
+                .await
+            {
+                Ok((last_id, sdeltas)) => {
+                    action = resyncer.on_snapshot(&symbol, last_id);
+                    snapshot_deltas = sdeltas;
+                }
                 Err(_) => return Ok(()), // snapshot fetch failed; try again on the next diff
             }
         }
-        // Only emit deltas once the book is bridged and applying in order.
+        // Only emit deltas once the book is bridged and applying in order. Emit the snapshot rebuild
+        // (Clear + Adds) first so the core book matches the snapshot, then the live diff deltas.
         if resyncer.is_synced(&symbol) {
-            for ev in deltas.into_iter().map(MarketEvent::Delta) {
+            for ev in snapshot_deltas
+                .into_iter()
+                .chain(deltas)
+                .map(MarketEvent::Delta)
+            {
                 if tx.send(ev).await.is_err() {
                     return Err(());
                 }
@@ -555,6 +579,77 @@ pub fn parse_depth_snapshot_last_id(body: &str) -> Result<u64, String> {
         .ok_or_else(|| "depth snapshot missing lastUpdateId".to_string())
 }
 
+/// PURE: a `GET /api/v3/depth` snapshot body -> its `lastUpdateId` plus the full level set as
+/// `OrderBookDelta`s that rebuild the core L2 book. The first delta is a [`BookAction::Clear`]
+/// (discard every held level for the instrument); each subsequent delta is a [`BookAction::Add`]
+/// carrying one snapshot bid/ask level (bids then asks). The snapshot's `lastUpdateId` becomes each
+/// delta's `sequence` so it orders before the first bridging diff.
+///
+/// The `Clear` delta carries placeholder zero price/size (it is a full-book boundary marker, not a
+/// real level); its `instrument_id`/`side`/`sequence`/timestamps are still set so consumers can route
+/// and order it. Side is set to `Buy` as a neutral placeholder.
+pub fn normalize_depth_snapshot(
+    symbol: &str,
+    body: &str,
+    ts_event: UnixNanos,
+    ts_init: UnixNanos,
+) -> Result<(u64, Vec<OrderBookDelta>), String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid depth snapshot json: {e}"))?;
+    let last_update_id = v
+        .get("lastUpdateId")
+        .and_then(|x| x.as_u64())
+        .ok_or_else(|| "depth snapshot missing lastUpdateId".to_string())?;
+    let id = instrument_id(symbol);
+
+    let mut out = Vec::new();
+    // Full-book reset boundary: everything after this delta is the fresh snapshot.
+    out.push(OrderBookDelta {
+        instrument_id: id.clone(),
+        action: BookAction::Clear,
+        side: OrderSide::Buy,
+        price: Price::from_raw(0, WIRE_PRECISION).map_err(|e| format!("clear price: {e}"))?,
+        size: Quantity::from_raw(0, WIRE_PRECISION).map_err(|e| format!("clear size: {e}"))?,
+        sequence: last_update_id,
+        ts_event,
+        ts_init,
+    });
+
+    for (side, key) in [(OrderSide::Buy, "bids"), (OrderSide::Sell, "asks")] {
+        let levels = v
+            .get(key)
+            .and_then(|x| x.as_array())
+            .ok_or_else(|| format!("depth snapshot: missing `{key}` levels"))?;
+        for level in levels {
+            let pair = level
+                .as_array()
+                .ok_or_else(|| "depth snapshot: level not a [price, qty] pair".to_string())?;
+            let price = parse_price(
+                pair.first()
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "depth snapshot: missing price".to_string())?,
+            )?;
+            let size = parse_qty(
+                pair.get(1)
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "depth snapshot: missing size".to_string())?,
+            )?;
+            // A snapshot level is always present (non-zero); emit it as an Add onto the cleared book.
+            out.push(OrderBookDelta {
+                instrument_id: id.clone(),
+                action: BookAction::Add,
+                side,
+                price,
+                size,
+                sequence: last_update_id,
+                ts_event,
+                ts_init,
+            });
+        }
+    }
+    Ok((last_update_id, out))
+}
+
 /// PURE: a Binance kline row -> `Bar`. The REST `klines` row is a 12-element array:
 /// `[openTime, open, high, low, close, volume, closeTime, ...]`. `ts_event` is the CLOSE time so a
 /// bar is only emitted once complete (no look-ahead, per the `Bar` contract).
@@ -786,6 +881,156 @@ mod tests {
             160
         );
         assert!(parse_depth_snapshot_last_id("{}").is_err());
+    }
+
+    #[test]
+    fn normalize_depth_snapshot_emits_clear_then_per_level_adds() {
+        // A REST depth snapshot must rebuild the core book: a Clear boundary followed by one Add per
+        // bid/ask level (bids then asks), all sequenced at the snapshot's lastUpdateId.
+        let body = r#"{"lastUpdateId":160,
+            "bids":[["49999.00","1.00000000"],["49998.00","2.00000000"]],
+            "asks":[["50001.00","3.00000000"]]}"#;
+        let (last_id, deltas) = normalize_depth_snapshot("BTCUSDT", body, ti(), ti()).unwrap();
+        assert_eq!(last_id, 160);
+        // 1 Clear + 2 bids + 1 ask.
+        assert_eq!(deltas.len(), 4);
+
+        // First delta is the full-book reset boundary.
+        assert_eq!(deltas[0].action, BookAction::Clear);
+        assert_eq!(deltas[0].instrument_id.to_string(), "BTCUSDT.BINANCE");
+        assert_eq!(deltas[0].price.as_decimal(), dec!(0));
+        assert_eq!(deltas[0].size.as_decimal(), dec!(0));
+        assert_eq!(deltas[0].sequence, 160);
+
+        // Then bid levels as Add.
+        assert_eq!(deltas[1].action, BookAction::Add);
+        assert_eq!(deltas[1].side, OrderSide::Buy);
+        assert_eq!(deltas[1].price.as_decimal(), dec!(49999.00));
+        assert_eq!(deltas[1].size.as_decimal(), dec!(1));
+        assert_eq!(deltas[2].action, BookAction::Add);
+        assert_eq!(deltas[2].side, OrderSide::Buy);
+        assert_eq!(deltas[2].price.as_decimal(), dec!(49998.00));
+
+        // Then ask levels as Add.
+        assert_eq!(deltas[3].action, BookAction::Add);
+        assert_eq!(deltas[3].side, OrderSide::Sell);
+        assert_eq!(deltas[3].price.as_decimal(), dec!(50001.00));
+        assert_eq!(deltas[3].size.as_decimal(), dec!(3));
+
+        // Every snapshot delta is sequenced at lastUpdateId so it orders before the first diff.
+        assert!(deltas.iter().all(|d| d.sequence == 160));
+    }
+
+    #[test]
+    fn normalize_depth_snapshot_clear_only_for_empty_book() {
+        // An empty snapshot still emits the Clear boundary (book reset to nothing).
+        let (last_id, deltas) = normalize_depth_snapshot(
+            "BTCUSDT",
+            r#"{"lastUpdateId":5,"bids":[],"asks":[]}"#,
+            ti(),
+            ti(),
+        )
+        .unwrap();
+        assert_eq!(last_id, 5);
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].action, BookAction::Clear);
+    }
+
+    #[test]
+    fn normalize_depth_snapshot_rejects_missing_fields() {
+        assert!(normalize_depth_snapshot("BTCUSDT", "{}", ti(), ti()).is_err());
+        // missing asks
+        assert!(normalize_depth_snapshot(
+            "BTCUSDT",
+            r#"{"lastUpdateId":1,"bids":[]}"#,
+            ti(),
+            ti()
+        )
+        .is_err());
+    }
+
+    // Drives the real resync path through `process_frame`: a diff arrives on an unsynced book, the
+    // resyncer asks for a snapshot, the snapshot bridges, and the emitted stream must begin with a
+    // Clear + per-level Add rebuild (sequenced at lastUpdateId) BEFORE the live diff deltas. The REST
+    // snapshot is served from a local stub server so no real network is touched.
+    #[tokio::test]
+    async fn resync_path_emits_clear_then_adds_before_diffs() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        // Minimal one-shot HTTP/1.1 stub returning a depth snapshot for any GET /api/v3/depth.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = sock.read(&mut buf);
+            let body = r#"{"lastUpdateId":100,"bids":[["49999.00","1.00000000"]],"asks":[["50001.00","2.00000000"]]}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            sock.write_all(resp.as_bytes()).unwrap();
+            let _ = sock.flush();
+        });
+
+        let rest = RestClient::new(
+            RestConfig {
+                base_url: format!("http://{addr}"),
+                ..Default::default()
+            },
+            RateLimiter::per_minute(1200),
+            Credentials::default(),
+        )
+        .unwrap();
+
+        let (tx, mut rx) = mpsc::channel::<MarketEvent>(64);
+        let mut resyncer = DepthResyncer::new();
+
+        // A first diff (U=99,u=105) bridges snapshot lastUpdateId=100 (99 <= 101 <= 105).
+        let frame = r#"{"stream":"btcusdt@depth@100ms","data":{"e":"depthUpdate","E":1700000000200,"s":"BTCUSDT","U":99,"u":105,"b":[["49997.00","4.00000000"]],"a":[]}}"#;
+        process_frame(frame, &tx, &rest, &mut resyncer)
+            .await
+            .unwrap();
+        server.join().unwrap();
+        drop(tx);
+
+        let mut events = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            events.push(ev);
+        }
+
+        // Expect: Clear, Add(bid 49999), Add(ask 50001) [snapshot rebuild], then the diff delta(s).
+        assert!(events.len() >= 4, "events: {events:?}");
+        let MarketEvent::Delta(d0) = &events[0] else {
+            panic!("first event not a delta: {:?}", events[0]);
+        };
+        assert_eq!(d0.action, BookAction::Clear);
+        assert_eq!(d0.sequence, 100);
+
+        let MarketEvent::Delta(d1) = &events[1] else {
+            panic!("second event not a delta");
+        };
+        assert_eq!(d1.action, BookAction::Add);
+        assert_eq!(d1.side, OrderSide::Buy);
+        assert_eq!(d1.price.as_decimal(), dec!(49999.00));
+        assert_eq!(d1.sequence, 100);
+
+        let MarketEvent::Delta(d2) = &events[2] else {
+            panic!("third event not a delta");
+        };
+        assert_eq!(d2.action, BookAction::Add);
+        assert_eq!(d2.side, OrderSide::Sell);
+        assert_eq!(d2.price.as_decimal(), dec!(50001.00));
+
+        // The live diff delta follows the snapshot rebuild, sequenced at the diff's `u`.
+        let MarketEvent::Delta(d3) = &events[3] else {
+            panic!("fourth event not a delta");
+        };
+        assert_ne!(d3.action, BookAction::Clear);
+        assert_eq!(d3.sequence, 105);
+        assert_eq!(d3.price.as_decimal(), dec!(49997.00));
     }
 
     #[test]

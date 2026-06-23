@@ -450,20 +450,19 @@ def control_killswitch(req: KillSwitchRequest) -> KillSwitchState:
     actor = req.actor or "api"
     bus = _load_bus()
 
-    # TODO: build and publish the real CtrlKillSwitch Envelope (MsgType.CTRL) via coinext_bus once the
-    # publisher API lands. Shape kept explicit so the contract is reviewable.
-    payload = {
-        "kind": "CtrlKillSwitch",
-        "engaged": req.engage,
-        "reason": req.reason,
-        "source": "api",
-        "actor": actor,
-    }
-    if bus is not None:
+    # Build and publish the real CtrlKillSwitch command (a MsgType.CTRL Envelope) on STREAM_CONTROL.
+    # Every trader's in-core gate + the out-of-band risk-monitor honour it. The payload shape is the
+    # documented coinext_contracts.kill_switch_payload contract.
+    if bus is not None and hasattr(bus, "Publisher"):
         try:  # pragma: no cover - requires a running redis
-            # Expected coinext_bus surface: a Publisher that encodes a MsgType.CTRL Envelope onto STREAM_CONTROL.
-            publisher = bus.Publisher(REDIS_URL)  # type: ignore[attr-defined]
-            publisher.publish_control(STREAM_CONTROL, payload)
+            publisher = bus.Publisher(REDIS_URL)
+            publisher.publish_kill_switch(
+                STREAM_CONTROL,
+                engaged=req.engage,
+                reason=req.reason,
+                source="api",
+                actor=actor,
+            )
         except Exception as exc:  # noqa: BLE001 - surface bus/redis errors to the operator
             raise HTTPException(
                 status_code=503,

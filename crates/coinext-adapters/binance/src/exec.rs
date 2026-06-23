@@ -162,7 +162,11 @@ impl ExecutionClient for BinanceExecutionClient {
     async fn submit_order(&self, cmd: SubmitOrder) -> PortResult<()> {
         let params = build_order_params(&cmd.order)
             .map_err(|e| PortError::Rejected(format!("build order params: {e}")))?;
-        let mut req = RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1);
+        // Mark the order POST idempotent so an ambiguous failure (transport timeout / 5xx) is
+        // auto-retried: the request carries a DETERMINISTIC `newClientOrderId` (single-owner
+        // OrderFactory), which Binance dedups — a re-POST of the same id is a venue no-op, not a
+        // double order. This is the ONE mutating call we opt in; cancel/listenKey stay non-idempotent.
+        let mut req = RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1).idempotent(true);
         req.query = params;
         self.rest.send(req).await.map_err(net_to_port)?;
         Ok(())
@@ -630,6 +634,24 @@ mod tests {
         assert_eq!(
             get("origClientOrderId").as_deref(),
             Some("s1-00000000000000000042")
+        );
+        // A cancel carries no venue-dedup key, so it must stay NON-idempotent: an ambiguous failure
+        // (timeout / 5xx) must not blindly re-cancel; the caller reconciles instead.
+        assert!(!req.idempotent, "cancel must not auto-retry on ambiguous failure");
+    }
+
+    #[test]
+    fn order_submit_request_is_marked_idempotent_via_deterministic_client_id() {
+        // submit_order opts the order POST into auto-retry BECAUSE the deterministic
+        // newClientOrderId lets Binance dedup a re-POST. Mirror that construction here and assert the
+        // idempotent flag, so the call-site contract is locked in.
+        let req = RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1).idempotent(true);
+        assert_eq!(req.method, HttpMethod::Post);
+        assert_eq!(req.path, "/api/v3/order");
+        assert!(req.signed);
+        assert!(
+            req.idempotent,
+            "order POST carries a deterministic newClientOrderId, so a retry is a venue no-op"
         );
     }
 

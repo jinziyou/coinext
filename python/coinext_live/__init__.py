@@ -20,6 +20,7 @@ Async is via ``anyio`` (the ``live`` extra); imports are deferred so this module
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,6 +52,29 @@ class TradingNode:
     run_config: Any = None  # a coinext_config.RunConfig
     _kernel: Any = field(default=None, init=False, repr=False)
     _running: bool = field(default=False, init=False, repr=False)
+    _killed: bool = field(default=False, init=False, repr=False)
+    _kill_reason: str | None = field(default=None, init=False, repr=False)
+
+    # --- kill-switch ----------------------------------------------------------------------------
+    @property
+    def killed(self) -> bool:
+        """True once the global kill-switch has engaged this node (no new order routing)."""
+        return self._killed
+
+    def engage_kill_switch(self, reason: str = "") -> None:
+        """Engage this node's kill-switch and request a graceful stop.
+
+        Wired to the control stream via :func:`on_control_message`. Sets the kill flag (the in-core
+        gate / OMS reads it to deny new orders) and tears the run loop down. Idempotent.
+
+        TODO: once the native run loop is wired, also signal ``coinext_py`` so the Rust core's atomic
+        kill-switch flips in lock-step.
+        """
+        if self._killed:
+            return
+        self._killed = True
+        self._kill_reason = reason
+        self.stop()
 
     # --- lifecycle ------------------------------------------------------------------------------
     def warmup(self) -> list[tuple[int, float]]:
@@ -119,4 +143,38 @@ class TradingNode:
         self._running = False
 
 
-__all__ = ["TradingNode", "TradingNodeConfig"]
+# --------------------------------------------------------------------------------------------------
+# Control-stream subscriber — engages this node's kill-switch on a CtrlKillSwitch command.
+# --------------------------------------------------------------------------------------------------
+
+
+def on_control_message(envelope: Any, on_kill: Callable[[str], None]) -> bool:
+    """Dispatch one control-stream Envelope: engage the kill hook on a ``CtrlKillSwitch`` (engaged).
+
+    Thin wrapper over ``coinext_bus.dispatch_control`` so the live node depends on the bus only at
+    call time (and the dispatch stays unit-testable). Returns True iff ``on_kill`` fired.
+    """
+    from coinext_bus import dispatch_control  # local import: keeps coinext_bus optional at import
+
+    return dispatch_control(envelope, on_kill)
+
+
+def subscribe_control(node: TradingNode, url: str = "redis://redis:6379/0") -> None:
+    """Subscribe to the control stream and engage ``node``'s kill-switch on a ``CtrlKillSwitch``.
+
+    Blocking loop intended to run on its own thread/task beside the live node. Requires the bus
+    extra (redis/msgpack); imported lazily so this module loads without them.
+    """
+    from coinext_bus import STREAM_CTRL, RedisBusClient  # local import: bus is optional
+
+    client = RedisBusClient(url)
+    for message in client.consume([STREAM_CTRL]):  # pragma: no cover - requires a running redis
+        on_control_message(message.envelope, node.engage_kill_switch)
+
+
+__all__ = [
+    "TradingNode",
+    "TradingNodeConfig",
+    "on_control_message",
+    "subscribe_control",
+]

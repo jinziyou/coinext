@@ -12,16 +12,24 @@ error is raised only when you actually open a connection / decode a frame.
 
 from __future__ import annotations
 
+import os
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from coinext_contracts import SCHEMA_VERSION, Envelope, MsgType
+from coinext_contracts import (
+    SCHEMA_VERSION,
+    Envelope,
+    MsgType,
+    is_kill_switch,
+    kill_switch_payload,
+)
 
 # Default stream keys on the bus (mirror the Rust publisher's keyspace).
 STREAM_MARKET = "coinext.market"  # quotes/trades/bars/deltas from the ingestor
 STREAM_EXEC = "coinext.exec"  # order events / fills from exec-svc
-STREAM_CTRL = "coinext.ctrl"  # control-plane commands (kill-switch, etc.)
+STREAM_CTRL = "coinext.control"  # control-plane commands (kill-switch, etc.); api + risk-monitor publish here
 
 
 def _require_redis() -> Any:
@@ -171,11 +179,91 @@ class RedisBusClient:
             self._client = None
 
 
+def encode_payload(payload: dict) -> bytes:
+    """MessagePack-encode a control payload map (the body of a CTRL Envelope)."""
+    msgpack = _require_msgpack()
+    return msgpack.packb(payload, use_bin_type=True)
+
+
+def decode_payload(env: Envelope) -> dict:
+    """MessagePack-decode an Envelope's ``payload`` bytes into a dict (control commands).
+
+    Map keys come back as ``str`` (``raw=False``) so callers can index by ``"kind"`` etc.
+    """
+    msgpack = _require_msgpack()
+    return msgpack.unpackb(env.payload, raw=False)
+
+
+def build_control_envelope(payload: dict, *, trace_id: bytes | None = None) -> Envelope:
+    """Build a ``MsgType.CTRL`` :class:`~coinext_contracts.Envelope` wrapping ``payload``.
+
+    ``trace_id`` is a 16-byte correlation id (random if omitted); ``ts_init`` is wall-clock ns.
+    """
+    tid = trace_id if trace_id is not None else os.urandom(16)
+    return Envelope.of(MsgType.CTRL, tid, time.time_ns(), encode_payload(payload))
+
+
+class Publisher:
+    """Thin control-plane publisher over :class:`RedisBusClient`.
+
+    The api (operator kill-switch) and the risk-monitor (breach trip) both publish ``MsgType.CTRL``
+    commands through this. Connections are opened lazily by the underlying client, so constructing a
+    ``Publisher`` requires neither redis nor msgpack — they are needed only at :meth:`publish_control`.
+    """
+
+    def __init__(self, url: str = "redis://redis:6379/0") -> None:
+        self.client = RedisBusClient(url)
+
+    def publish_control(self, stream: str, payload: dict) -> str:
+        """Wrap ``payload`` in a CTRL Envelope and publish it to ``stream``; return the message id."""
+        env = build_control_envelope(payload)
+        return self.client.publish(stream, env)
+
+    def publish_kill_switch(
+        self,
+        stream: str,
+        *,
+        engaged: bool,
+        reason: str,
+        source: str,
+        actor: str | None = None,
+    ) -> str:
+        """Convenience: publish a documented ``CtrlKillSwitch`` command to ``stream``."""
+        return self.publish_control(
+            stream,
+            kill_switch_payload(engaged=engaged, reason=reason, source=source, actor=actor),
+        )
+
+    def close(self) -> None:
+        self.client.close()
+
+
+def dispatch_control(envelope: Envelope, on_kill: Callable[[str], None]) -> bool:
+    """Decode a CTRL ``envelope`` and, if it is an *engaged* ``CtrlKillSwitch``, call ``on_kill(reason)``.
+
+    Pure dispatch (no I/O beyond msgpack decode). Returns True iff ``on_kill`` was invoked. Ignores
+    non-CTRL envelopes and kill-switch *release* (engaged=False) messages so callers can subscribe to
+    the control stream and react only to a halt.
+    """
+    if envelope.msg_type != MsgType.CTRL:
+        return False
+    payload = decode_payload(envelope)
+    if is_kill_switch(payload) and payload.get("engaged"):
+        on_kill(str(payload.get("reason", "")))
+        return True
+    return False
+
+
 __all__ = [
     "RedisBusClient",
+    "Publisher",
     "StreamMessage",
     "decode_envelope",
     "encode_envelope",
+    "encode_payload",
+    "decode_payload",
+    "build_control_envelope",
+    "dispatch_control",
     "STREAM_MARKET",
     "STREAM_EXEC",
     "STREAM_CTRL",

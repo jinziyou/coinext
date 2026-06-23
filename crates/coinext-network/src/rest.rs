@@ -65,6 +65,16 @@ pub struct RestRequest {
     /// key header but reject a signature/timestamp. `signed` requests always attach the key too, so
     /// this flag is only meaningful when `signed == false`.
     pub api_key: bool,
+    /// Whether this request is safe to AUTO-RETRY on an ambiguous failure (transport error or 5xx),
+    /// where the request may have REACHED and been processed by the venue but the response was lost.
+    ///
+    /// A read-only GET is always safe to replay. A mutating POST/PUT/DELETE is NOT — replaying it can
+    /// double-act (e.g. a second order) — UNLESS the request carries something the venue dedups on
+    /// (a deterministic `newClientOrderId`), in which case the caller can opt in via [`Self::idempotent`].
+    ///
+    /// Note: 429/418 (rate-limited / IP-banned) are retried regardless of this flag, because such a
+    /// response means the request was rejected BEFORE processing and so was definitely NOT applied.
+    pub idempotent: bool,
     /// Venue weight cost, charged against the [`RateLimiter`] before sending.
     pub weight: u32,
 }
@@ -79,6 +89,8 @@ impl RestRequest {
             body: None,
             signed: false,
             api_key: false,
+            // GET is read-only: replaying it on an ambiguous failure cannot double-act.
+            idempotent: true,
             weight,
         }
     }
@@ -92,6 +104,11 @@ impl RestRequest {
             body: None,
             signed: true,
             api_key: false,
+            // A signed request is GET (read-only, safe) or a mutating POST/PUT/DELETE. We can't tell
+            // at construction whether a mutating one carries a venue-dedup key, so default to the safe
+            // side: GET stays auto-retryable, everything else opts out unless the caller asks via
+            // `.idempotent(true)`.
+            idempotent: matches!(method, HttpMethod::Get),
             weight,
         }
     }
@@ -107,6 +124,9 @@ impl RestRequest {
             body: None,
             signed: false,
             api_key: true,
+            // api-key-only requests are GET (read-only) or mutating listenKey create/keepalive/close.
+            // Same conservative default as signed(): only GET auto-retries; mutating ones opt out.
+            idempotent: matches!(method, HttpMethod::Get),
             weight,
         }
     }
@@ -115,6 +135,48 @@ impl RestRequest {
     pub fn with_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.query.push((key.into(), value.into()));
         self
+    }
+
+    /// Opt this request in/out of auto-retry on ambiguous failures (transport error / 5xx). Use this
+    /// to mark a mutating request safe to replay BECAUSE it carries a venue-dedup key (a deterministic
+    /// `newClientOrderId` that Binance rejects on the second submit). See [`Self::idempotent`].
+    pub fn idempotent(mut self, idempotent: bool) -> Self {
+        self.idempotent = idempotent;
+        self
+    }
+}
+
+/// PURE retry decision for [`RestClient::send`], extracted so the policy is unit-testable without a
+/// live server. `outcome` describes how the attempt failed; the result says whether to retry.
+///
+/// Policy:
+/// - 429/418 (rate-limited / IP-banned): the request was rejected BEFORE processing, so it was
+///   definitely NOT applied — always safe to retry, regardless of idempotency.
+/// - 5xx or a transport error (`Status(5xx)` / `Transport`): the request MAY have reached and been
+///   processed by the venue but the response was lost — only retry if `idempotent`.
+/// - anything else (a 4xx, or a non-5xx surfaced here): terminal, never retry.
+///
+/// In every case we also stop once `attempt >= max` (attempts already made hit the cap).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    /// A non-2xx HTTP status came back.
+    Status(u16),
+    /// The request failed at the transport layer (timeout, connection reset, DNS, …).
+    Transport,
+}
+
+pub(crate) fn should_retry(idempotent: bool, outcome: FailureKind, attempt: u32, max: u32) -> bool {
+    if attempt >= max {
+        return false;
+    }
+    match outcome {
+        // Rejected before processing → not applied → safe for any method.
+        FailureKind::Status(429) | FailureKind::Status(418) => true,
+        // Ambiguous: may have been processed → only replay an idempotent request.
+        FailureKind::Status(s) if (500..600).contains(&s) => idempotent,
+        FailureKind::Transport => idempotent,
+        // Any other status (e.g. 4xx client error) is terminal.
+        FailureKind::Status(_) => false,
     }
 }
 
@@ -249,15 +311,29 @@ impl RestClient {
                     if (200..300).contains(&status) {
                         return Ok(RestResponse { status, body });
                     }
-                    // 429/418 are rate-limit/ban; 5xx are transient — both retryable. 4xx (client)
-                    // errors are terminal (bad order, duplicate client id, etc.).
-                    let retryable = status == 429 || status == 418 || (500..600).contains(&status);
-                    if !retryable || attempt >= self.config.max_retries {
+                    // 429/418 (rate-limit/ban) are ALWAYS retryable: rejected before processing, so
+                    // not applied. 5xx is ambiguous (may have been processed) — retry only an
+                    // idempotent request; a non-idempotent mutating call returns the error so the
+                    // caller can reconcile via the user-stream / order-status. 4xx is terminal.
+                    if !should_retry(
+                        req.idempotent,
+                        FailureKind::Status(status),
+                        attempt,
+                        self.config.max_retries,
+                    ) {
                         return Err(NetError::Http { status, body });
                     }
                 }
                 Err(e) => {
-                    if attempt >= self.config.max_retries {
+                    // Transport failure is ambiguous (the request may have reached the venue and been
+                    // processed before the response was lost). Retry only an idempotent request; a
+                    // non-idempotent one returns immediately so the caller can reconcile.
+                    if !should_retry(
+                        req.idempotent,
+                        FailureKind::Transport,
+                        attempt,
+                        self.config.max_retries,
+                    ) {
                         return Err(NetError::Transport(e.to_string()));
                     }
                 }
@@ -343,6 +419,56 @@ mod tests {
         assert!(!req.signed, "api_key request must not be signed");
         let q = c.build_query_string(&req, 1_700_000_000_000).unwrap();
         assert_eq!(q, "", "unsigned api-key request appends no signature/timestamp");
+    }
+
+    #[test]
+    fn get_defaults_idempotent_signed_post_does_not() {
+        // A read-only GET is auto-retryable; a mutating signed POST is not (until opted in).
+        assert!(RestRequest::get("/api/v3/klines", 1).idempotent);
+        assert!(RestRequest::signed(HttpMethod::Get, "/api/v3/openOrders", 40).idempotent);
+        assert!(!RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1).idempotent);
+        assert!(!RestRequest::signed(HttpMethod::Delete, "/api/v3/order", 1).idempotent);
+        assert!(!RestRequest::api_key(HttpMethod::Post, "/api/v3/userDataStream", 2).idempotent);
+        // Opt-in builder flips it.
+        assert!(RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1)
+            .idempotent(true)
+            .idempotent);
+    }
+
+    #[test]
+    fn non_idempotent_does_not_retry_on_transport_or_5xx() {
+        // A mutating, non-idempotent request must NOT auto-retry on an ambiguous failure: the venue
+        // may already have processed it, so a replay would double-act.
+        assert!(!should_retry(false, FailureKind::Transport, 0, 3));
+        assert!(!should_retry(false, FailureKind::Status(500), 0, 3));
+        assert!(!should_retry(false, FailureKind::Status(503), 0, 3));
+    }
+
+    #[test]
+    fn idempotent_does_retry_on_transport_and_5xx() {
+        // A read-only / dedup-keyed request is safe to replay on an ambiguous failure.
+        assert!(should_retry(true, FailureKind::Transport, 0, 3));
+        assert!(should_retry(true, FailureKind::Status(500), 0, 3));
+        assert!(should_retry(true, FailureKind::Status(503), 2, 3));
+    }
+
+    #[test]
+    fn rate_limit_and_ban_retry_regardless_of_idempotency() {
+        // 429/418 mean the request was rejected before processing → not applied → safe for any method.
+        for status in [429u16, 418] {
+            assert!(should_retry(true, FailureKind::Status(status), 0, 3));
+            assert!(should_retry(false, FailureKind::Status(status), 0, 3));
+        }
+    }
+
+    #[test]
+    fn client_errors_are_terminal_and_attempt_cap_stops_retry() {
+        // 4xx (other than 429/418) is terminal even for an idempotent request.
+        assert!(!should_retry(true, FailureKind::Status(400), 0, 3));
+        assert!(!should_retry(true, FailureKind::Status(404), 0, 3));
+        // Hitting the attempt cap stops retrying anything, including 429.
+        assert!(!should_retry(true, FailureKind::Transport, 3, 3));
+        assert!(!should_retry(true, FailureKind::Status(429), 3, 3));
     }
 
     #[test]

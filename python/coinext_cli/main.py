@@ -428,15 +428,33 @@ def _cmd_download(
     return 0
 
 
+def _resolve_run_config(env: str, **cli_overrides: Any):
+    """Resolve the layered :class:`coinext_config.RunConfig` for a CLI invocation.
+
+    Routes CLI flags through ``coinext_config.load_config`` so precedence (CLI > env > yaml >
+    defaults) lives in ONE place. ``cli_overrides`` (only non-None values) become the highest layer.
+    """
+    from coinext_config import load_config
+
+    overrides = {k: v for k, v in cli_overrides.items() if v is not None}
+    overrides.setdefault("env", env)
+    return load_config(env, cli_overrides=overrides)
+
+
 def _cmd_live(env: str = "sandbox", symbol: str = "BTCUSDT") -> int:
     """Start the live/sandbox TradingNode. STUB: builds the node and reports intent."""
     from coinext_kernel import Environment
     from coinext_live import TradingNode, TradingNodeConfig
     from coinext_strategy import SmaCross
 
-    cfg = TradingNodeConfig(env=Environment(env), symbol=symbol)
-    node = TradingNode(config=cfg, strategy=SmaCross())
-    print(f"[stub] TradingNode ready: env={cfg.env.value} symbol={cfg.symbol}; run() is a stub")
+    # Resolve the layered RunConfig (CLI > env > yaml > defaults) — symbol may come from any layer.
+    run_config = _resolve_run_config(env, symbol=symbol)
+    cfg = TradingNodeConfig(env=Environment(env), symbol=run_config.symbol)
+    node = TradingNode(config=cfg, strategy=SmaCross(), run_config=run_config)
+    print(
+        f"[stub] TradingNode ready: env={cfg.env.value} symbol={cfg.symbol} "
+        f"redis={run_config.redis_url}; run() is a stub"
+    )
     # TODO: anyio.run(node.run) once the native live loop is wired.
     _ = node
     return 0

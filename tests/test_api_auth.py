@@ -63,21 +63,58 @@ def test_killswitch_rejected_with_wrong_api_key(app_module):
     assert resp.status_code == 401
 
 
-def test_killswitch_authorized_with_api_key(app_module):
+def test_killswitch_authorized_with_api_key(app_module, monkeypatch: pytest.MonkeyPatch):
+    """An authorized killswitch call publishes via the bus Publisher and returns 200.
+
+    We inject a fake ``coinext_bus`` module (no real redis/msgpack) so the endpoint's publish path
+    runs end-to-end: it must construct a ``Publisher`` and call ``publish_kill_switch`` with the
+    request's engage/reason/actor, then return 200 with the mirrored state.
+    """
+    published: list[dict] = []
+
+    class _FakePublisher:
+        def __init__(self, url):
+            self.url = url
+
+        def publish_kill_switch(self, stream, *, engaged, reason, source, actor=None):
+            published.append(
+                {
+                    "stream": stream,
+                    "engaged": engaged,
+                    "reason": reason,
+                    "source": source,
+                    "actor": actor,
+                }
+            )
+            return "1-0"
+
+    import types
+
+    fake_bus = types.ModuleType("coinext_bus")
+    fake_bus.Publisher = _FakePublisher  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "coinext_bus", fake_bus)
+
     client = TestClient(app_module.app)
     resp = client.post(
         "/control/killswitch",
         json={"engage": True, "reason": "test", "actor": "op"},
         headers={"X-API-Key": "s3cret-key"},
     )
-    # The correct key authorizes the request: it must get *past* the auth gate (never 401/403).
-    # Downstream the endpoint either mirrors state locally (200, no bus) or surfaces a bus/redis
-    # error (503) — both mean auth succeeded, which is what this security test asserts.
-    assert resp.status_code not in (401, 403)
-    if resp.status_code == 200:
-        body = resp.json()
-        assert body["engaged"] is True
-        assert body["engaged_by"] == "op"
+    # The correct key authorizes the request; with a working (fake) bus the publish succeeds -> 200.
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["engaged"] is True
+    assert body["engaged_by"] == "op"
+    # The endpoint actually published exactly one CtrlKillSwitch with the request's parameters.
+    assert published == [
+        {
+            "stream": app_module.STREAM_CONTROL,
+            "engaged": True,
+            "reason": "test",
+            "source": "api",
+            "actor": "op",
+        }
+    ]
 
 
 def test_backtest_requires_api_key(app_module):

@@ -3,11 +3,12 @@
 The AUTHORITATIVE pre-trade gate is the Rust ``coinext-risk-engine`` (a synchronous gate + atomic
 kill-switch, ARCHITECTURE.md §8). This package is the Python-side facade: it owns the *config* the
 Rust gate reads (``COINEXT__RISK__*``) and a defense-in-depth **protections pipeline** modelled on
-Freqtrade's protections (StoplossGuard / MaxDrawdown / CooldownPeriod). The INTENDED design is for
-the out-of-band ``risk-monitor`` service to evaluate this pipeline over portfolio snapshots and trip
-the global kill-switch on a breach; today that wiring does not exist — ``services/risk-monitor``
-re-implements its own supervisor and does not import this package, so the pipeline here is currently
-unused scaffolding for that design.
+Freqtrade's protections (StoplossGuard / MaxDrawdown / CooldownPeriod). This package is the SINGLE
+SOURCE OF TRUTH for the drawdown circuit-breaker math: the out-of-band ``services/risk-monitor``
+``RiskSupervisor`` delegates its drawdown breach decision to :class:`MaxDrawdown` here (folding bus
+telemetry onto a :class:`PortfolioSnapshot`) rather than re-deriving the formula, so the two never
+diverge. The supervisor adds the account-wide exposure / loss-of-day limits this pipeline does not
+model, and trips the global kill-switch on a breach.
 
 These protections are advisory/operational — they never replace the in-engine per-order gate; they
 add portfolio-level circuit breakers on top of it.
@@ -144,10 +145,9 @@ class CooldownPeriod(Protection):
 class ProtectionsPipeline:
     """Evaluates all protections and aggregates a global ``should_halt`` decision.
 
-    The INTENDED wiring is for the ``risk-monitor`` to run this over portfolio snapshots from the bus
-    and, if any protection trips, flip ``RiskLimits.kill_switch`` (the Rust engine reads it
-    atomically — ARCHITECTURE.md §8). That wiring is not in place yet: ``services/risk-monitor``
-    presently re-implements its own supervisor and does not call this, so this is scaffolding.
+    The ``risk-monitor`` runs the canonical :class:`MaxDrawdown` breaker over portfolio snapshots
+    from the bus (and may run this full pipeline) and, on a trip, publishes the global kill-switch
+    (the Rust engine reads it atomically — ARCHITECTURE.md §8).
     """
 
     def __init__(self, cfg: ProtectionConfig | None = None) -> None:
