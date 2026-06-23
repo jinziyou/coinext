@@ -4,7 +4,7 @@
 
 use coinext_core::TimerEvent;
 use coinext_model::{
-    Bar, BarType, Fill, InstrumentId, OrderEvent, QuoteTick, StrategyId, TradeTick,
+    Bar, BarType, Fill, InstrumentId, OrderBookDelta, OrderEvent, QuoteTick, StrategyId, TradeTick,
 };
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ pub enum BusMsg {
     Quote(Arc<QuoteTick>),
     Trade(Arc<TradeTick>),
     Bar(Arc<Bar>),
+    Delta(Arc<OrderBookDelta>),
     Order(Arc<OrderEvent>),
     Fill(Arc<Fill>),
     Timer(Arc<TimerEvent>),
@@ -31,6 +32,7 @@ pub enum Topic {
     Quote(InstrumentId),
     Trade(InstrumentId),
     Bar(BarType),
+    Delta(InstrumentId),
     OrderEvent(StrategyId),
     Fill(StrategyId),
     Timer(StrategyId),
