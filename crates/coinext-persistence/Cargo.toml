@@ -35,7 +35,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Columnar data-lake writer — gated behind the `parquet` feature (see [features]).
 arrow = { version = "53", optional = true }
-parquet = { version = "53", optional = true }
+parquet = { version = "54", optional = true }
 
 [dev-dependencies]
 rust_decimal = "1"
