@@ -10,7 +10,7 @@
 # only decodes the MessagePack Envelope via coinext_bus and reads positions/PnL. Single-stage slim image.
 # ----------------------------------------------------------------------------------------------
 
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
