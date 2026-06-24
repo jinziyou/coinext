@@ -56,7 +56,7 @@ jobs:
 
       # uv manages the venv + deps (see pyproject.toml [tool.uv]); it also provisions Python 3.13.
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
 
@@ -142,7 +142,7 @@ jobs:
           done
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.13"
 
