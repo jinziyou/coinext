@@ -1,35 +1,35 @@
 # Coinext — Rust workspace (the hot path + shared domain, the source of truth).
-# Python mirrors this domain via PyO3 (see crates/coinext-py and python/).
+# Python mirrors this domain via PyO3 (see foundation/ffi-bridge/rust/coinext-py and root workflow module */python directories).
 [workspace]
 resolver = "2"
 members = [
-    "crates/coinext-core",
-    "crates/coinext-model",
-    "crates/coinext-ports",
-    "crates/coinext-cache",
-    "crates/coinext-bus",
-    "crates/coinext-indicators",
-    "crates/coinext-derivatives",
-    "crates/coinext-risk-engine",
-    "crates/coinext-portfolio",
-    "crates/coinext-data-engine",
-    "crates/coinext-exec-engine",
-    "crates/coinext-sim",
-    "crates/coinext-kernel",
-    "crates/coinext-testkit",
-    "crates/coinext-py",
-    "examples/backtest-sma",
+    "foundation/primitives/rust/coinext-core",
+    "foundation/domain-model/rust/coinext-model",
+    "foundation/ports/rust/coinext-ports",
+    "foundation/state-cache/rust/coinext-cache",
+    "operations-interface/bus/rust/coinext-bus",
+    "strategy-research/indicators/rust/coinext-indicators",
+    "analytics-optimization/derivatives/rust/coinext-derivatives",
+    "risk-portfolio/risk-engine/rust/coinext-risk-engine",
+    "risk-portfolio/portfolio-engine/rust/coinext-portfolio",
+    "market-data/data-engine/rust/coinext-data-engine",
+    "execution-live/execution-engine/rust/coinext-exec-engine",
+    "backtesting-simulation/simulated-exchange/rust/coinext-sim",
+    "backtesting-simulation/kernel/rust/coinext-kernel",
+    "foundation/testkit/rust/coinext-testkit",
+    "foundation/ffi-bridge/rust/coinext-py",
+    "backtesting-simulation/examples/rust/backtest-sma",
 ]
 # coinext-py is a member but its pyo3 dependency is OPTIONAL and gated behind the `python` feature, so
 # the default `cargo test` builds it as an (empty) lib without linking libpython. maturin enables
-# the feature: `uvx maturin develop --manifest-path crates/coinext-py/Cargo.toml --features python`.
+# the feature: `uvx maturin develop --manifest-path foundation/ffi-bridge/rust/coinext-py/Cargo.toml --features python`.
 # The crates below pull heavy network/db deps and are kept out of the default build as stubs.
 exclude = [
-    "crates/coinext-network",
-    "crates/coinext-adapters/binance",
-    "crates/coinext-persistence",
-    "crates/coinext-ingest",
-    "crates/coinext-exec-svc",
+    "market-data/network-transport/rust/coinext-network",
+    "market-data/venue-adapters/binance/rust/coinext-adapters-binance",
+    "operations-interface/persistence/rust/coinext-persistence",
+    "market-data/ingestion-service/rust/coinext-ingest",
+    "execution-live/execution-service/rust/coinext-exec-svc",
 ]
 
 [workspace.package]
@@ -41,20 +41,20 @@ authors = ["Coinext"]
 
 # Single source of dependency versions, inherited by member crates via `.workspace = true`.
 [workspace.dependencies]
-coinext-core = { path = "crates/coinext-core" }
-coinext-model = { path = "crates/coinext-model" }
-coinext-ports = { path = "crates/coinext-ports" }
-coinext-cache = { path = "crates/coinext-cache" }
-coinext-bus = { path = "crates/coinext-bus" }
-coinext-indicators = { path = "crates/coinext-indicators" }
-coinext-derivatives = { path = "crates/coinext-derivatives" }
-coinext-risk-engine = { path = "crates/coinext-risk-engine" }
-coinext-portfolio = { path = "crates/coinext-portfolio" }
-coinext-data-engine = { path = "crates/coinext-data-engine" }
-coinext-exec-engine = { path = "crates/coinext-exec-engine" }
-coinext-sim = { path = "crates/coinext-sim" }
-coinext-kernel = { path = "crates/coinext-kernel" }
-coinext-testkit = { path = "crates/coinext-testkit" }
+coinext-core = { path = "foundation/primitives/rust/coinext-core" }
+coinext-model = { path = "foundation/domain-model/rust/coinext-model" }
+coinext-ports = { path = "foundation/ports/rust/coinext-ports" }
+coinext-cache = { path = "foundation/state-cache/rust/coinext-cache" }
+coinext-bus = { path = "operations-interface/bus/rust/coinext-bus" }
+coinext-indicators = { path = "strategy-research/indicators/rust/coinext-indicators" }
+coinext-derivatives = { path = "analytics-optimization/derivatives/rust/coinext-derivatives" }
+coinext-risk-engine = { path = "risk-portfolio/risk-engine/rust/coinext-risk-engine" }
+coinext-portfolio = { path = "risk-portfolio/portfolio-engine/rust/coinext-portfolio" }
+coinext-data-engine = { path = "market-data/data-engine/rust/coinext-data-engine" }
+coinext-exec-engine = { path = "execution-live/execution-engine/rust/coinext-exec-engine" }
+coinext-sim = { path = "backtesting-simulation/simulated-exchange/rust/coinext-sim" }
+coinext-kernel = { path = "backtesting-simulation/kernel/rust/coinext-kernel" }
+coinext-testkit = { path = "foundation/testkit/rust/coinext-testkit" }
 
 rust_decimal = { version = "1", features = ["serde"] }
 rust_decimal_macros = "1"

@@ -1,0 +1,56 @@
+# Coinext UI — operator dashboard
+
+A minimal Vite + React + TypeScript operator cockpit for Coinext. It is a
+**read-only-by-default** dashboard over the `api` service (FastAPI), with one
+guarded mutating action: the global **kill-switch**.
+
+See [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §7 (deployment forms & observability) for where this fits.
+
+## Panels
+
+| Panel                | Source endpoint            | Notes                                              |
+| -------------------- | -------------------------- | -------------------------------------------------- |
+| Runs                 | `GET /runs`                | runs across `backtest` / `sandbox` / `live`        |
+| Live Positions / PnL | `GET /positions`           | mark-sourced unrealized PnL (from the Cache)       |
+| Fills                | `GET /fills`               | recent execution fills                             |
+| Latency (SLO)        | `GET /latency`             | SLO histograms (`submit_to_ack_ns`, …) in ns       |
+| Kill-Switch          | `GET /control/killswitch`, `GET /control/events`, `POST /control/killswitch` | guarded confirm dialog plus risk-monitor/API control-event projection |
+
+All monetary / quantity / price fields cross the wire as **strings** to preserve
+the fixed-precision integer domain (no `f64`; see ARCHITECTURE.md §2, §6). The UI treats
+them as opaque display strings and does not do float math on them.
+
+## Run locally
+
+```bash
+npm install
+npm run dev          # http://localhost:3000
+```
+
+By default the client uses the same-origin `/api` proxy. That works in both local
+Vite dev (`vite.config.ts` proxies to `http://localhost:8000`) and the
+compose/nginx deployment (`nginx.conf` proxies to the `api` service).
+
+Override only when the API is directly reachable from the browser:
+
+```bash
+VITE_API_BASE=http://localhost:8000 npm run dev
+```
+
+## Scripts
+
+- `npm run dev` — Vite dev server on port 3000 (canonical `ui` port).
+- `npm run build` — type-check (`tsc --noEmit`) then `vite build` into `dist/`.
+- `npm run preview` — serve the production build.
+- `npm run typecheck` — type-check only.
+
+## Build / deploy
+
+Built and shipped via `operations-interface/deployment/docker/ui.Dockerfile` (Node 22). In the compose
+stack the UI is served on port **3000** and talks to `api` on **8000**.
+
+## Status
+
+This is a **scaffold**. Panels render real fetched data, but UX is intentionally
+minimal. TODOs in the source mark where richer operator tooling (per-run drill
+down, order ladder, charting, auth) will land.

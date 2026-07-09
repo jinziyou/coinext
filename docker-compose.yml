@@ -16,7 +16,7 @@
 # Local dev overrides (exposed ports, source bind-mounts, hot reload) live in docker-compose.dev.yml.
 #
 # Env is loaded from .env (copy .env.example -> .env). Config precedence, per ARCHITECTURE.md:
-#   CLI flags > env (COINEXT__SECTION__KEY) > config/*.yaml > built-in defaults.
+#   CLI flags > env (COINEXT__SECTION__KEY) > YAML files in foundation/runtime-config/config > built-in defaults.
 
 name: coinext
 
@@ -105,7 +105,7 @@ services:
     <<: *app-common
     build:
       context: .
-      dockerfile: deploy/docker/ingestor.Dockerfile
+      dockerfile: operations-interface/deployment/docker/ingestor.Dockerfile
     environment:
       COINEXT__SERVICE: ingestor
       COINEXT__METRICS__PORT: "9101"
@@ -128,7 +128,7 @@ services:
     <<: *app-common
     build:
       context: .
-      dockerfile: deploy/docker/exec-svc.Dockerfile
+      dockerfile: operations-interface/deployment/docker/exec-svc.Dockerfile
     environment:
       COINEXT__SERVICE: exec-svc
       COINEXT__METRICS__PORT: "9102"
@@ -158,7 +158,7 @@ services:
     <<: *app-common
     build:
       context: .
-      dockerfile: deploy/docker/trader.Dockerfile
+      dockerfile: operations-interface/deployment/docker/trader.Dockerfile
     environment:
       COINEXT__SERVICE: trader
       COINEXT__METRICS__PORT: "9103"
@@ -183,7 +183,7 @@ services:
     <<: *app-common
     build:
       context: .
-      dockerfile: deploy/docker/risk-monitor.Dockerfile
+      dockerfile: operations-interface/deployment/docker/risk-monitor.Dockerfile
     environment:
       COINEXT__SERVICE: risk-monitor
       COINEXT__METRICS__PORT: "9104"
@@ -202,7 +202,7 @@ services:
     <<: *app-common
     build:
       context: .
-      dockerfile: deploy/docker/api.Dockerfile
+      dockerfile: operations-interface/deployment/docker/api.Dockerfile
     environment:
       COINEXT__SERVICE: api
       COINEXT__API__HOST: "0.0.0.0"
@@ -230,7 +230,7 @@ services:
     <<: *app-common
     build:
       context: .
-      dockerfile: deploy/docker/ui.Dockerfile
+      dockerfile: operations-interface/deployment/docker/ui.Dockerfile
       args:
         # Baked at build time (Vite inlines VITE_* into the static bundle).
         VITE_API_BASE: ${COINEXT__UI__API_BASE:-/api}

@@ -75,10 +75,10 @@ jobs:
 
       # Build the compiled domain/runtime into the active venv so `import coinext_py` works for pytest.
       - name: Build coinext_py extension (maturin develop)
-        run: uv run maturin develop --manifest-path crates/coinext-py/Cargo.toml --features python
+        run: uv run maturin develop --manifest-path foundation/ffi-bridge/rust/coinext-py/Cargo.toml --features python
 
       - name: Ruff lint
-        run: uv run ruff check python tests
+        run: uv run ruff check foundation market-data strategy-research backtesting-simulation analytics-optimization risk-portfolio execution-live operations-interface tests
 
       - name: Pytest
         run: uv run pytest
@@ -102,17 +102,17 @@ jobs:
 
       # Pure-domain crates with unit tests — build AND test them.
       - name: Test coinext-network
-        run: cargo test --manifest-path crates/coinext-network/Cargo.toml
+        run: cargo test --manifest-path market-data/network-transport/rust/coinext-network/Cargo.toml
       - name: Test coinext-adapters-binance
-        run: cargo test --manifest-path crates/coinext-adapters/binance/Cargo.toml
+        run: cargo test --manifest-path market-data/venue-adapters/binance/rust/coinext-adapters-binance/Cargo.toml
       - name: Test coinext-persistence
-        run: cargo test --manifest-path crates/coinext-persistence/Cargo.toml
+        run: cargo test --manifest-path operations-interface/persistence/rust/coinext-persistence/Cargo.toml
 
       # Service daemons (scaffolds today) — at least build them so their entrypoints stay compilable.
       - name: Build coinext-ingest
-        run: cargo build --manifest-path crates/coinext-ingest/Cargo.toml
+        run: cargo build --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml
       - name: Build coinext-exec-svc
-        run: cargo build --manifest-path crates/coinext-exec-svc/Cargo.toml
+        run: cargo build --manifest-path execution-live/execution-service/rust/coinext-exec-svc/Cargo.toml
 
   # Supply-chain hygiene: scan Rust + Python dependencies for known advisories (RUSTSEC / PyPI).
   supply-chain:
@@ -136,11 +136,11 @@ jobs:
       - name: cargo audit (excluded crates)
         run: |
           for f in \
-            crates/coinext-network/Cargo.lock \
-            crates/coinext-adapters/binance/Cargo.lock \
-            crates/coinext-persistence/Cargo.lock \
-            crates/coinext-ingest/Cargo.lock \
-            crates/coinext-exec-svc/Cargo.lock; do
+            market-data/network-transport/rust/coinext-network/Cargo.lock \
+            market-data/venue-adapters/binance/rust/coinext-adapters-binance/Cargo.lock \
+            operations-interface/persistence/rust/coinext-persistence/Cargo.lock \
+            market-data/ingestion-service/rust/coinext-ingest/Cargo.lock \
+            execution-live/execution-service/rust/coinext-exec-svc/Cargo.lock; do
             if [ -f "$f" ]; then echo "::group::cargo audit $f"; cargo audit -f "$f"; echo "::endgroup::"; fi
           done
 

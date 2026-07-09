@@ -21,7 +21,7 @@ __pycache__/
 
 # Node / UI build output
 **/node_modules/
-services/ui/dist/
+operations-interface/ui/service/ui/dist/
 
 # Generic build/dist dirs
 dist/

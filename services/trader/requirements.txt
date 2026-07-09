@@ -1,9 +1,0 @@
-# services/trader — live trading node wrapper, one process per account (canonical metrics port 9103).
-# Mirrors the `live` + `bus` extras plus the prometheus-client piece of `obs` (structlog/otel not
-# needed by this wrapper) in the root pyproject.toml. The compiled `coinext_py`
-# extension and the coinext_live / coinext_strategy / coinext_contracts packages are installed separately from the
-# workspace (not via this file).
-anyio>=4
-redis>=5
-msgpack>=1.2.1
-prometheus-client>=0.20

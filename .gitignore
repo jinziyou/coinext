@@ -21,7 +21,7 @@ build/
 
 # Node / UI
 node_modules/
-services/ui/dist/
+operations-interface/ui/service/ui/dist/
 
 # Data lake (local) — keep sample/ tracked, ignore bulk
 /data/*
@@ -36,7 +36,7 @@ services/ui/dist/
 *.key
 
 # Observability/runtime state
-/deploy/**/data/
+/operations-interface/deployment/**/data/
 *.db
 *.sqlite
 
