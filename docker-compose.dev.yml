@@ -7,19 +7,22 @@
 #
 # What this overlay changes vs prod:
 #   * Exposes every service port on localhost so you can hit them directly.
-#   * Bind-mounts source into the Python/UI containers for fast iteration (no rebuild for code edits).
+#   * Bind-mounts root workflow modules into the Python/UI containers for fast iteration.
 #   * Switches long-running app processes to hot-reload entrypoints where the runtime supports it.
 #
 # HOT-RELOAD NOTES
-#   * api (FastAPI/uvicorn): `--reload` watches the bind-mounted python/ tree. NOTE the compiled
-#     coinext_py extension is built into the image; if you change Rust under crates/coinext-py you must
-#     rebuild (`just py-build` locally, or `docker compose build api`). Pure-Python edits reload.
+#   * api (FastAPI/uvicorn): `--reload` watches the bind-mounted root workflow modules' */python trees
+#     plus the API service app. NOTE the compiled coinext_py extension is built into the image; if you
+#     change Rust under foundation/ffi-bridge/rust/coinext-py you must rebuild (`just py-build` locally,
+#     or `docker compose build api`). Pure-Python edits reload.
 #   * trader / risk-monitor: bind-mounted source; restart the container to pick up changes, or run
 #     them under `watchfiles` (see commented command). The Kernel itself is the compiled coinext_py.
 #   * ingestor / exec-svc (Rust): no in-container hot reload — rebuild the image, or run the binary
-#     on the host with `cargo run -p coinext-ingest` / `-p coinext-exec-svc` against the dev infra ports below.
-#   * ui (Vite): for true HMR run `npm run dev` on the host (port 5173); this overlay still serves
-#     the built static bundle via nginx on :3000 for an integration-like view.
+#     on the host with `cargo run --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml` /
+#     `cargo run --manifest-path execution-live/execution-service/rust/coinext-exec-svc/Cargo.toml`
+#     against the dev infra ports below.
+#   * ui (Vite): for true HMR run `npm run dev` on the host (port 3000; stop the compose `ui`
+#     service first). This overlay serves the built static bundle via nginx on :3000.
 
 name: coinext
 
@@ -59,12 +62,18 @@ services:
     environment:
       COINEXT__LOG__LEVEL: debug
     volumes:
-      - ./python:/app/python:ro
-      - ./config:/app/config:ro
-      - ./services/trader:/app/trader:ro
+      - ./foundation:/app/foundation:ro
+      - ./market-data:/app/market-data:ro
+      - ./strategy-research:/app/strategy-research:ro
+      - ./backtesting-simulation:/app/backtesting-simulation:ro
+      - ./analytics-optimization:/app/analytics-optimization:ro
+      - ./risk-portfolio:/app/risk-portfolio:ro
+      - ./execution-live:/app/execution-live:ro
+      - ./operations-interface:/app/operations-interface:ro
+      - ./execution-live/trader-service/service/trader:/app/trader:ro
       - ./data:/data
     # Restart-to-reload by default. For auto-reload uncomment:
-    # command: ["uv", "run", "watchfiles", "python -m main", "python", "trader"]
+    # command: ["uv", "run", "watchfiles", "python -m main", "foundation", "market-data", "strategy-research", "backtesting-simulation", "analytics-optimization", "risk-portfolio", "execution-live", "operations-interface", "trader"]
 
   risk-monitor:
     ports:
@@ -72,9 +81,15 @@ services:
     environment:
       COINEXT__LOG__LEVEL: debug
     volumes:
-      - ./python:/app/python:ro
-      - ./config:/app/config:ro
-      - ./services/risk-monitor:/app/risk_monitor:ro
+      - ./foundation:/app/foundation:ro
+      - ./market-data:/app/market-data:ro
+      - ./strategy-research:/app/strategy-research:ro
+      - ./backtesting-simulation:/app/backtesting-simulation:ro
+      - ./analytics-optimization:/app/analytics-optimization:ro
+      - ./risk-portfolio:/app/risk-portfolio:ro
+      - ./execution-live:/app/execution-live:ro
+      - ./operations-interface:/app/operations-interface:ro
+      - ./risk-portfolio/risk-monitor/service/risk-monitor:/app/risk_monitor:ro
 
   api:
     ports:
@@ -82,12 +97,18 @@ services:
     environment:
       COINEXT__LOG__LEVEL: debug
     volumes:
-      - ./python:/app/python:ro
-      - ./config:/app/config:ro
-      - ./services/api:/app/api:ro
+      - ./foundation:/app/foundation:ro
+      - ./market-data:/app/market-data:ro
+      - ./strategy-research:/app/strategy-research:ro
+      - ./backtesting-simulation:/app/backtesting-simulation:ro
+      - ./analytics-optimization:/app/analytics-optimization:ro
+      - ./risk-portfolio:/app/risk-portfolio:ro
+      - ./execution-live:/app/execution-live:ro
+      - ./operations-interface:/app/operations-interface:ro
+      - ./operations-interface/api/service/api:/app/api:ro
       - ./data:/data
-    # uvicorn auto-reload on the bind-mounted app + python/ tree (pure-Python changes only; see header note).
-    command: ["uvicorn", "app:app", "--app-dir", "/app/api", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/api", "--reload-dir", "/app/python"]
+    # uvicorn auto-reload on the bind-mounted app + root workflow modules (pure-Python changes only; see header note).
+    command: ["uvicorn", "app:app", "--app-dir", "/app/api", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/api", "--reload-dir", "/app/foundation", "--reload-dir", "/app/market-data", "--reload-dir", "/app/strategy-research", "--reload-dir", "/app/backtesting-simulation", "--reload-dir", "/app/analytics-optimization", "--reload-dir", "/app/risk-portfolio", "--reload-dir", "/app/execution-live", "--reload-dir", "/app/operations-interface"]
 
   # --- UI: serve the built bundle on :3000; use host `npm run dev` for HMR ---
   ui:

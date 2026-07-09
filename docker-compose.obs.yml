@@ -1,9 +1,9 @@
-# Coinext — observability OVERLAY (docs/ARCHITECTURE.md §8).
+# Coinext — observability OVERLAY (ARCHITECTURE.md §7).
 #
 # Adds the metrics/logs/traces stack on top of docker-compose.yml. The app services already emit:
 #   * Prometheus metrics (ingestor:9101, exec-svc:9102, trader:9103, risk-monitor:9104, api:8000)
 #   * OTLP traces/logs to the otel-collector (COINEXT__OTEL__ENDPOINT=http://otel-collector:4317)
-# The `trace_id` from the Redis Envelope propagates end-to-end (Envelope schema, ARCHITECTURE.md §6).
+# The `trace_id` from the Redis Envelope propagates end-to-end (Envelope schema, ARCHITECTURE.md §3).
 #
 # Pipeline:
 #   apps --(OTLP 4317/4318)--> otel-collector --> tempo (traces) + loki (logs)
@@ -25,7 +25,7 @@ services:
     restart: always
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
-      - ./deploy/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+      - ./operations-interface/deployment/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
     ports:
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP
@@ -34,7 +34,7 @@ services:
       - loki
     networks: [coinext-net]
 
-  # Prometheus — scrapes the app metrics endpoints (see deploy/prometheus/prometheus.yml).
+  # Prometheus — scrapes the app metrics endpoints (see operations-interface/deployment/prometheus/prometheus.yml).
   prometheus:
     image: prom/prometheus
     restart: always
@@ -45,7 +45,7 @@ services:
       # Accept remote-write (POST /api/v1/write) from Tempo's metrics_generator + the OTel collector (off by default).
       - "--web.enable-remote-write-receiver"
     volumes:
-      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./operations-interface/deployment/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
@@ -57,7 +57,7 @@ services:
     restart: always
     command: ["-config.file=/etc/loki/loki-config.yml"]
     volumes:
-      - ./deploy/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - ./operations-interface/deployment/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki-data:/loki
     ports:
       - "3100:3100"
@@ -69,13 +69,13 @@ services:
     restart: always
     command: ["-config.file=/etc/tempo/tempo-config.yml"]
     volumes:
-      - ./deploy/tempo/tempo-config.yml:/etc/tempo/tempo-config.yml:ro
+      - ./operations-interface/deployment/tempo/tempo-config.yml:/etc/tempo/tempo-config.yml:ro
       - tempo-data:/var/tempo
     ports:
       - "3200:3200"
     networks: [coinext-net]
 
-  # Grafana — dashboards-as-code. Datasources + dashboards are provisioned from deploy/grafana/.
+  # Grafana — dashboards-as-code. Datasources + dashboards are provisioned from operations-interface/deployment/grafana/.
   grafana:
     image: grafana/grafana
     restart: always
@@ -86,8 +86,8 @@ services:
       # legacy trace→metrics service-graph toggle (trace-to-logs / exemplar correlation are GA, no toggle needed).
       GF_FEATURE_TOGGLES_ENABLE: "traceToMetrics"
     volumes:
-      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./operations-interface/deployment/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./operations-interface/deployment/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     ports:
       - "3001:3000"

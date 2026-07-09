@@ -5,7 +5,7 @@
 #                      its own Cargo.lock and is therefore invisible to the root manifest.
 #   * pip            — the Python control plane (pyproject.toml / uv.lock; uv is pip-compatible).
 #   * github-actions — the CI workflow action pins (.github/workflows/*).
-#   * docker         — base images in the service Dockerfiles (deploy/docker/*) and the UI build.
+#   * docker         — base images in the service Dockerfiles (operations-interface/deployment/docker/*) and the UI build.
 #
 # See FIX 2 / FIX 3: the excluded live-edge crates are the security-critical venue/network/persistence
 # code, so they get their own update streams here just as they get their own CI build+test job.
@@ -23,23 +23,23 @@ updates:
 
   # --- Rust: workspace-EXCLUDED crates (each has its own Cargo.toml + Cargo.lock) ---
   - package-ecosystem: cargo
-    directory: /crates/coinext-network
+    directory: /market-data/network-transport/rust/coinext-network
     schedule:
       interval: weekly
   - package-ecosystem: cargo
-    directory: /crates/coinext-adapters/binance
+    directory: /market-data/venue-adapters/binance/rust/coinext-adapters-binance
     schedule:
       interval: weekly
   - package-ecosystem: cargo
-    directory: /crates/coinext-persistence
+    directory: /operations-interface/persistence/rust/coinext-persistence
     schedule:
       interval: weekly
   - package-ecosystem: cargo
-    directory: /crates/coinext-ingest
+    directory: /market-data/ingestion-service/rust/coinext-ingest
     schedule:
       interval: weekly
   - package-ecosystem: cargo
-    directory: /crates/coinext-exec-svc
+    directory: /execution-live/execution-service/rust/coinext-exec-svc
     schedule:
       interval: weekly
 
@@ -61,6 +61,6 @@ updates:
 
   # --- Docker base images for the service builds ---
   - package-ecosystem: docker
-    directory: /deploy/docker
+    directory: /operations-interface/deployment/docker
     schedule:
       interval: weekly

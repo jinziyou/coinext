@@ -3,7 +3,7 @@
 > Wire the platform to real Binance market data + Binance **spot testnet** paper execution, and run
 > the backtest↔sandbox parity gate before any live capital. See the root
 > [`ARCHITECTURE.md`](../ARCHITECTURE.md) for the parity invariant and the
-> [`tests/parity/README.md`](../tests/parity/README.md) for the gate internals.
+> [`tests/backtesting-simulation/parity/README.md`](../tests/backtesting-simulation/parity/README.md) for the gate internals.
 
 ## The sandbox design
 
@@ -44,7 +44,7 @@ frames to the venue-agnostic `MarketEvent` types, and prints them:
 COINEXT__INGEST__SYMBOLS="BTCUSDT.BINANCE,ETHUSDT.BINANCE" \
 COINEXT__INGEST__MAX_EVENTS=20 \
 COINEXT__BINANCE__TESTNET=false \
-cargo run --manifest-path crates/coinext-ingest/Cargo.toml --features live
+cargo run --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml --features live
 ```
 
 Sample real output (mainnet BTCUSDT order-book deltas):
@@ -82,7 +82,7 @@ submit a resting LIMIT BUY far below market → `Accepted` → reconcile → can
 ```bash
 export COINEXT__BINANCE__API_KEY=...      # spot testnet key
 export COINEXT__BINANCE__API_SECRET=...
-cargo run --manifest-path crates/coinext-adapters/binance/Cargo.toml --example testnet_order
+cargo run --manifest-path market-data/venue-adapters/binance/rust/coinext-adapters-binance/Cargo.toml --example testnet_order
 # optional: COINEXT__ORDER__SYMBOL / COINEXT__ORDER__PRICE / COINEXT__ORDER__QTY
 ```
 
@@ -91,20 +91,61 @@ Without keys it aborts before any network call (safe wiring check). The order id
 
 ## 4. The parity promotion gate
 
-Before going live, a strategy must pass `coinext_parity.run_gate` against a recorded sandbox session:
+Before going live, a strategy must pass `coinext_parity.run_gate` against a recorded sandbox session.
+The replay fixture stores the exact bars that produced the signals and the sandbox/testnet fills that
+came back from the execution side:
 
 ```python
-from coinext_parity import SessionResult, run_gate, render_verdict, AcceptanceCriterion
+from coinext_parity import (
+    AcceptanceCriterion,
+    load_sandbox_recording,
+    render_verdict,
+    run_gate,
+)
+from coinext_strategy import SmaCross
 
-# `sandbox` is a SessionResult recorded from a testnet run (its fills + equity).
-verdict = run_gate(lambda: SmaCross(10, 30, 0.05), bars=bars, sandbox=sandbox,
-                   criterion=AcceptanceCriterion())  # 0.95 / 5bps / 0.90 / 0.02
-print(render_verdict(verdict))   # PASS -> promote-eligible; FAIL -> BLOCKED from live
+recording = load_sandbox_recording(
+    "tests/backtesting-simulation/parity/fixtures/recorded_sandbox_sma_cross.json"
+)
+sandbox = recording.to_session()
+verdict = run_gate(
+    lambda: SmaCross(
+        fast=int(recording.strategy["fast"]),
+        slow=int(recording.strategy["slow"]),
+        qty=float(recording.strategy["qty"]),
+    ),
+    recording.bars,
+    sandbox=sandbox,
+    criterion=AcceptanceCriterion(),  # 0.95 / 5bps / 0.90 / 0.02
+    symbol=recording.symbol,
+    starting_balance=recording.starting_balance,
+)
+print(render_verdict(verdict))  # PASS -> promote-eligible; FAIL -> BLOCKED from live
 ```
+
+The CLI can replay that same fixture without network access:
+
+```bash
+python -m coinext_cli.main testnet-gate \
+  --recorded-session tests/backtesting-simulation/parity/fixtures/recorded_sandbox_sma_cross.json
+```
+
+When running the real spot-testnet loop with keys, preserve the session as the future promotion
+artifact:
+
+```bash
+python -m coinext_cli.main testnet-gate \
+  --symbol BTCUSDT \
+  --qty 0.001 \
+  --record-out data/sample/btcusdt-testnet-session.json
+```
+
+`--no-testnet` still synthesizes fills for orchestration smoke tests only; do not treat that output as
+a promotion artifact.
 
 The gate bounds **signal-timing agreement**, **realized-vs-simulated fill-price deviation (bps)**,
 **equity correlation**, and **return diff** between the deterministic backtest and the sandbox. A
-quick demo (synthetic sandbox) runs via the CLI:
+quick demo (synthetic sandbox) still runs via:
 
 ```bash
 python -m coinext_cli.main parity        # or: just cli-backtest / coinext parity
@@ -118,4 +159,3 @@ Flip `COINEXT__BINANCE__TESTNET=false` and supply **mainnet** keys with **withdr
 allowlist**; store secrets in SOPS/Vault (see [`ARCHITECTURE.md`](ARCHITECTURE.md) open questions). The out-of-band
 `risk-monitor` watches PnL/positions and can trip the global kill-switch; the per-order `RiskEngine`
 gate runs synchronously on every order in backtest, sandbox, and live alike.
-```

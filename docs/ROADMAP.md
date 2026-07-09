@@ -9,14 +9,16 @@
 - **Rust core** (`cargo test` green): fixed-precision value types, event-sourced Order FSM +
   Position PnL, hexagonal ports, cache, in-proc bus, streaming indicators, pre-trade risk gate,
   portfolio, data/exec engines, **SimulatedExchange** (BrokerageModel + delayed-fill queue on the
-  time-frontier), **deterministic synchronous kernel**. `examples/backtest-sma` runs end-to-end.
+  time-frontier), **deterministic synchronous kernel**. `backtesting-simulation/examples/rust/backtest-sma` runs end-to-end.
 - **PyO3 bridge** (`coinext-py`, maturin): a Python `Strategy` runs through the SAME Rust kernel via
   `PyStrategyAdapter` (GIL per event) — the cross-FFI parity proof (`pytest` green).
 - **Binance adapter**: real WS market data (verified live) + REST execution (idempotent submit,
   reconcile) + InstrumentProvider; `coinext-network` (rustls REST/WS, governor, HMAC). Unit-tested.
 - **Persistence**: rusqlite event store + crash-recovery SeqCursor + Parquet writer.
-- **Parity gate**: `coinext_parity` (signal agreement / fill-price deviation bps / equity corr / return
-  diff) + `coinext testnet-gate` one-command loop (real data → backtest → testnet fills → gate).
+- **Parity gates**: `coinext_parity` (signal agreement / fill-price deviation bps / equity corr /
+  return diff) + `coinext parity` demo using a perturbed backtest session. `coinext testnet-gate`
+  now supports replayable `--recorded-session` JSON fixtures and `--record-out` capture for the
+  real-klines → backtest → Binance testnet loop; `--no-testnet` remains a dry-run path only.
 - **Local Parquet data lake**: paginated downloader (breaks the 1000/req limit), partitioned store
   (dedup/idempotent), HistoryReader; `coinext download` / `coinext backtest --from-lake` / `coinext catalog`.
 - **Walk-forward optimization** (`coinext_optimize`): genuine walk-forward (rolling + anchored/expanding
@@ -131,8 +133,8 @@
 ## Next — research side
 
 1. **Research notebook over real data** — the end-to-end demo (screen → optimize → backtest →
-   indicators → portfolio → ticks) ships as a runnable script (`notebooks/research_loop.py`, tested by
-   `tests/test_notebook.py`); it runs on synthetic data by default. Remaining gap: download → run the
+   indicators → portfolio → ticks) ships as a runnable script (`research_loop.py` under `strategy-research/research-notebooks`, tested by
+   `tests/strategy-research/test_notebook.py`); it runs on synthetic data by default. Remaining gap: download → run the
    loop over the real lake (`USE_LAKE = True`) by default.
 2. **Strategy ergonomics** — historical bookTicker (websocket capture) for real quotes (the last
    research-side data gap; `on_quote` currently runs on synthetic or tick-derived quotes).
@@ -151,7 +153,7 @@ Intentionally parked while the focus is research (see [`ARCHITECTURE.md`](../ARC
 - **Observability + cross-process bus** — Redis Streams carrying a versioned MessagePack `Envelope`
   across processes; `/metrics` (SLO histograms: `strategy_dispatch_ns`, `submit_to_ack_ns`,
   `ingest_to_publish_ns`, `risk_denials`, `ws_reconnects`, `book_gaps`); out-of-band `risk-monitor`
-  with a global kill-switch; React dashboard on real data.
+  can publish `CtrlKillSwitch`, and the API/UI now expose a tested control-event projection.
 - **Promotion to live** — sandbox(testnet)-vs-backtest parity gate as the mandatory pre-live gate;
   secrets management (SOPS/Vault), IP allowlist, withdrawal disabled.
 

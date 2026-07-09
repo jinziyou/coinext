@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Coinext — Operator Dashboard</title>
+  </head>
+  <body>
+    <!--
+      Coinext operator UI (see ARCHITECTURE.md §7).
+      Read-only-by-default cockpit over the `api` service (port 8000); the one
+      mutating action is the guarded kill-switch which maps to the atomic
+      kill-switch in coinext-risk-engine.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

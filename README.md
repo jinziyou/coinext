@@ -1,153 +1,108 @@
 # Coinext
 
-A multi-asset, venue-agnostic quantitative **research & execution** platform — **Rust hot path +
-Python control plane**, with **backtest↔live parity** as the one core invariant.
+多资产、与交易场所无关的量化综合平台，覆盖 **数据接入 → 策略研究 → 回测仿真 → 分析优化 → 风控组合 → 执行实盘 → 运维控制面**。仓库仍是一个 monorepo，但业务源码按量化交易生命周期拆成 8 个根级模块目录；**没有 `modules/` 前缀**。
 
-The hot path (market-data ingestion + order execution) is **Rust 1.95 on Tokio**; the control plane
-(strategy authoring, research, analytics, ops) is **Python 3.13** (managed by uv). They are bridged
-**only** by PyO3/maturin.
+热路径（行情接入、订单执行、确定性内核）是 **Rust 1.95 on Tokio**；控制面（策略编写、研究、分析、运维）是 **Python 3.13 + uv**。Rust 与 Python 之间仅通过 PyO3/maturin 桥 `foundation/ffi-bridge/rust/coinext-py` 连接，Python 侧导入名保持 `coinext_*` 不变。
 
-The whole design turns on one invariant — **backtest↔live parity**:
+核心不变量仍是 **backtest↔live parity**：
 
-> ONE Strategy API, ONE set of engines (Data / Execution / Risk / Portfolio), ONE deterministic
-> synchronous core loop. Only the **Kernel** swaps three things between Backtest / Sandbox / Live:
-> the **Clock** (`HistoricalClock` vs live), the **Cache** contents, and the **Data/Execution
-> clients** behind byte-identical ports. Every design conflict is tie-broken in favor of parity.
+> 同一套 Strategy API，同一组 Data / Execution / Risk / Portfolio 引擎，同一条确定性同步核心循环。Backtest / Sandbox / Live 之间，Kernel 只替换 Clock、Cache 内容，以及 Data/Execution 端口后的客户端。设计冲突一律以一致性为准。
 
-This parity is **enforced structurally** — there is one `Strategy` trait, one engine set, one core
-loop, and one `ExecutionClient` port that the simulated venue (`SimExecutionClientPort`), a sandbox
-venue, and the live `BinanceExecutionClient` all implement. It is **not yet verified end-to-end**
-against a live/sandbox exchange: the deterministic backtest core is the part that is heavily tested,
-the `LiveKernel` that drives the same engines over the ports is a working but **unexercised scaffold**
-(no real-venue run in CI), and the "mandatory sandbox-vs-backtest gate" today compares the backtest to
-a perturbed copy of itself rather than to live fills. Treat parity as a strong, structurally-enforced
-**design intent** with a verified backtest core — not a claim that live trading has been proven equal.
+当前状态要诚实区分：确定性回测核心、Python 回测桥、数据湖、分析优化、衍生品、风控组合已有测试覆盖；`LiveKernel`、`ingestor`、`exec-svc`、服务/UI 仍是 scaffold/stub；真实场所端到端 parity 尚未验证。完整设计见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design and rationale.
+## 根级模块状态
 
-## Status
-
-This is a **scaffold**: the full monorepo is laid out, the shared contracts are defined once in
-Rust and mirrored to Python, and a vertical slice runs **end-to-end in pure Rust** today.
-
-| Layer | Crate / package | State |
+| 根级模块 | 关键功能域 | 当前状态 |
 |---|---|---|
-| Value types (fixed-precision, no `f64` in domain) | `coinext-core` | ✅ implemented + tested |
-| Domain hub (typed IDs, Instrument, event-sourced Order FSM, Fill, Position, market data) | `coinext-model` | ✅ implemented + tested |
-| Hexagonal ports (Data/Exec/Strategy/Risk/Portfolio/Bus traits + value types) | `coinext-ports` | ✅ implemented |
-| In-memory store | `coinext-cache` | ✅ implemented |
-| In-process bus (zero-serialization hot path) | `coinext-bus` | ✅ implemented + tested |
-| Streaming indicators (SMA/EMA/RSI/ATR/MACD/Bollinger/VWAP), bridged to Python | `coinext-indicators`, `coinext-py` | ✅ implemented + tested |
-| Option pricing (Black-Scholes price/greeks/IV) | `coinext-derivatives` | ✅ implemented + tested |
-| Pre-trade risk gate + kill-switch (margin/leverage aware) | `coinext-risk-engine` | ✅ implemented |
-| Portfolio analytics (PnL, exposure, linear/inverse perps) | `coinext-portfolio` | ✅ implemented |
-| Data + execution engines (OMS, FSM driver, report folding) | `coinext-data-engine`, `coinext-exec-engine` | ✅ implemented |
-| **Simulated exchange** (BrokerageModel: OHLC limit matching, volume-participation partial fills, queue position, stop orders, range-scaled slippage; DelayedEventQueue) | `coinext-sim` | ✅ implemented + tested |
-| **Backtest kernel** (deterministic synchronous core loop; expiry settlement; liquidation) | `coinext-kernel` | ✅ implemented + tested |
-| **Live/sandbox kernel** (same engine set, driven over the Data/Execution ports) | `coinext-kernel` (`LiveKernel`) | 🚧 scaffold (compiles + unit-tested with fakes; no real-venue run) |
-| Runnable SMA-crossover backtest | `examples/backtest-sma` | ✅ runs |
-| PyO3 bridge (Python `Strategy` → same Rust kernel; OHLC + multi-instrument) | `coinext-py` | ✅ implemented + tested (backtest) |
-| Research control plane (backtest, data lake, parity gate, vectorized screen) | `python/coinext_{backtest,data,parity,screen}` | ✅ implemented + tested (the parity gate compares backtest-vs-perturbed-backtest, not live) |
-| Analytics (trade stats, bias screens, tear sheet + plots) | `python/coinext_analytics` | ✅ implemented + tested |
-| Walk-forward optimization (rolling/anchored, OOS degradation, grid/Optuna) | `python/coinext_optimize` | ✅ implemented + tested |
-| Binance adapter (Data/Instrument/Execution ports; order-modify unsupported), WS/REST network framework, append-only persistence + Parquet | `coinext-adapters/binance`, `coinext-network`, `coinext-persistence` | ⚠️ implemented + unit-tested (PURE builders/parsers/fixtures); **excluded from the default workspace build**, never run against a live venue |
-| Ingest/exec service daemons + live wiring | `coinext-ingest`, `coinext-exec-svc` | 🚧 interface stubs |
-| FastAPI control plane + React dashboard + docker-compose + observability | `services/*`, `deploy/*` | 🚧 scaffolded |
+| `foundation/` | 固定精度值类型、领域模型、端口、状态缓存、Python 契约、运行配置、PyO3 桥、testkit | ✅ 核心契约已实现；PyO3 桥用于回测路径；默认配置在 `foundation/runtime-config/config` |
+| `market-data/` | 数据引擎、Parquet 数据湖、REST/WS transport、Binance adapter、ingestion service | ✅ 数据湖/HistoryReader/公共数据下载已测试；adapter/network 有单测；`ingestor` 是 stub daemon |
+| `strategy-research/` | Python Strategy API、Rust/Python 指标、research notebooks | ✅ 策略 API、SMA/RSI 等流式指标、research-loop 脚本已测试（需要构建 `coinext_py`） |
+| `backtesting-simulation/` | deterministic Kernel、SimulatedExchange、authoritative runner、parity gates、Rust example | ✅ 回测内核、模拟交易所、Python runner、示例 SMA 回测已测试；recorded sandbox-session replay gate 已测试，真实 testnet fills 捕获仍需 spot-testnet keys |
+| `analytics-optimization/` | metrics、tear sheet、bias screens、vectorized screen、walk-forward optimizer、derivatives pricing | ✅ 分析、筛选、优化、Black-Scholes/Greeks/IV 已测试 |
+| `risk-portfolio/` | 风控门禁、风险 facade、组合引擎、组合 facade、risk-monitor service | ✅ pre-trade risk、margin/liquidation、portfolio PnL/exposure 已测试；`risk-monitor` 是 out-of-band scaffold |
+| `execution-live/` | execution engine、exec service、live runtime、trader service | ✅ OMS/FSM folding crate 已实现；`LiveKernel`、`coinext_live`、`trader`、`exec-svc` 是 scaffold/stub |
+| `operations-interface/` | Redis/in-proc bus、CLI、FastAPI、React UI、deployment、persistence | ✅ bus/persistence/API auth/control-plane paths 有测试； API/UI/deployment 可解析但仍是 scaffold |
 
-## Quick start (Rust core)
+## 快速开始：Rust 核心
 
 ```bash
-# Run the unit + property tests across the core workspace
-cargo test          # or: just test
-
-# Run the example SMA-crossover backtest end-to-end
-cargo run -p coinext-example-backtest   # or: just backtest
+cargo test --workspace          # 或: just test
+cargo run -p coinext-example-backtest
 ```
 
-Expected output is a tear-sheet-style summary (orders, fills, equity, return, Sharpe, max drawdown)
-produced by running a native-Rust `Strategy` through the `SimulatedExecutionClient` with realistic
-fees, slippage, and **delayed fills interleaved on the time-frontier** — the same `Strategy` trait a
-Python strategy implements, and the same engines the `LiveKernel` drives over the ports (the live
-path is wired structurally but not yet exercised against a real venue — see the status table).
+`coinext-example-backtest` 位于 `backtesting-simulation/examples/rust/backtest-sma`。它通过 Rust `Strategy` + `SimulatedExecutionClient` 跑同一组引擎，输出 tear-sheet 风格摘要（订单、成交、权益、收益、Sharpe、最大回撤）。
 
-## Quick start (research: real data, reproducible backtests)
-
-The Python control plane downloads REAL Binance history (public REST, no API key) into a local
-**Parquet data lake**, then backtests over the SAME bytes repeatedly — reproducible research.
+Workspace 外的 live-edge crates 单独验证：
 
 ```bash
-# One-time: create the venv, then build the Rust core into it
-just py-setup     # uv sync --extra research --group dev
-just py-build     # maturin develop (compiles crates/coinext-py)
-
-# Download + backtest from the lake
-uv run coinext download --symbols BTCUSDT,ETHUSDT --interval 1m --days 30   # paginated -> Parquet lake
-uv run coinext catalog                                                      # coverage (rows + UTC span)
-uv run coinext backtest --from-lake --symbol BTCUSDT                        # reproducible SMA backtest
-uv run coinext optimize --from-lake --mode anchored                         # walk-forward, OOS degradation
+just test-live-edge
 ```
 
-The `backtest` tear sheet reports trade-level stats (win rate, profit factor, exposure, turnover)
-and runs the look-ahead / overfitting **bias screens** inline. `optimize` does a genuine
-walk-forward — params are chosen IN-SAMPLE per fold and re-scored OUT-of-sample, so its headline is
-the **OOS degradation** that guards against overfitting (grid search by default; `--optuna` for TPE).
+覆盖 network、Binance adapter、persistence、ingest stub、exec-svc stub 的 manifest paths。
+
+## 快速开始：Python 研究控制面
 
 ```bash
-uv run coinext backtest --strategy limit-maker          # rests LIMIT orders -> OHLC-aware (high/low) fills
-uv run coinext backtest-multi --symbols BTCUSDT,ETHUSDT,SOLUSDT   # a portfolio through ONE kernel
-uv run coinext screen --from-lake --symbol BTCUSDT      # fast vectorized sweep + advisory cross-check
+just py-setup
+just py-build     # maturin develop --manifest-path foundation/ffi-bridge/rust/coinext-py/Cargo.toml --features python
+
+uv run coinext download --symbols BTCUSDT,ETHUSDT --interval 1m --days 30
+uv run coinext catalog
+uv run coinext backtest --from-lake --symbol BTCUSDT
+uv run coinext optimize --from-lake --mode anchored
 ```
 
-`--strategy limit-maker` posts resting limit orders that fill on a bar's **intrabar high/low**, not
-just its close — the bridge passes full OHLC to the Rust sim. `backtest-multi` runs a per-symbol SMA
-portfolio across many instruments in a single deterministic kernel; positions stay isolated and a
-portfolio run is exactly the union of the per-symbol standalone runs. `screen` ranks a parameter
-grid in milliseconds with a **vectorized** (numpy) backtest — fast but NON-authoritative (no
-fees/slippage/latency/queue) — then runs `coinext_parity.cross_check` to warn if the best params
-**drift** from the event-driven runner; narrow the space with `screen`, then confirm survivors with
-the parity-valid `coinext backtest`.
+`coinext backtest` 使用 authoritative event-driven runner；`coinext screen` 是快速向量化扫描，只能收窄参数空间，不能替代 event-driven parity surface。数据湖运行态根仍是仓库根 `data/` 或容器内 `/data`，不是源码模块。
 
-The end-to-end research loop (screen → optimize → backtest → indicators → portfolio → ticks) is a
-single runnable script: `uv run python notebooks/research_loop.py` (synthetic by default; flip
-`USE_LAKE = True` to run over the real lake — see [`notebooks/README.md`](notebooks/README.md)).
+Research loop 脚本位于 `strategy-research/research-notebooks/notebooks`。直接运行：
 
-The downloader pages past Binance's 1000-bar request limit; the lake is partitioned
-(`bars/venue=…/symbol=…/interval=…/{YYYYMM}.parquet`) and deduped/idempotent, so re-downloads only
-extend coverage. `HistoryReader` reads it back for the backtest — and, in live, for indicator
-warm-up — the ONE history path that keeps indicators identical across backtest and live.
-
-## Repository layout
-
-```
-crates/      Rust: hot path + shared domain (the source of truth)
-python/      Python control plane: research, strategy authoring, analytics, ops
-services/    Deployable service wrappers (ingestor, trader, risk-monitor, api, ui)
-deploy/      Dockerfiles + observability config (prometheus/grafana/loki/tempo/otel)
-config/      Layered config (base + backtest/sandbox/live)
-examples/    Runnable example strategies
-notebooks/   Research notebooks (py:percent scripts)
-tests/       Parity + regression suites
-docs/        Roadmap + testnet runbook
+```bash
+uv run python strategy-research/research-notebooks/notebooks/research_loop.py
 ```
 
-## Documentation map
+默认使用合成数据；把脚本内 `USE_LAKE = True` 可切到真实本地 lake。
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the canonical design: domain model, hexagonal ports, the
-  deterministic core loop, invariants, deployment, tradeoffs.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what is done/verified, what is next (research), what is
-  deferred (live/ops), and open questions.
-- [`docs/TESTNET.md`](docs/TESTNET.md) — the end-to-end testnet runbook + the parity promotion gate.
-- [`tests/parity/README.md`](tests/parity/README.md) — the two parity checks (advisory cross-check +
-  the sandbox-vs-backtest gate, which today compares the backtest to a perturbed copy of itself, not
-  to live fills).
-- [`deploy/README.md`](deploy/README.md) / [`services/README.md`](services/README.md) — the
-  dockerized multi-service stack and observability overlay.
+## 仓库布局
 
-## Toolchain
+```text
+foundation/                 全平台基础契约：primitives、domain-model、ports、state-cache、config、FFI、testkit
+market-data/                数据接入、标准化、历史数据：data-engine、data-lake、transport、adapters、ingestion
+strategy-research/          策略开发与研究循环：strategy API、indicators、research notebooks
+backtesting-simulation/     回测、模拟场所、一致性门禁：kernel、sim、runner、parity、examples
+analytics-optimization/     绩效分析、筛选、优化、衍生品定价
+risk-portfolio/             风控、组合、账户级保护：risk engine、portfolio engine、risk monitor
+execution-live/             订单执行、实盘/沙箱运行：execution engine、live runtime、trader、exec service
+operations-interface/       总线、CLI、API、UI、部署、持久化
 
-Rust 1.95 (stable), Python 3.13 (uv), Node 22 (dashboard), Docker. See
-[`ARCHITECTURE.md`](ARCHITECTURE.md) and the [`justfile`](justfile) for tasks.
+data/                       本地/compose 数据湖运行态根；保持在仓库根
+config files                运行配置源码在 foundation/runtime-config/config
+Cargo.toml / pyproject.toml 根 workspace 与 Python discovery 入口
+docker-compose*.yml         根目录 compose 入口；Dockerfiles 在 operations-interface/deployment/docker
+tests/                      根测试树，按生命周期模块分组
+docs/                       路线图、testnet 手册、架构 stub
+```
 
-## License
+## 文档地图
 
-MIT.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — 权威设计：领域模型、六边形端口、Kernel、数据流、部署形态。
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — 已完成/下一步/延后/开放问题。
+- [`docs/TESTNET.md`](docs/TESTNET.md) — Binance market data + spot testnet paper execution runbook。
+- [`tests/backtesting-simulation/parity/README.md`](tests/backtesting-simulation/parity/README.md) — advisory cross-check 与 sandbox gate 说明。
+- [`operations-interface/deployment/README.md`](operations-interface/deployment/README.md) — compose、Docker、observability。
+- [`operations-interface/deployment/services.md`](operations-interface/deployment/services.md) — deployable service index。
+
+## 工具链
+
+Rust 1.95（stable）、Python 3.13（uv）、Node 22（dashboard）、Docker。常用检查：
+
+```bash
+just test
+just test-live-edge
+just py-test
+just py-lint
+just compose-check
+```
+
+## 许可证
+
+MIT。
