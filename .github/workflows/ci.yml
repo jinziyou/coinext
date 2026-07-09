@@ -1,12 +1,15 @@
 # Coinext CI — verifies the Rust core workspace and the Python control plane on every push/PR.
 #
-# Two independent jobs (they share no state, run in parallel):
-#   * rust   — fmt check, clippy (warnings as errors), and the core `cargo test` suite.
-#   * python — `uv sync`, build the coinext_py PyO3 extension via `maturin develop`, then ruff + pytest.
+# Jobs:
+#   * rust            — fmt check, clippy (warnings as errors), and the core `cargo test` suite.
+#   * python          — uv sync with tested extras, build `coinext_py`, then ruff + pytest.
+#   * excluded-crates — tests/builds workspace-excluded live-edge crates.
+#   * supply-chain    — cargo-audit + pip-audit.
+#   * compose-validate — parses base/dev/observability compose topologies.
 #
-# Mirrors the local workflow in the justfile (`just lint` / `just test` / `just py-build` /
-# `just py-test`). Toolchains: stable Rust (MSRV floor 1.95 enforced by the workspace Cargo.toml's
-# `rust-version`) and Python 3.13.
+# Local equivalents live in the justfile (`just lint`, `just test`, `just test-live-edge`,
+# `just py-build`, `just py-test`, `just compose-check`). Toolchains: stable Rust (MSRV floor
+# 1.95 enforced by the workspace Cargo.toml's `rust-version`) and Python 3.13.
 name: ci
 
 on:
@@ -67,8 +70,8 @@ jobs:
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
 
-      - name: Sync Python deps (research extras + dev group)
-        run: uv sync --extra research --extra config --group dev
+      - name: Sync Python deps (research + config + api + bus extras, dev group)
+        run: uv sync --extra research --extra config --extra api --extra bus --group dev
 
       # Build the compiled domain/runtime into the active venv so `import coinext_py` works for pytest.
       - name: Build coinext_py extension (maturin develop)
@@ -152,7 +155,7 @@ jobs:
           uv export --all-extras --no-emit-project --format requirements-txt -o /tmp/requirements.txt
           uvx pip-audit -r /tmp/requirements.txt
 
-  # Validate the docker-compose topology parses (services, build contexts, anchors, dev/obs overlays)
+  # Validate compose topology parsing (services, build contexts, anchors, dev/obs overlays, combined dev+obs)
   # WITHOUT building images. `env_file: .env` is required, so seed it from .env.example first.
   compose-validate:
     name: docker compose config
@@ -169,3 +172,5 @@ jobs:
         run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
       - name: Validate base + observability overlay
         run: docker compose -f docker-compose.yml -f docker-compose.obs.yml config -q
+      - name: Validate base + dev + observability overlays
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.obs.yml config -q
