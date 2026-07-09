@@ -5,5 +5,5 @@
 # workspace (not via this file).
 anyio>=4
 redis>=5
-msgpack>=1
+msgpack>=1.2.1
 prometheus-client>=0.20

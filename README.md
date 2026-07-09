@@ -77,7 +77,7 @@ The Python control plane downloads REAL Binance history (public REST, no API key
 
 ```bash
 # One-time: create the venv, then build the Rust core into it
-just py-setup     # uv sync --extra research --group dev
+just py-setup     # uv sync --extra research --extra config --extra api --extra bus --group dev
 just py-build     # maturin develop (compiles crates/coinext-py)
 
 # Download + backtest from the lake
@@ -147,6 +147,12 @@ docs/        Roadmap + testnet runbook
 
 Rust 1.95 (stable), Python 3.13 (uv), Node 22 (dashboard), Docker. See
 [`ARCHITECTURE.md`](ARCHITECTURE.md) and the [`justfile`](justfile) for tasks.
+
+Common local checks:
+
+- `just test` — default Rust workspace (the deterministic core).
+- `just test-live-edge` — workspace-excluded network / adapter / persistence / daemon crates.
+- `just compose-check` — base, dev, observability, and combined compose topologies.
 
 ## License
 

@@ -5,14 +5,14 @@ Thin deployment wrappers around the Coinext core. The load-bearing logic lives i
 for deployment (one Dockerfile each, under `deploy/docker/`). See [`ARCHITECTURE.md`](../ARCHITECTURE.md)
 §4 (data flow) and §7 (deployment).
 
-| Service        | Dir                  | Kind                  | Build                                 | Ports                  |
-|----------------|----------------------|-----------------------|---------------------------------------|------------------------|
-| `ingestor`     | [`ingestor/`](ingestor/)         | Rust (`coinext-ingest`)    | `deploy/docker/ingestor.Dockerfile`     | metrics `9101`         |
-| `exec-svc`     | (Rust `coinext-exec-svc`) | Rust                  | `deploy/docker/exec-svc.Dockerfile`     | metrics `9102`, ctrl `8081` |
-| `trader`       | [`trader/`](trader/)             | Python (`coinext_live`)    | `deploy/docker/trader.Dockerfile`       | metrics `9103`         |
-| `risk-monitor` | [`risk-monitor/`](risk-monitor/) | Python                | `deploy/docker/risk-monitor.Dockerfile` | metrics `9104`         |
-| `api`          | [`api/`](api/)                   | Python (FastAPI)      | `deploy/docker/api.Dockerfile`          | `8000`                 |
-| `ui`           | `../ui` (separate)   | Node 22 / Vite        | `deploy/docker/ui.Dockerfile`           | `3000`                 |
+| Service        | Wrapper / source                                   | Kind                  | Build                                 | Ports                  |
+|----------------|----------------------------------------------------|-----------------------|---------------------------------------|------------------------|
+| `ingestor`     | [`ingestor/`](ingestor/) + [`coinext-ingest`](../crates/coinext-ingest/) | Rust                  | `deploy/docker/ingestor.Dockerfile`     | metrics `9101`         |
+| `exec-svc`     | [`coinext-exec-svc`](../crates/coinext-exec-svc/)  | Rust                  | `deploy/docker/exec-svc.Dockerfile`     | metrics `9102`, ctrl `8081` |
+| `trader`       | [`trader/`](trader/)                               | Python (`coinext_live`) | `deploy/docker/trader.Dockerfile`       | metrics `9103`         |
+| `risk-monitor` | [`risk-monitor/`](risk-monitor/)                   | Python                | `deploy/docker/risk-monitor.Dockerfile` | metrics `9104`         |
+| `api`          | [`api/`](api/)                                     | Python (FastAPI)      | `deploy/docker/api.Dockerfile`          | `8000`                 |
+| `ui`           | [`ui/`](ui/)                                       | Node 22 / Vite        | `deploy/docker/ui.Dockerfile`           | `3000`                 |
 
 Notes:
 

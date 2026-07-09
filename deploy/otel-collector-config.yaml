@@ -1,4 +1,4 @@
-# Coinext — OpenTelemetry Collector config (docs/ARCHITECTURE.md §8).
+# Coinext — OpenTelemetry Collector config (ARCHITECTURE.md §7).
 #
 # Single ingestion point for app telemetry. Services send OTLP to :4317 (gRPC) / :4318 (HTTP) via
 # COINEXT__OTEL__ENDPOINT. The collector fans out:

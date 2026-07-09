@@ -2,7 +2,7 @@
 
 This is the *control plane* surface the UI (and operators) talk to. It does NOT run the hot path:
 the deterministic Rust core (``coinext_py``) runs inside the ``trader`` / ``ingestor`` / ``exec-svc``
-processes (see ARCHITECTURE.md §6–§8). This service:
+processes (see ARCHITECTURE.md §3/§7). This service:
 
 * reads run / position / fill / catalog state (today: stubs; later: Postgres + the data-lake
   catalog),
@@ -325,7 +325,7 @@ def catalog() -> dict[str, Any]:
 def latency() -> dict[str, Any]:
     """Latency SLO histogram snapshot (the UI polls this for the Latency panel).
 
-    Values are the percentiles the platform tracks (ARCHITECTURE §8), reported in nanoseconds.
+    Values are the percentiles the platform tracks (ARCHITECTURE §7), reported in nanoseconds.
     Shape mirrors the UI's ``LatencySnapshot`` wire type (services/ui/src/api.ts).
     TODO: scrape the real histograms from the Prometheus endpoints the trading services expose.
     """

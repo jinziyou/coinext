@@ -1,6 +1,6 @@
 # Coinext — production topology (single-VPS docker-compose).
 #
-# This is the canonical service graph described in docs/ARCHITECTURE.md §8:
+# This is the canonical service graph described in ARCHITECTURE.md §7:
 #   * Rust hot path:  ingestor (coinext-ingest), exec-svc (coinext-exec-svc)
 #   * Python control plane: trader (coinext_live), risk-monitor, api (FastAPI)
 #   * UI: static Vite build served by nginx
@@ -224,7 +224,8 @@ services:
       retries: 5
       start_period: 20s
 
-  # ui — static Vite/React dashboard served by nginx. Talks to the api at COINEXT__UI__API_BASE.
+  # ui — static Vite/React dashboard served by nginx. Defaults to the same-origin /api proxy;
+  # set COINEXT__UI__API_BASE only when the API is reachable directly from the browser.
   ui:
     <<: *app-common
     build:
@@ -232,7 +233,7 @@ services:
       dockerfile: deploy/docker/ui.Dockerfile
       args:
         # Baked at build time (Vite inlines VITE_* into the static bundle).
-        VITE_API_BASE: ${COINEXT__UI__API_BASE:-http://localhost:8000}
+        VITE_API_BASE: ${COINEXT__UI__API_BASE:-/api}
     depends_on:
       api:
         condition: service_started

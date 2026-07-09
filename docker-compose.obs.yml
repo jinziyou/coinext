@@ -1,9 +1,9 @@
-# Coinext — observability OVERLAY (docs/ARCHITECTURE.md §8).
+# Coinext — observability OVERLAY (ARCHITECTURE.md §7).
 #
 # Adds the metrics/logs/traces stack on top of docker-compose.yml. The app services already emit:
 #   * Prometheus metrics (ingestor:9101, exec-svc:9102, trader:9103, risk-monitor:9104, api:8000)
 #   * OTLP traces/logs to the otel-collector (COINEXT__OTEL__ENDPOINT=http://otel-collector:4317)
-# The `trace_id` from the Redis Envelope propagates end-to-end (Envelope schema, ARCHITECTURE.md §6).
+# The `trace_id` from the Redis Envelope propagates end-to-end (Envelope schema, ARCHITECTURE.md §3).
 #
 # Pipeline:
 #   apps --(OTLP 4317/4318)--> otel-collector --> tempo (traces) + loki (logs)

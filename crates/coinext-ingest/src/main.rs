@@ -1,6 +1,6 @@
 //! `coinext-ingest` — the standalone market-data **ingestion daemon** (service name `ingestor`).
 //!
-//! Per the architecture (`docs/ARCHITECTURE.md` §7, "Live"): "A standalone Rust `ingestor`
+//! Per the architecture (`ARCHITECTURE.md` §7, "Live"): "A standalone Rust `ingestor`
 //! normalizes Binance WS frames and republishes on the Redis bus; the `trader` process's DataEngine
 //! consumes them." The production ingestor will also persist normalized data to the data lake so
 //! warm-up/backtest read the SAME bytes (the parity invariant for indicators).
@@ -9,7 +9,7 @@
 //! keys), takes its `MarketEvent` receiver via `take_stream`, and drains it in a tokio loop printing
 //! each normalized event. The actual WS connect is gated behind the `live` cargo feature so the
 //! binary always compiles (and the default run exits cleanly) without touching the network; run the
-//! live path with `cargo run -p coinext-ingest --features live`.
+//! live path with `cargo run --manifest-path crates/coinext-ingest/Cargo.toml --features live`.
 //!
 //! Config (env, `COINEXT__` convention):
 //!   COINEXT__BINANCE__TESTNET   "true"/"false" — which public streams to read (default false = mainnet,
@@ -28,21 +28,33 @@ fn env_or(key: &str, default: &str) -> String {
 #[tokio::main]
 async fn main() {
     let testnet = env_or("COINEXT__BINANCE__TESTNET", "false").eq_ignore_ascii_case("true");
-    let symbols: Vec<String> = env_or("COINEXT__INGEST__SYMBOLS", "BTCUSDT.BINANCE,ETHUSDT.BINANCE")
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let max_events: u64 = env_or("COINEXT__INGEST__MAX_EVENTS", "0").parse().unwrap_or(0);
+    let symbols: Vec<String> = env_or(
+        "COINEXT__INGEST__SYMBOLS",
+        "BTCUSDT.BINANCE,ETHUSDT.BINANCE",
+    )
+    .split(',')
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+    .collect();
+    let max_events: u64 = env_or("COINEXT__INGEST__MAX_EVENTS", "0")
+        .parse()
+        .unwrap_or(0);
 
     println!("=========================================================");
     println!("  Coinext ingestor (coinext-ingest)");
     println!("  role    : market-data ingestion daemon");
-    println!("  source  : Binance public WS ({})", if testnet { "TESTNET" } else { "MAINNET" });
+    println!(
+        "  source  : Binance public WS ({})",
+        if testnet { "TESTNET" } else { "MAINNET" }
+    );
     println!("  symbols : {}", symbols.join(", "));
     println!(
         "  max ev  : {}",
-        if max_events == 0 { "infinite".to_string() } else { max_events.to_string() }
+        if max_events == 0 {
+            "infinite".to_string()
+        } else {
+            max_events.to_string()
+        }
     );
     println!("  metrics : http://0.0.0.0:9101/metrics  (TODO)");
     println!("=========================================================");
@@ -63,8 +75,15 @@ async fn main() {
             eprintln!("coinext-ingest: bad instrument id `{sym}` — skipping");
             continue;
         };
-        for kind in [SubKind::Trades, SubKind::Quotes, SubKind::BookL2 { depth: 20 }] {
-            let sub = Subscription { instrument_id: id.clone(), kind };
+        for kind in [
+            SubKind::Trades,
+            SubKind::Quotes,
+            SubKind::BookL2 { depth: 20 },
+        ] {
+            let sub = Subscription {
+                instrument_id: id.clone(),
+                kind,
+            };
             if let Err(e) = client.subscribe(sub).await {
                 eprintln!("coinext-ingest: subscribe failed for {sym}: {e}");
             }

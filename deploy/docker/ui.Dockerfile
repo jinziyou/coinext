@@ -19,11 +19,12 @@ COPY services/ui/package.json services/ui/package-lock.json* ./
 RUN npm ci || npm install
 
 # Build-time API base baked into the bundle (Vite reads import.meta.env.VITE_API_BASE).
-ARG VITE_API_BASE=http://localhost:8000
+# Default to nginx's same-origin /api reverse proxy; override only for a directly reachable API.
+ARG VITE_API_BASE=/api
 ENV VITE_API_BASE=${VITE_API_BASE}
 
 COPY services/ui/ ./
-# TODO: produces dist/ — the static SPA (positions, PnL, run control, SLO panels).
+# npm run build type-checks and writes the static SPA to dist/.
 RUN npm run build
 
 # --- stage 2: serve static files with nginx ---

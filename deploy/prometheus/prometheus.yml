@@ -1,4 +1,4 @@
-# Coinext — Prometheus scrape config (docs/ARCHITECTURE.md §8).
+# Coinext — Prometheus scrape config (ARCHITECTURE.md §7).
 #
 # Scrapes the SLO histograms emitted by each service:
 #   ingest_to_publish_ns, submit_to_ack_ns, strategy_dispatch_ns, book_gaps, ws_reconnects,

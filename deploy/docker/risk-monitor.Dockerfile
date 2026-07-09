@@ -23,7 +23,7 @@ COPY services/risk-monitor ./risk_monitor
 
 # Bus (Envelope decode) + config + obs extras. No Rust extension required.
 RUN uv pip install --system --no-cache \
-      "redis>=5" "msgpack>=1" \
+      "redis>=5" "msgpack>=1.2.1" \
       "structlog>=24" "prometheus-client>=0.20" "opentelemetry-sdk>=1.25" \
       "pydantic>=2.7" "pyyaml>=6" "numpy>=2.0"
 

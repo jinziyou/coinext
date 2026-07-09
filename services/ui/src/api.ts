@@ -1,18 +1,18 @@
 // Coinext — typed fetch client for the `api` service.
 //
 // The `api` service (FastAPI, canonical port 8000) is the read-side projection
-// over the Redis-Streams Envelope bus (docs/ARCHITECTURE.md §6/§8): the trader /
+// over the Redis-Streams Envelope bus (root ARCHITECTURE.md §3/§7): the trader /
 // exec-svc / risk-monitor publish state, the api caches it, and this UI polls it.
 // The only mutating call is the kill-switch: the api publishes a CtrlKillSwitch
 // payload on the Redis control stream ('coinext.control'), honored by the in-core
 // risk-engine and the out-of-band risk-monitor to trip the atomic kill-switch.
 //
-// Base URL: VITE_API_BASE (injected at build/run time) || http://localhost:8000.
-// Set VITE_API_BASE=/api to route through the dev proxy in vite.config.ts.
+// Base URL: VITE_API_BASE (injected at build/run time) || /api.
+// `/api` is the same-origin proxy in both vite.config.ts (dev) and nginx.conf (compose/prod).
 
 export const API_BASE: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ??
-  "http://localhost:8000";
+  "/api";
 
 // ---------------------------------------------------------------------------
 // Wire types — mirror the api service response models.
@@ -84,7 +84,7 @@ export interface Fill {
 
 /**
  * Latency SLO snapshot as surfaced by GET /latency. Values are the histogram
- * percentiles the platform tracks (ARCHITECTURE §8): submit_to_ack_ns,
+ * percentiles the platform tracks (ARCHITECTURE §7): submit_to_ack_ns,
  * strategy_dispatch_ns, ingest_to_publish_ns, etc. Reported in nanoseconds.
  */
 export interface LatencyMetric {

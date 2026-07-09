@@ -15,8 +15,10 @@
 - **Binance adapter**: real WS market data (verified live) + REST execution (idempotent submit,
   reconcile) + InstrumentProvider; `coinext-network` (rustls REST/WS, governor, HMAC). Unit-tested.
 - **Persistence**: rusqlite event store + crash-recovery SeqCursor + Parquet writer.
-- **Parity gate**: `coinext_parity` (signal agreement / fill-price deviation bps / equity corr / return
-  diff) + `coinext testnet-gate` one-command loop (real data → backtest → testnet fills → gate).
+- **Parity gates**: `coinext_parity` (signal agreement / fill-price deviation bps / equity corr /
+  return diff) + `coinext parity` demo using a perturbed backtest session. `coinext testnet-gate`
+  is wired for the real-klines → backtest → Binance testnet loop; `--no-testnet` dry-runs it without
+  keys, while real testnet fills require Binance spot-testnet API keys.
 - **Local Parquet data lake**: paginated downloader (breaks the 1000/req limit), partitioned store
   (dedup/idempotent), HistoryReader; `coinext download` / `coinext backtest --from-lake` / `coinext catalog`.
 - **Walk-forward optimization** (`coinext_optimize`): genuine walk-forward (rolling + anchored/expanding

@@ -35,7 +35,7 @@ is measured here.
 ## Build & run (docker)
 
 ```bash
-# Build the image (Dockerfile is multi-stage: cargo build --release -p coinext-ingest).
+# Build the image (Dockerfile builds crates/coinext-ingest via its own manifest).
 docker build -f deploy/docker/ingestor.Dockerfile -t coinext/ingestor .
 
 # Run it. Public market data needs no keys; point it at Redis and pick the symbols/streams.
@@ -53,14 +53,15 @@ process(es), and the observability stack (Prometheus scrapes `:9101`).
 ## Run from source (dev, no docker)
 
 ```bash
-cargo run --release -p coinext-ingest
+cargo run --release --manifest-path crates/coinext-ingest/Cargo.toml
 # configured via the same COINEXT__* env vars (see .env.example)
 ```
 
-## TODOs
+## Known gaps
 
-Tracked in the `coinext-ingest` crate, not here:
+Tracked in the `coinext-ingest` crate, not this deployment wrapper:
 
-- implement the Binance WS subscribe / reconnect / gap-detection loop (`coinext-network`),
-- normalize frames to `coinext-model` types and publish `Envelope`s via `coinext-bus`,
-- export `ingest_to_publish_ns`, `book_gaps`, `ws_reconnects` on `:9101`.
+- publish normalized events as versioned `Envelope`s on `coinext_bus`,
+- append market data to the data lake (`coinext-persistence`),
+- export `ingest_to_publish_ns`, `book_gaps`, and `ws_reconnects` on `:9101`,
+- harden reconnect / gap-detection behavior for long-lived live sessions.

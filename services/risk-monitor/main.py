@@ -1,10 +1,10 @@
 """services/risk-monitor — out-of-band global risk supervisor.
 
-ARCHITECTURE.md §7–§8: the per-order ``coinext-risk-engine`` gate lives *inside* each trading node's
+ARCHITECTURE.md §7: the per-order ``coinext-risk-engine`` gate lives *inside* each trading node's
 synchronous core and is the first line of defense. This service is the **second, out-of-band** line:
 a standalone process that watches *all* PnL / position / fill telemetry on the Redis-Streams bus
-(``coinext_bus``, decoding the MessagePack ``Envelope`` — §6) and enforces **account-wide** limits the
-in-core gate cannot see in isolation:
+(``coinext_bus``, decoding the MessagePack ``Envelope`` — ARCHITECTURE.md §3) and enforces
+**account-wide** limits the in-core gate cannot see in isolation:
 
 * **max drawdown**            — peak-to-trough equity decline across the account,
 * **gross / net exposure**    — sum of abs(notional) (gross) and signed notional (net) per instrument,

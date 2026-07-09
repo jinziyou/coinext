@@ -24,6 +24,9 @@ live telemetry from the Redis-Streams bus, and exposes operator controls.
 `/backtest` drives a Python `Strategy` through the **same** Rust engines + `SimulatedExecutionClient`
 the live path uses (ARCHITECTURE.md §1, §4), so the result is parity-valid — not a vectorized screen.
 
+Mutating endpoints (`POST /backtest`, `POST /control/killswitch`) require `X-API-Key` to match
+`COINEXT__API__KEY`. If the env var is unset, they fail closed with HTTP 503.
+
 ## Service / port (canonical)
 
 | Item        | Value                                                         |
@@ -48,6 +51,7 @@ OpenAPI docs at <http://localhost:8000/docs>.
 docker build -f deploy/docker/api.Dockerfile -t coinext/api .
 docker run --rm -p 8000:8000 \
   -e COINEXT__REDIS__URL=redis://redis:6379/0 \
+  -e COINEXT__API__KEY=change-me \
   coinext/api
 ```
 
@@ -60,9 +64,8 @@ Every heavy / native import (`coinext_py`, `coinext_backtest`, `coinext_bus`, `r
 missing dependency return HTTP 503 (or, for the live WS / kill-switch, degrade to a clearly-labelled
 stub). This keeps schema generation and unit tests dependency-light.
 
-## TODOs
+## Known gaps
 
 - Back `/runs`, `/positions`, `/fills`, `/catalog` with Postgres + the coinext_data catalog + coinext-persistence.
 - Wire `/ws/live` to a real `coinext_bus` async consumer of the live telemetry stream.
-- Publish a real `CtrlKillSwitch` Envelope (`MsgType.CTRL`) from `/control/killswitch`.
 - Offload long backtests to a worker/job queue; return a `run_id` to poll.

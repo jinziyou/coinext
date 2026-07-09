@@ -257,7 +257,7 @@ the Binance section of `.env`).
 | `ui`           | Node 22 / Vite → nginx     | `3000`                 |
 
 Backing services: `postgres:16` (event/audit store), `redis:7` (Redis-Streams bus), `minio` (S3 data
-lake). The stack runs on a single VPS via docker-compose with `prod` / `dev` / `obs` profiles.
+lake). The stack runs on a single VPS via a base docker-compose file plus dev / observability overlays.
 
 **Observability (`deploy/*`, `docker-compose.obs.yml`).** Prometheus (metrics) + Grafana
 (dashboards-as-code) + Loki (logs) + Tempo (traces) via an OpenTelemetry Collector. The `trace_id`

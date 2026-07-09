@@ -2,5 +2,5 @@
 # Mirrors the `bus` + `obs` extras in the root pyproject.toml. The coinext_* packages are installed
 # separately from the workspace (not via this file).
 redis>=5
-msgpack>=1
+msgpack>=1.2.1
 prometheus-client>=0.20

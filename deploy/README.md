@@ -1,6 +1,6 @@
 # Coinext — Deployment
 
-Dockerized multi-service stack for a single VPS, with `prod` / `dev` / `obs` compose profiles
+Dockerized multi-service stack for a single VPS, with base / dev / observability compose layers
 ([`ARCHITECTURE.md`](../ARCHITECTURE.md) §7). The topology preserves the parity invariant: the SAME engines run
 everywhere; only the Kernel-injected Clock / Cache / clients differ between backtest, sandbox, and
 live (selected via `COINEXT__ENV` and the Binance section of `.env`).
@@ -14,7 +14,7 @@ live (selected via `COINEXT__ENV` and the Binance section of `.env`).
 | `trader`       | `deploy/docker/trader.Dockerfile`       | Python `coinext_live`     | metrics 9103         |
 | `risk-monitor` | `deploy/docker/risk-monitor.Dockerfile` | Python               | metrics 9104         |
 | `api`          | `deploy/docker/api.Dockerfile`          | Python FastAPI       | 8000                 |
-| `ui`           | `deploy/docker/ui.Dockerfile`           | Node 22 build → nginx| 3000 (dev → :80)     |
+| `ui`           | `deploy/docker/ui.Dockerfile`           | Node 22 build → nginx| host 3000 → container 80 |
 | `postgres`     | image `postgres:16`                     | event/audit store    | 5432                 |
 | `redis`        | image `redis:7`                         | Redis-Streams bus    | 6379                 |
 | `minio`        | image `minio/minio`                     | S3 data lake         | 9000 (S3), 9001 (console) |
@@ -85,9 +85,7 @@ require an image rebuild; pure-Python edits reload live).
 ## Validate the topology (no containers started)
 
 ```bash
-docker compose config -q && echo OK
-# or:
-just compose-check
+just compose-check   # validates base, dev, obs, and dev+obs overlays
 ```
 
 ## Tear down
@@ -112,14 +110,14 @@ span `ingestor → trader → exec-svc`, and Grafana correlates metrics ↔ logs
 SLO histograms surfaced on the dashboard: `strategy_dispatch_ns`, `submit_to_ack_ns`,
 `ingest_to_publish_ns`, `risk_denials`, and PnL.
 
-## Notes & TODOs
+## Known gaps
 
-- The Rust service crates (`coinext-ingest`, `coinext-exec-svc`) are workspace-excluded **stubs** today; their
-  Dockerfiles are valid scaffolding and are not expected to build until the venue adapters
-  (`coinext-network`, `coinext-adapters/binance`) and persistence land.
+- The Rust service crates (`coinext-ingest`, `coinext-exec-svc`) are workspace-excluded **stubs** today.
+  Their Dockerfiles build the stub binaries via each crate's own manifest; real Redis/data-lake/OMS
+  wiring remains deferred behind the live/ops roadmap.
 - The Python service entrypoints live under `services/`: `services/api/app.py` (`uvicorn app:app`),
   `services/trader/main.py` and `services/risk-monitor/main.py` (`python -m main`). The UI source is
   `services/ui/` (served by nginx via `services/ui/nginx.conf`). The Dockerfiles copy each in and
   reference these real modules.
-- Secrets management (SOPS/Vault) is an open question (`docs/ARCHITECTURE.md`); for now secrets come
-  from `.env` (git-ignored).
+- Secrets management (SOPS/Vault) is an open question ([`ARCHITECTURE.md`](../ARCHITECTURE.md)); for now
+  secrets come from `.env` (git-ignored).

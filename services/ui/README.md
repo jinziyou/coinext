@@ -27,17 +27,14 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-Point it at a running `api` service with `VITE_API_BASE` (defaults to
-`http://localhost:8000`):
+By default the client uses the same-origin `/api` proxy. That works in both local
+Vite dev (`vite.config.ts` proxies to `http://localhost:8000`) and the
+compose/nginx deployment (`nginx.conf` proxies to the `api` service).
+
+Override only when the API is directly reachable from the browser:
 
 ```bash
 VITE_API_BASE=http://localhost:8000 npm run dev
-```
-
-Or route through the dev proxy (avoids CORS) by setting the base to `/api`:
-
-```bash
-VITE_API_BASE=/api VITE_API_TARGET=http://localhost:8000 npm run dev
 ```
 
 ## Scripts

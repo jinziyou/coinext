@@ -1,4 +1,4 @@
-# Coinext — Grafana dashboard provider (dashboards-as-code, ARCHITECTURE.md §8).
+# Coinext — Grafana dashboard provider (dashboards-as-code, ARCHITECTURE.md §7).
 # Loads JSON dashboards from the mounted folder so the Coinext SLO board appears on first boot.
 apiVersion: 1
 

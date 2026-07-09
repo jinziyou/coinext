@@ -40,7 +40,7 @@ COPY services/trader ./trader
 # Install the control-plane deps needed by the live runtime (bus + live + obs extras).
 # `--system` installs into the image interpreter (no venv indirection in containers).
 RUN uv pip install --system --no-cache \
-      "redis>=5" "msgpack>=1" "anyio>=4" \
+      "redis>=5" "msgpack>=1.2.1" "anyio>=4" \
       "structlog>=24" "prometheus-client>=0.20" "opentelemetry-sdk>=1.25" \
       "pydantic>=2.7" "pyyaml>=6" "typer>=0.12" "numpy>=2.0"
 

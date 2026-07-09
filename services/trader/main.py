@@ -10,13 +10,13 @@ account**, wires the strategy, and runs it. Everything load-bearing lives in the
 **One process per account.** Each account (set of API keys / sub-account) gets its **own** trader
 process. This isolates blast radius (a crash, a kill-switch trip, a reconcile stall affects one
 account only), keeps the deterministic single-threaded core per node, and sidesteps the open
-SeqCursor-namespacing-across-accounts question (ARCHITECTURE.md §11). Horizontal scale = more trader
-processes, coordinated only via the Redis bus.
+SeqCursor-namespacing-across-accounts question (docs/ARCHITECTURE.md open questions). Horizontal
+scale = more trader processes, coordinated only via the Redis bus.
 
 Live data path: a standalone Rust ``ingestor`` normalizes venue WS frames and republishes them on
 the Redis bus; this node's DataEngine consumes them. **Warm-up is always served from the LOCAL
 HistoryReader** (identical to backtest), never live REST at handler time — so indicators are
-byte-identical across backtest and live (§7, §10). On restart, ``reconcile()`` replays the event log
+byte-identical across backtest and live (ARCHITECTURE.md §6/§7). On restart, ``reconcile()`` replays
 and diffs venue truth.
 
 Canonical deployment (service/port table): built from ``deploy/docker/trader.Dockerfile``, runs the
@@ -147,7 +147,7 @@ def _maybe_start_metrics_server(port: int) -> None:
     """Start the Prometheus metrics endpoint on :9103 if ``prometheus_client`` is installed.
 
     Exposes the node SLO histograms (``strategy_dispatch_ns``, ``submit_to_ack_ns``, ``ws_reconnects``,
-    ``risk_denials`` — ARCHITECTURE.md §8) once wired through coinext_live.
+    ``risk_denials`` — ARCHITECTURE.md §7) once wired through coinext_live.
     """
     try:  # pragma: no cover - optional dependency
         from prometheus_client import start_http_server  # noqa: WPS433

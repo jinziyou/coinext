@@ -6,9 +6,8 @@
 # SLO histogram: ingest_to_publish_ns. Exposes Prometheus metrics on :9101.
 #
 # Multi-stage, cargo-chef style: a dependency-planning stage and a cached build stage keep image
-# rebuilds fast (only re-compile deps when Cargo.lock changes), then a tiny distroless runtime.
-# NOTE: coinext-ingest is a workspace-excluded stub today (root Cargo.toml `exclude`); it is built here
-# with its own manifest. This Dockerfile is intentionally valid-but-not-yet-buildable scaffolding.
+# rebuilds fast, then a tiny distroless runtime. `coinext-ingest` is workspace-excluded, so the
+# cargo-chef and cargo build steps run from `crates/coinext-ingest` instead of the root workspace.
 # ----------------------------------------------------------------------------------------------
 
 # --- chef: provides cargo-chef for dependency caching ---
@@ -19,17 +18,20 @@ WORKDIR /build
 # --- planner: compute the dependency recipe (cache key) ---
 FROM chef AS planner
 COPY . .
-# `prepare` writes recipe.json describing only the dependency graph (not our source).
-RUN cargo chef prepare --recipe-path recipe.json
+WORKDIR /build/crates/coinext-ingest
+# `prepare` writes recipe.json for the excluded crate's dependency graph (not app source).
+RUN cargo chef prepare --recipe-path /build/recipe.json
 
 # --- builder: cook deps from the recipe (cached), then build the binary ---
 FROM chef AS builder
-COPY --from=planner /build/recipe.json recipe.json
+COPY --from=planner /build/recipe.json /build/recipe.json
+WORKDIR /build/crates/coinext-ingest
 # Cook just the dependencies first — this layer is reused until recipe.json changes.
-RUN cargo chef cook --release --recipe-path recipe.json
-COPY . .
+RUN cargo chef cook --release --recipe-path /build/recipe.json
+COPY . /build
+WORKDIR /build/crates/coinext-ingest
 # TODO(venue/IO): coinext-ingest's real WS/REST ingestion lives in coinext-network + coinext-adapters/binance.
-RUN cargo build --release --bin coinext-ingest \
+RUN cargo build --release \
  && cp target/release/coinext-ingest /coinext-ingest
 
 # --- runtime: distroless (no shell, minimal attack surface) ---

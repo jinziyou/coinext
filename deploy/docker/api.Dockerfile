@@ -36,8 +36,8 @@ COPY services/api ./api
 
 # API extras (fastapi + uvicorn) + bus (Envelope decode) + config + obs.
 RUN uv pip install --system --no-cache \
-      "fastapi>=0.110" "uvicorn>=0.29" \
-      "redis>=5" "msgpack>=1" \
+      "fastapi>=0.110" "starlette>=1.3.1" "uvicorn>=0.29" \
+      "redis>=5" "msgpack>=1.2.1" \
       "structlog>=24" "prometheus-client>=0.20" "opentelemetry-sdk>=1.25" \
       "pydantic>=2.7" "pyyaml>=6" "numpy>=2.0"
 

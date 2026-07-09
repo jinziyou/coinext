@@ -1,7 +1,7 @@
 // Coinext operator dashboard — React entrypoint.
 //
 // Wires the @tanstack/react-query client (polling cache over the `api` service)
-// and mounts the dashboard shell. See docs/ARCHITECTURE.md §8 (observability /
+// and mounts the dashboard shell. See ARCHITECTURE.md §7 (observability /
 // operator cockpit).
 import React from "react";
 import ReactDOM from "react-dom/client";

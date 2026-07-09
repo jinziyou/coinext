@@ -118,4 +118,3 @@ Flip `COINEXT__BINANCE__TESTNET=false` and supply **mainnet** keys with **withdr
 allowlist**; store secrets in SOPS/Vault (see [`ARCHITECTURE.md`](ARCHITECTURE.md) open questions). The out-of-band
 `risk-monitor` watches PnL/positions and can trip the global kill-switch; the per-order `RiskEngine`
 gate runs synchronously on every order in backtest, sandbox, and live alike.
-```

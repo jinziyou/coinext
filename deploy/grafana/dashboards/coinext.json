@@ -1,5 +1,5 @@
 {
-  "__comment": "Coinext SLO dashboard (dashboards-as-code, docs/ARCHITECTURE.md §8). Panels track the core SLO histograms (p99 latency via *_ns_bucket), risk_denials, and PnL. Metric names are the scaffold contract emitted by the services; adjust queries as the exporters land.",
+  "__comment": "Coinext SLO dashboard (dashboards-as-code, ARCHITECTURE.md §7). Panels track the core SLO histograms (p99 latency via *_ns_bucket), risk_denials, and PnL. Metric names are the scaffold contract emitted by the services; adjust queries as the exporters land.",
   "schemaVersion": 39,
   "version": 1,
   "uid": "coinext-slo",
@@ -39,7 +39,7 @@
     {
       "id": 2,
       "title": "submit_to_ack_ns (p99) — OMS submit→ack",
-      "description": "Order submit-to-ack latency in the exec-svc (ARCHITECTURE.md §5/§8).",
+      "description": "Order submit-to-ack latency in the exec-svc (ARCHITECTURE.md §3/§7).",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
@@ -55,7 +55,7 @@
     {
       "id": 3,
       "title": "ingest_to_publish_ns (p99) — WS frame→bus publish",
-      "description": "Ingestor normalize-and-republish latency (ARCHITECTURE.md §7/§8).",
+      "description": "Ingestor normalize-and-republish latency (ARCHITECTURE.md §7).",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
@@ -71,7 +71,7 @@
     {
       "id": 4,
       "title": "risk_denials — pre-trade gate rejections",
-      "description": "Rate of orders rejected by the pre-trade RiskEngine gate (ARCHITECTURE.md §8).",
+      "description": "Rate of orders rejected by the pre-trade RiskEngine gate (ARCHITECTURE.md §7).",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },

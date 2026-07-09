@@ -8,8 +8,8 @@
 #
 # Multi-stage cargo-chef build (deps cached separately from source) -> debian-slim runtime. We use
 # debian-slim rather than distroless here so the control API healthcheck can shell out if needed.
-# NOTE: coinext-exec-svc is a workspace-excluded stub today; this Dockerfile is valid scaffolding that
-# is not expected to build until the crate is implemented (coinext-network + adapters land first).
+# `coinext-exec-svc` is workspace-excluded, so the Docker build runs cargo-chef/cargo from the
+# crate directory instead of the root workspace; the binary is still an OMS/risk wiring stub.
 # ----------------------------------------------------------------------------------------------
 
 FROM rust:1.95 AS chef
@@ -18,15 +18,18 @@ WORKDIR /build
 
 FROM chef AS planner
 COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
+WORKDIR /build/crates/coinext-exec-svc
+RUN cargo chef prepare --recipe-path /build/recipe.json
 
 FROM chef AS builder
-COPY --from=planner /build/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-COPY . .
+COPY --from=planner /build/recipe.json /build/recipe.json
+WORKDIR /build/crates/coinext-exec-svc
+RUN cargo chef cook --release --recipe-path /build/recipe.json
+COPY . /build
+WORKDIR /build/crates/coinext-exec-svc
 # TODO(venue/IO): real venue order routing lives in coinext-adapters/binance via coinext-network; the
 # append-only OrderEvent store + reconciliation lives in coinext-persistence (ARCHITECTURE.md §7).
-RUN cargo build --release --bin coinext-exec-svc \
+RUN cargo build --release \
  && cp target/release/coinext-exec-svc /coinext-exec-svc
 
 # --- runtime: debian-slim (small, has a shell + libssl for TLS to the venue) ---

@@ -17,9 +17,10 @@
 #   * trader / risk-monitor: bind-mounted source; restart the container to pick up changes, or run
 #     them under `watchfiles` (see commented command). The Kernel itself is the compiled coinext_py.
 #   * ingestor / exec-svc (Rust): no in-container hot reload — rebuild the image, or run the binary
-#     on the host with `cargo run -p coinext-ingest` / `-p coinext-exec-svc` against the dev infra ports below.
-#   * ui (Vite): for true HMR run `npm run dev` on the host (port 5173); this overlay still serves
-#     the built static bundle via nginx on :3000 for an integration-like view.
+#     on the host with `cargo run --manifest-path crates/coinext-ingest/Cargo.toml` /
+#     `cargo run --manifest-path crates/coinext-exec-svc/Cargo.toml` against the dev infra ports below.
+#   * ui (Vite): for true HMR run `npm run dev` on the host (port 3000; stop the compose `ui`
+#     service first). This overlay serves the built static bundle via nginx on :3000.
 
 name: coinext
 

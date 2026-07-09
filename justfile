@@ -11,6 +11,14 @@ default:
 test:
     cargo test
 
+# Test/build the workspace-excluded live-edge crates the root workspace intentionally skips
+test-live-edge:
+    cargo test --manifest-path crates/coinext-network/Cargo.toml
+    cargo test --manifest-path crates/coinext-adapters/binance/Cargo.toml
+    cargo test --manifest-path crates/coinext-persistence/Cargo.toml
+    cargo build --manifest-path crates/coinext-ingest/Cargo.toml
+    cargo build --manifest-path crates/coinext-exec-svc/Cargo.toml
+
 # Format + lint the Rust code
 lint:
     cargo fmt --all
@@ -26,9 +34,9 @@ build-release:
 
 # --- Python control plane ---
 
-# Create the venv and install the control-plane deps (research extras + dev tools)
+# Create the venv and install research/config/api/bus deps plus dev tools
 py-setup:
-    uv sync --extra research --extra config --group dev
+    uv sync --extra research --extra config --extra api --extra bus --group dev
 
 # Build the coinext_py PyO3 extension into the active venv (editable)
 py-build:
@@ -38,10 +46,10 @@ py-build:
 py-test:
     uv run pytest
 
-# Lint + format the Python code
+# Lint + format Python code, service wrappers, and tests
 py-lint:
-    uv run ruff check python tests
-    uv run ruff format python tests
+    uv run ruff check python services tests
+    uv run ruff format python services tests
 
 # Run a backtest via the coinext CLI
 cli-backtest *ARGS:
@@ -49,7 +57,7 @@ cli-backtest *ARGS:
 
 # --- Ops ---
 
-# Bring up the full dockerized stack (prod profile)
+# Bring up the base dockerized stack
 up:
     docker compose up -d --build
 
@@ -61,12 +69,12 @@ up-dev:
 down:
     docker compose down -v
 
-# Validate the compose topology without starting anything
+# Validate all compose layers without starting anything. Seeds .env from .env.example only if absent.
 compose-check:
-    docker compose config -q && echo "compose OK"
+    @set -e; tmp_created=0; if [ ! -f .env ]; then cp .env.example .env; tmp_created=1; fi; trap 'if [ "$tmp_created" = 1 ]; then rm -f .env; fi' EXIT; docker compose -f docker-compose.yml config -q; docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q; docker compose -f docker-compose.yml -f docker-compose.obs.yml config -q; docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.obs.yml config -q; echo "compose OK (base, dev, obs, dev+obs)"
 
 # --- Everything ---
 
-# Full local verification: rust tests + compose lint
-verify: test compose-check
-    @echo "core verified"
+# Local verification: core workspace + live-edge crates + compose topology
+verify: test test-live-edge compose-check
+    @echo "coinext verified"

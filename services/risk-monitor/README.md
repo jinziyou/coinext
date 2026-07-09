@@ -41,7 +41,7 @@ The limit-evaluation core (`RiskSupervisor` / `RiskLimits` / `AccountState`) is 
 unit-testable without the bus or a running Redis. `coinext_bus` and `prometheus_client` are imported
 lazily; without them the process runs in an idle stub mode so `/metrics` stays scrapeable.
 
-## TODOs
+## Known gaps
 
 - Wire the real `coinext_bus` async consumer of the telemetry stream + `Envelope` decode.
 - Publish the real `CtrlKillSwitch` Envelope (`MsgType.CTRL`) on breach.

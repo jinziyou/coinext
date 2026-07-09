@@ -1,6 +1,6 @@
 // Coinext operator dashboard shell.
 //
-// Panels (docs/ARCHITECTURE.md §7/§8):
+// Panels (ARCHITECTURE.md §7):
 //   - Runs                : GET /runs
 //   - Live Positions/PnL  : GET /positions (mark-sourced unrealized PnL)
 //   - Fills               : GET /fills
@@ -421,7 +421,7 @@ export function App() {
       <footer className="app-foot">
         <span className="muted small">
           Scaffold — read-only cockpit over the api service. See
-          docs/ARCHITECTURE.md §8.
+          ARCHITECTURE.md §7.
         </span>
       </footer>
     </div>
