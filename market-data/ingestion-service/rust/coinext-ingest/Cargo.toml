@@ -1,12 +1,9 @@
-# coinext-ingest — the market-data ingestion daemon (the standalone Rust `ingestor` service).
+# coinext-ingest — the market-data ingestion daemon (standalone Rust `ingestor` service).
 #
-# EXCLUDED from the root cargo workspace (root Cargo.toml `exclude`), so it uses EXPLICIT dependency
-# versions — NOT `.workspace = true`. It builds a real BinanceDataClient against the public combined
-# streams (no keys) and prints normalized events; the live connect path is feature-gated so the bin
-# always compiles without touching the network.
+# EXCLUDED from the root cargo workspace — explicit versions / path deps (no `.workspace = true`).
 [package]
 name = "coinext-ingest"
-description = "Coinext market-data ingestion daemon: Binance WS -> normalize -> data lake + Redis bus."
+description = "Coinext market-data ingestion: Binance WS -> normalize -> data lake + Redis Envelope bus."
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
@@ -24,6 +21,16 @@ live = []
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+redis = { version = "0.27" }
+rmp-serde = "1"
+rust_decimal = "1"
+rust_decimal_macros = "1"
+
 coinext-adapters-binance = { path = "../../../venue-adapters/binance/rust/coinext-adapters-binance" }
 coinext-model = { path = "../../../../foundation/domain-model/rust/coinext-model" }
 coinext-ports = { path = "../../../../foundation/ports/rust/coinext-ports" }
+coinext-core = { path = "../../../../foundation/primitives/rust/coinext-core" }
+coinext-bus = { path = "../../../../operations-interface/bus/rust/coinext-bus" }
+coinext-persistence = { path = "../../../../operations-interface/persistence/rust/coinext-persistence" }

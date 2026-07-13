@@ -79,13 +79,17 @@ config files                运行配置源码在 foundation/runtime-config/conf
 Cargo.toml / pyproject.toml 根 workspace 与 Python discovery 入口
 docker-compose*.yml         根目录 compose 入口；Dockerfiles 在 operations-interface/deployment/docker
 tests/                      根测试树，按生命周期模块分组
-docs/                       路线图、testnet 手册、架构 stub
+docs/                       文档索引、路线图、testnet 手册、架构 stub（权威架构见根 ARCHITECTURE.md）
 ```
 
 ## 文档地图
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — 权威设计：领域模型、六边形端口、Kernel、数据流、部署形态。
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — 已完成/下一步/延后/开放问题。
+完整索引见 [`docs/README.md`](docs/README.md)。
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — 权威设计：领域模型、六边形端口、Kernel、数据流、部署形态（英文）。
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — 状态快照、下一步、延后 live/ops。
+- [`docs/CHANGELOG.md`](docs/CHANGELOG.md) — 已验证能力的历史叙事。
+- [`docs/STATUS.md`](docs/STATUS.md) — verified / partial / scaffold 标注约定。
 - [`docs/TESTNET.md`](docs/TESTNET.md) — Binance market data + spot testnet paper execution runbook。
 - [`tests/backtesting-simulation/parity/README.md`](tests/backtesting-simulation/parity/README.md) — advisory cross-check 与 sandbox gate 说明。
 - [`operations-interface/deployment/README.md`](operations-interface/deployment/README.md) — compose、Docker、observability。

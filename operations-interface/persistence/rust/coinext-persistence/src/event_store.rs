@@ -42,6 +42,12 @@ pub trait EventStore: Send + Sync {
         &self,
         strategy_id: &StrategyId,
     ) -> PersistResult<Vec<(ClientOrderId, OrderEvent)>>;
+
+    /// List every `(strategy_id, client_order_id)` pair known to the store (for restart reconcile).
+    /// Default: empty (Null / stores that do not index orders).
+    fn list_orders(&self) -> PersistResult<Vec<(StrategyId, ClientOrderId)>> {
+        Ok(Vec::new())
+    }
 }
 
 /// An embedded-SQLite-backed [`EventStore`]. Open with `:memory:` (tests) or a file path (live).
@@ -150,6 +156,23 @@ impl EventStore for SqliteEventStore {
         }
         Ok(out)
     }
+
+    fn list_orders(&self) -> PersistResult<Vec<(StrategyId, ClientOrderId)>> {
+        let conn = self.conn.lock().expect("event store mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT strategy_id, client_order_id FROM order_events
+             ORDER BY strategy_id ASC, client_order_id ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (sid, coid) = row?;
+            out.push((StrategyId::from(sid), ClientOrderId::from(coid)));
+        }
+        Ok(out)
+    }
 }
 
 /// A no-op [`EventStore`] for pure-backtest runs where the append-only audit log is not needed.
@@ -178,6 +201,8 @@ impl EventStore for NullEventStore {
     ) -> PersistResult<Vec<(ClientOrderId, OrderEvent)>> {
         Ok(Vec::new())
     }
+
+    // list_orders uses trait default (empty).
 }
 
 #[cfg(test)]

@@ -26,7 +26,14 @@ def test_on_book_receives_maintained_l2_book_from_deltas():
 
         def on_book(self, book, ctx):
             self.books.append(
-                (book.symbol, book.best_bid, book.best_ask, book.mid, len(book.bids), len(book.asks))
+                (
+                    book.symbol,
+                    book.best_bid,
+                    book.best_ask,
+                    book.mid,
+                    len(book.bids),
+                    len(book.asks),
+                )
             )
 
     deltas = [

@@ -1,13 +1,13 @@
 """coinext_config — layered configuration for the Coinext control plane.
 
-Resolution order (highest precedence first), per ``docs/ARCHITECTURE.md`` §1/§7 + ``.env.example``::
+Resolution order (highest precedence first), per root ``ARCHITECTURE.md`` and ``.env.example``::
 
     CLI flags  >  env (COINEXT__SECTION__KEY)  >  YAML files under DEFAULT_CONFIG_DIR  >  built-in defaults
 
 The same ``RunConfig`` is built for every :class:`~coinext_kernel.Environment` — only the Kernel-injected
 Clock / Cache / Data+Exec clients differ between backtest, sandbox, and live (the parity invariant).
 The ``BrokerageModel`` economics carried under ``VenueConfig`` are SHARED between backtest and live
-so the two agree on venue *economics*, not just order flow (LEAN's keystone, ARCHITECTURE.md §5).
+so the two agree on venue *economics*, not just order flow.
 
 Optional deps are guarded: pydantic is used for validation when present, otherwise a stdlib
 ``dataclasses`` fallback provides the same field surface. PyYAML is loaded lazily and only when a
@@ -41,7 +41,8 @@ except ImportError:  # pragma: no cover - fallback path
 
         Subclasses are turned into dataclasses on definition (via ``__init_subclass__``) so the
         field surface and ``__init__(**kwargs)`` behaviour match the pydantic path closely enough
-        for the scaffold. TODO: when pydantic is a hard dep, delete this fallback.
+        for import-time use without the ``config`` extra. When pydantic becomes a hard dep, delete
+        this fallback.
         """
 
         def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -92,7 +93,7 @@ class VenueConfig(BaseModel):
 
 
 class RiskConfig(BaseModel):
-    """Pre-trade risk gate + defense-in-depth limits (ARCHITECTURE.md §8, .env.example COINEXT__RISK__).
+    """Pre-trade risk gate + defense-in-depth limits (ARCHITECTURE.md §6–§7, .env.example COINEXT__RISK__).
 
     The per-order Rust ``RiskEngine`` reads the same numbers; the out-of-band ``risk-monitor``
     watches PnL/positions and can trip ``kill_switch`` globally.
@@ -141,10 +142,9 @@ def _read_yaml(path: str) -> dict[str, Any]:
     """Read one YAML config file into a nested dict. Returns ``{}`` if absent or PyYAML missing."""
     if not os.path.exists(path):
         return {}
-    try:  # lazy, optional — config files are advisory in the scaffold
+    try:  # lazy, optional — missing PyYAML → empty layer (env + defaults still apply)
         import yaml  # type: ignore
     except ImportError:  # pragma: no cover - PyYAML not installed
-        # TODO: a tiny stdlib YAML-subset reader could remove the soft dep entirely.
         return {}
     with open(path, encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
@@ -221,8 +221,8 @@ def _model_fields(model_cls: type) -> set[str]:
 
 
 def _filter_known(model_cls: type, data: dict[str, Any]) -> dict[str, Any]:
-    """Drop keys the model does not declare (the canonical yaml carries richer sections than the
-    scaffold sub-models, e.g. ``venue.markets`` / ``brokerage.slippage_bps`` — ignore them)."""
+    """Drop keys the model does not declare (YAML may carry richer sections than the typed
+    sub-models, e.g. ``venue.markets`` / ``brokerage.slippage_bps`` — ignore them until modeled)."""
     allowed = _model_fields(model_cls)
     return {k: v for k, v in data.items() if k in allowed}
 

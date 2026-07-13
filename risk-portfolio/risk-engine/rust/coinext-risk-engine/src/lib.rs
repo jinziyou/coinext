@@ -107,7 +107,7 @@ impl RiskEngine for RiskGate {
             }
         }
 
-        // (rate-limit throttle is a live-only concern; omitted in scaffold)
+        // Rate-limit throttle is a live-only concern (not enforced in deterministic backtest).
         RiskDecision::Approved
     }
 

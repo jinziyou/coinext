@@ -4,12 +4,12 @@ This is the *control plane* surface the UI (and operators) talk to. It does NOT 
 the deterministic Rust core (``coinext_py``) runs inside the ``trader`` / ``ingestor`` / ``exec-svc``
 processes (see ARCHITECTURE.md §3/§7). This service:
 
-* reads run / position / fill / catalog state (today: stubs; later: Postgres + the data-lake
-  catalog),
+* reads run / position / fill / catalog state from the local state store / data lake (Postgres is
+  still the long-term backend; see ``state_store.py``),
 * triggers an *authoritative* backtest synchronously through the Rust kernel
   (``coinext_backtest.run`` → ``coinext_py.run_backtest`` with ``coinext_strategy.SmaCross``),
 * fans out live telemetry to the UI over a WebSocket by consuming the Redis-Streams bus
-  (``coinext_bus`` decoding the MessagePack ``Envelope`` — ARCHITECTURE.md §6),
+  (``coinext_bus`` decoding the MessagePack ``Envelope`` — root ARCHITECTURE.md §4),
 * exposes the operator kill-switch control (publishes ``CtrlKillSwitch`` on the bus; the in-core
   ``coinext-risk-engine`` and the out-of-band ``risk-monitor`` both honour it).
 
@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -42,6 +43,7 @@ logger = logging.getLogger("coinext.api")
 # --------------------------------------------------------------------------------------------------
 # App + config
 # --------------------------------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
@@ -340,10 +342,8 @@ def _start_control_consumer() -> None:
     thread.start()
 
 
-
-
 # --------------------------------------------------------------------------------------------------
-# Read endpoints (stubs — to be backed by Postgres + the data-lake catalog)
+# Read endpoints (local state_store + data lake; Postgres remains the long-term backend)
 # --------------------------------------------------------------------------------------------------
 
 
@@ -370,101 +370,58 @@ def health() -> dict[str, Any]:
     }
 
 
+def _state_store():
+    """Load sibling ``state_store.py`` (works when app is imported by path in tests)."""
+    import importlib.util
+    from pathlib import Path
+
+    name = "coinext_api_state_store"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name("state_store.py"))
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 @app.get("/runs")
 def list_runs() -> list[dict[str, Any]]:
-    """List backtest / live runs.
+    """List backtest / live runs from the local run store (``COINEXT__API__RUNS_PATH``).
 
-    TODO: query the runs table in Postgres (COINEXT__POSTGRES__DSN). Returns a representative stub now.
-
-    Shape mirrors the UI's ``Run`` wire type (operations-interface/ui/service/ui/src/api.ts): monetary fields (``pnl``)
-    cross as strings to preserve the fixed-precision integer domain (ARCHITECTURE §4).
+    Long-term backend: Postgres (``COINEXT__POSTGRES__DSN``). Shape mirrors the UI's ``Run`` wire
+    type: monetary fields (``pnl``) cross as strings to preserve fixed-precision domain values.
     """
-    return [
-        {
-            "run_id": "bt-0001",
-            "strategy_id": "SmaCross",
-            "environment": "backtest",
-            "status": "completed",
-            "started_at": "2026-06-05T00:00:00Z",
-            "updated_at": "2026-06-05T00:00:00Z",
-            "pnl": "1234.50",
-            "pnl_currency": "USDT",
-        },
-    ]
+    return _state_store().load_runs()
 
 
 @app.get("/positions")
 def list_positions() -> list[dict[str, Any]]:
-    """Current open positions.
+    """Current open positions from the last live telemetry snapshot (in-process).
 
-    TODO: read from the live Cache snapshot (published on the bus) or the positions table. Stub now.
-
-    Shape mirrors the UI's ``Position`` wire type (operations-interface/ui/service/ui/src/api.ts): quantity / price / PnL
-    fields cross as strings to preserve the fixed-precision integer domain (ARCHITECTURE §4).
+    Populated when the bus consumer receives portfolio telemetry; empty until then.
     """
-    return [
-        {
-            "instrument_id": "BTCUSDT.BINANCE",
-            "venue": "BINANCE",
-            "side": "long",
-            "quantity": "0.5",
-            "avg_px": "50000.00",
-            "mark_px": "50500.00",
-            "unrealized_pnl": "250.00",
-            "realized_pnl": "0.00",
-            "currency": "USDT",
-            "ts_last": "2026-06-05T00:00:00Z",
-        },
-    ]
+    return _state_store().get_positions()
 
 
 @app.get("/fills")
 def list_fills() -> list[dict[str, Any]]:
-    """Recent fills (executions).
-
-    TODO: read from the append-only OrderEvent store (coinext-persistence). Stub now.
-    """
-    return [
-        {
-            "fill_id": "f-0001",
-            "client_order_id": "SmaCross-00000000000000000001",
-            "instrument_id": "BTCUSDT.BINANCE",
-            "side": "buy",
-            "qty": 0.5,
-            "px": 50_000.0,
-            "ts_event": 1_700_000_000_000_000_000,
-        },
-    ]
+    """Recent fills from the local fills JSONL (``COINEXT__API__FILLS_PATH``)."""
+    return _state_store().load_fills()
 
 
 @app.get("/catalog")
 def catalog() -> dict[str, Any]:
-    """Data-lake catalog: available instruments / datasets for backtests.
-
-    TODO: delegate to coinext_data's DataLake catalog (Parquet on MinIO/S3, COINEXT__DATA__LAKE_ROOT). Stub now.
-    """
-    return {
-        "lake_root": os.environ.get("COINEXT__DATA__LAKE_ROOT", "/data"),
-        "instruments": [
-            {
-                "instrument_id": "BTCUSDT.BINANCE",
-                "asset_class": "crypto",
-                "bar_types": ["1m", "1h"],
-            },
-            {
-                "instrument_id": "ETHUSDT.BINANCE",
-                "asset_class": "crypto",
-                "bar_types": ["1m", "1h"],
-            },
-        ],
-    }
+    """Data-lake catalog: instruments / bar types discovered under ``COINEXT__DATA__LAKE_ROOT``."""
+    return _state_store().catalog_from_lake()
 
 
 @app.get("/latency")
 def latency() -> dict[str, Any]:
     """Latency SLO histogram snapshot (the UI polls this for the Latency panel).
 
-    Values are the percentiles the platform tracks (ARCHITECTURE §7), reported in nanoseconds.
+    Values are the percentiles the platform tracks (ARCHITECTURE.md §7), reported in nanoseconds.
     Shape mirrors the UI's ``LatencySnapshot`` wire type (operations-interface/ui/service/ui/src/api.ts).
     TODO: scrape the real histograms from the Prometheus endpoints the trading services expose.
     """
@@ -506,9 +463,9 @@ def run_backtest(req: BacktestRequest) -> dict[str, Any]:
     """Run an authoritative backtest of ``SmaCross`` and return the tear-sheet metrics as JSON.
 
     This drives a Python ``Strategy`` through the SAME Rust engines + ``SimulatedExecutionClient``
-    the live path uses (ARCHITECTURE.md §7), so the result is parity-valid — not a vectorized
-    screen. Synchronous: a small backtest completes well within an HTTP request; large sweeps belong
-    on a worker. TODO: offload long runs to a job queue and return a run_id to poll via ``/runs``.
+    the live path uses (root ARCHITECTURE.md §5–§6), so the result is parity-valid — not a
+    vectorized screen. Synchronous: a small backtest completes well within an HTTP request; large
+    sweeps belong on a worker. Completed runs are appended to the local run store for ``GET /runs``.
     """
     coinext_backtest, coinext_strategy = _load_backtest()
 
@@ -532,6 +489,17 @@ def run_backtest(req: BacktestRequest) -> dict[str, Any]:
         "orders_denied": getattr(result, "orders_denied", None),
         "fills": getattr(result, "fills", None),
     }
+    start_eq = float(getattr(result, "starting_equity", 0) or 0)
+    final_eq = float(getattr(result, "final_equity", 0) or 0)
+    _state_store().save_run(
+        {
+            "strategy_id": "SmaCross",
+            "environment": "backtest",
+            "status": "completed",
+            "pnl": f"{final_eq - start_eq:.2f}",
+            "pnl_currency": "USDT",
+        }
+    )
     try:  # pragma: no cover - optional dependency
         import coinext_analytics  # noqa: WPS433
 

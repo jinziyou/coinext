@@ -1,8 +1,8 @@
 # market-data/ingestion-service/service/ingestor — market-data ingestion daemon
 
 This service directory is a **deployment wrapper only — it contains no application code.** The
-ingestor is a **Rust binary**: its source is the [`coinext-ingest`](../../market-data/ingestion-service/rust/coinext-ingest) crate (status:
-stub — [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §3, build order step 15).
+ingestor is a **Rust binary**: its source is the [`coinext-ingest`](../../rust/coinext-ingest) crate (status:
+stub — [`ARCHITECTURE.md`](../../../../ARCHITECTURE.md) §7; build order step 15 in [`docs/ARCHITECTURE.md`](../../../../docs/ARCHITECTURE.md)).
 
 ## What it does
 

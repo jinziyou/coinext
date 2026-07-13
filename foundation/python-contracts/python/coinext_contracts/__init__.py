@@ -113,8 +113,6 @@ def is_live_position_pnl(payload: dict) -> bool:
     return isinstance(payload, dict) and payload.get("kind") == LIVE_POSITION_PNL
 
 
-
-
 def kill_switch_payload(
     *, engaged: bool, reason: str, source: str, actor: str | None = None
 ) -> dict[str, object]:

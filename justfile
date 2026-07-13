@@ -19,6 +19,18 @@ test-live-edge:
     cargo build --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml
     cargo build --manifest-path execution-live/execution-service/rust/coinext-exec-svc/Cargo.toml
 
+# Run the partial exec-svc (SQLite + control :8081 + metrics :9102) until Ctrl-C
+exec-svc:
+    cargo run --manifest-path execution-live/execution-service/rust/coinext-exec-svc/Cargo.toml
+
+# Offline ingest smoke (synthetic events → lake NDJSON + Parquet; optional REDIS URL)
+ingest-smoke:
+    cargo run --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml
+
+# Live market-data ingest (requires network)
+ingest-live:
+    cargo run --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml --features live
+
 # Format + lint the Rust code
 lint:
     cargo fmt --all
@@ -50,6 +62,10 @@ py-test:
 py-lint:
     uv run ruff check foundation market-data strategy-research backtesting-simulation analytics-optimization risk-portfolio execution-live operations-interface tests
     uv run ruff format foundation market-data strategy-research backtesting-simulation analytics-optimization risk-portfolio execution-live operations-interface tests
+
+# CI-equivalent format check (does not rewrite files)
+py-format-check:
+    uv run ruff format --check foundation market-data strategy-research backtesting-simulation analytics-optimization risk-portfolio execution-live operations-interface tests
 
 # Run a backtest via the coinext CLI
 cli-backtest *ARGS:

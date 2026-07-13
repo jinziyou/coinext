@@ -17,7 +17,7 @@ mod imp {
     use coinext_indicators::{Atr, Bollinger, Ema, Indicator, Macd, Rsi, Sma, Vwap};
     use coinext_kernel::{
         BacktestConfig, BacktestKernel, Environment, LiveKernel, LiveKernelStopHandle,
-        PortfolioSnapshot as NativePortfolioSnapshot,
+        PaperFillExec, PortfolioSnapshot as NativePortfolioSnapshot, ReplayDataClient,
     };
     use coinext_model::{
         AggregationSource, Bar, BarAggregation, BarSpec, BarType, BookAction, CurrencyPair, Equity,
@@ -1605,6 +1605,94 @@ mod imp {
         })
     }
 
+    /// Offline paper sandbox: LiveKernel + ReplayDataClient + PaperFillExec (no venue keys).
+    ///
+    /// Replays OHLCV bars as market events through the port-driven live loop so dry-run operators
+    /// and CI can exercise `run_with_portfolio_callback` without Binance credentials. Market orders
+    /// fill immediately at the last bar close (paper fills).
+    #[pyfunction]
+    #[pyo3(signature = (strategy, bars, symbol="BTCUSDT".to_string(), venue="BINANCE".to_string(), starting_balance=100_000.0, env="sandbox".to_string()))]
+    pub fn build_paper_kernel(
+        strategy: Py<PyAny>,
+        bars: Vec<(u64, f64, f64, f64, f64, f64)>,
+        symbol: String,
+        venue: String,
+        starting_balance: f64,
+        env: String,
+    ) -> PyResult<PyKernel> {
+        let env = parse_environment(&env)?;
+        if !env.is_live() {
+            return Err(vexc(
+                "coinext_py.build_paper_kernel requires env sandbox|live (paper uses LiveKernel)",
+            ));
+        }
+        let settle = Currency::new("USDT", 8).map_err(vexc)?;
+        let (inst, meta) = build_pair(&symbol, &venue, settle, 2, 3, 0.0002, 0.0004)?;
+        let starting = Money::from_decimal(
+            Decimal::from_f64(starting_balance).unwrap_or(Decimal::ZERO),
+            settle,
+        )
+        .map_err(vexc)?;
+        let cfg = BacktestConfig::new(Venue::from(venue.as_str()), vec![inst], settle, starting);
+        let iid = meta.iid.clone();
+
+        // Build market events from bars (Bar only — sufficient for on_bar strategies).
+        let mut events = Vec::with_capacity(bars.len());
+        let mut last_close = 0.0_f64;
+        for (ts, o, h, l, c, v) in &bars {
+            last_close = *c;
+            let bar = Bar {
+                bar_type: BarType {
+                    instrument_id: iid.clone(),
+                    spec: BarSpec {
+                        step: 1,
+                        aggregation: BarAggregation::Minute,
+                        price_type: PriceType::Last,
+                    },
+                    source: AggregationSource::External,
+                },
+                open: Price::from_f64(*o, 2).map_err(vexc)?,
+                high: Price::from_f64(*h, 2).map_err(vexc)?,
+                low: Price::from_f64(*l, 2).map_err(vexc)?,
+                close: Price::from_f64(*c, 2).map_err(vexc)?,
+                volume: Quantity::from_f64(*v, 3).unwrap_or_else(|_| Quantity::zero(3)),
+                ts_event: UnixNanos(*ts),
+                ts_init: UnixNanos(*ts),
+            };
+            events.push(MarketEvent::Bar(bar));
+        }
+        let default_px = if last_close > 0.0 {
+            Price::from_f64(last_close, 2).map_err(vexc)?
+        } else {
+            Price::from_f64(50_000.0, 2).map_err(vexc)?
+        };
+
+        let data_client = ReplayDataClient::new(events);
+        let exec_client = PaperFillExec::new(Venue::from(venue.as_str()), default_px, settle);
+
+        let mut metas = std::collections::HashMap::new();
+        metas.insert(symbol.clone(), meta);
+        let adapter = PyStrategyAdapter {
+            obj: strategy,
+            instruments: metas,
+            default_symbol: symbol,
+            strategy_id: "py-paper".to_string(),
+        };
+        let kernel = LiveKernel::build(
+            env,
+            cfg,
+            StrategyId::from("py-paper"),
+            Box::new(adapter),
+            Box::new(exec_client),
+            Box::new(data_client),
+        );
+        let stop = kernel.stop_handle();
+        Ok(PyKernel {
+            inner: RefCell::new(Some(kernel)),
+            stop,
+        })
+    }
+
     /// Single-instrument backtest (the common case).
     #[allow(clippy::too_many_arguments)]
     #[pyfunction]
@@ -1840,6 +1928,7 @@ mod imp {
         m.add_function(wrap_pyfunction!(run_backtest, m)?)?;
         m.add_function(wrap_pyfunction!(run_backtest_multi, m)?)?;
         m.add_function(wrap_pyfunction!(build_kernel, m)?)?;
+        m.add_function(wrap_pyfunction!(build_paper_kernel, m)?)?;
         m.add_function(wrap_pyfunction!(bs_price, m)?)?;
         m.add_function(wrap_pyfunction!(bs_greeks, m)?)?;
         m.add_function(wrap_pyfunction!(implied_vol, m)?)?;

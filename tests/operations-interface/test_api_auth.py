@@ -25,7 +25,14 @@ pytest.importorskip("starlette.testclient")
 
 from starlette.testclient import TestClient  # noqa: E402
 
-_APP_PATH = pathlib.Path(__file__).resolve().parents[2] / "operations-interface" / "api" / "service" / "api" / "app.py"
+_APP_PATH = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "operations-interface"
+    / "api"
+    / "service"
+    / "api"
+    / "app.py"
+)
 
 
 def _load_app_module():

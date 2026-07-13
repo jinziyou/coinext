@@ -120,8 +120,8 @@ impl Clock for HistoricalClock {
     }
 }
 
-/// Live wall-clock. Timer delivery in live is handled by the runtime (Tokio); for the scaffold
-/// this records timers and reports the next due time, leaving firing to the live node.
+/// Live wall-clock. Timer delivery in live is handled by the runtime (Tokio); this type records
+/// timers and reports the next due time, leaving actual firing to the live node / `LiveKernel`.
 pub struct SystemClock {
     heap: RefCell<BinaryHeap<Reverse<(UnixNanos, TimerId)>>>,
     next_id: Cell<u64>,

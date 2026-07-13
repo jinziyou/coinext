@@ -8,22 +8,25 @@ description = "Coinext — Python control plane for the Rust+Python quant platfo
 requires-python = ">=3.13"
 readme = "README.md"
 license = { text = "MIT" }
-# Kept minimal so the core analytics/backtest path installs fast. Heavier subsystem deps live in
-# optional-dependencies below.
+# Core control-plane deps: analytics numerics + config always present so layered YAML/env loading
+# does not silently degrade. Heavier research/live/ops deps stay optional.
 dependencies = [
     "numpy>=2.0",
+    "pydantic>=2.7",
+    "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
 research = ["polars>=1.0", "pandas>=2.0", "matplotlib>=3.8", "duckdb>=1.0", "pyarrow>=16", "optuna>=3.6"]
-config = ["pydantic>=2.7", "pyyaml>=6"]
+# `config` kept as an alias extra for older install docs (`uv sync --extra config`).
+config = []
 cli = ["typer>=0.12"]
 bus = ["redis>=5", "msgpack>=1.2.1"]  # >=1.2.1: GHSA-6v7p-g79w-8964
 api = ["fastapi>=0.110", "uvicorn>=0.29", "starlette>=1.3.1"]  # starlette floor: CVE-2026-54282/54283
 live = ["anyio>=4"]
 obs = ["structlog>=24", "prometheus-client>=0.20", "opentelemetry-sdk>=1.25"]
 all = [
-    "coinext[research,config,cli,bus,api,live,obs]",
+    "coinext[research,cli,bus,api,live,obs]",
 ]
 
 [project.scripts]

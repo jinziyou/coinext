@@ -54,6 +54,18 @@ jobs:
   python:
     name: python (control plane)
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      COINEXT__REDIS__URL: redis://127.0.0.1:6379/0
     steps:
       - uses: actions/checkout@v4
 
@@ -80,8 +92,37 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check foundation market-data strategy-research backtesting-simulation analytics-optimization risk-portfolio execution-live operations-interface tests
 
+      - name: Ruff format (check only)
+        run: uv run ruff format --check foundation market-data strategy-research backtesting-simulation analytics-optimization risk-portfolio execution-live operations-interface tests
+
+      # Paper OMS for Redis bus integration (exec.cmd → exec reports).
+      - name: Start exec-svc (paper + redis)
+        run: |
+          mkdir -p .coinext
+          cargo build --manifest-path execution-live/execution-service/rust/coinext-exec-svc/Cargo.toml
+          COINEXT__PERSIST__DB=.coinext/ci-exec.db \
+          COINEXT__REDIS__URL=redis://127.0.0.1:6379/0 \
+          COINEXT__EXEC__METRICS_ADDR=127.0.0.1:19102 \
+          COINEXT__EXEC__CONTROL_ADDR=127.0.0.1:18081 \
+            cargo run --manifest-path execution-live/execution-service/rust/coinext-exec-svc/Cargo.toml \
+            > /tmp/exec-svc.log 2>&1 &
+          echo $! > /tmp/exec-svc.pid
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18081/health >/dev/null; then
+              echo "exec-svc ready"
+              break
+            fi
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:18081/health || (cat /tmp/exec-svc.log; exit 1)
+
       - name: Pytest
         run: uv run pytest
+
+      - name: Stop exec-svc
+        if: always()
+        run: |
+          if [ -f /tmp/exec-svc.pid ]; then kill "$(cat /tmp/exec-svc.pid)" || true; fi
 
   # The security-critical live-edge crates (network/venue adapter/persistence + the ingest/exec-svc
   # daemons) are WORKSPACE-EXCLUDED in the root Cargo.toml (they pull heavy network/db deps), so the

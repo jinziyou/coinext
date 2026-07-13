@@ -1,11 +1,8 @@
 # coinext-exec-svc — the OMS/execution service (service name `exec-svc`).
-#
-# EXCLUDED from the root cargo workspace (root Cargo.toml `exclude`), so it uses EXPLICIT dependency
-# versions — NOT `.workspace = true`. Deliberately minimal so the bin compiles in isolation; the
-# real OMS/risk wiring is deferred behind TODO deps below.
+# EXCLUDED from the root cargo workspace — explicit path deps.
 [package]
 name = "coinext-exec-svc"
-description = "Coinext OMS/execution service: risk-gated routing + FSM driving + reconciliation. [stub]"
+description = "Coinext OMS/execution service: persistence + control plane + Redis kill-switch consumer. [partial]"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
@@ -17,11 +14,23 @@ name = "coinext-exec-svc"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros"] }
-# TODO(exec-svc): wire the real OMS pipeline when implementing:
-#   coinext-exec-engine      = { path = "../../../execution-engine/rust/coinext-exec-engine" }        # OMS: risk-gated routing + report folding
-#   coinext-risk-engine      = { path = "../../../../risk-portfolio/risk-engine/rust/coinext-risk-engine" }        # pre-trade gate + kill-switch
-#   coinext-adapters-binance = { path = "../../../../market-data/venue-adapters/binance/rust/coinext-adapters-binance" }   # live ExecutionClient
-#   coinext-persistence      = { path = "../../../../operations-interface/persistence/rust/coinext-persistence" }        # append-only event store + SeqCursor
-#   coinext-bus              = { path = "../../../../operations-interface/bus/rust/coinext-bus" }                 # Redis Envelope (commands in / reports out)
-#   redis, prometheus client, tracing/otel for :9102 metrics + :8081 control
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "signal",
+    "sync",
+    "time",
+] }
+coinext-persistence = { path = "../../../../operations-interface/persistence/rust/coinext-persistence", default-features = false }
+coinext-model = { path = "../../../../foundation/domain-model/rust/coinext-model" }
+coinext-core = { path = "../../../../foundation/primitives/rust/coinext-core" }
+coinext-ports = { path = "../../../../foundation/ports/rust/coinext-ports" }
+coinext-adapters-binance = { path = "../../../../market-data/venue-adapters/binance/rust/coinext-adapters-binance" }
+redis = { version = "0.27" }
+rmp-serde = "1"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1"
+async-trait = "0.1"

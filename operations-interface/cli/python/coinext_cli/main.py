@@ -267,7 +267,10 @@ def _cmd_testnet_gate(
                     "run",
                     "--quiet",
                     "--manifest-path",
-                    str(root / "market-data/venue-adapters/binance/rust/coinext-adapters-binance/Cargo.toml"),
+                    str(
+                        root
+                        / "market-data/venue-adapters/binance/rust/coinext-adapters-binance/Cargo.toml"
+                    ),
                     "--example",
                     "testnet_orders",
                 ],
@@ -541,7 +544,9 @@ def _cmd_ingest_trades(
         return 1
     lake = DataLake()
     print(f"ingesting {limit} public trades for {symbol} -> {lake.root}/bars ({interval}) ...")
-    counts = ingest_agg_trades_to_lake(symbol, interval=interval, limit=limit, venue=venue, lake=lake)
+    counts = ingest_agg_trades_to_lake(
+        symbol, interval=interval, limit=limit, venue=venue, lake=lake
+    )
     print(
         f"  {symbol} {interval}: {counts['trades']} trades -> "
         f"{counts['bars']} bars; stored rows now {counts['stored_rows']}"
@@ -562,27 +567,80 @@ def _resolve_run_config(env: str, **cli_overrides: Any):
     return load_config(env, cli_overrides=overrides)
 
 
-def _cmd_live(env: str = "sandbox", symbol: str = "BTCUSDT") -> int:
-    """Start the live/sandbox TradingNode. STUB: builds the node and reports intent."""
+def _cmd_live(
+    env: str = "sandbox",
+    symbol: str = "BTCUSDT",
+    dry_run: bool = True,
+    paper: bool = False,
+) -> int:
+    """Start the live/sandbox TradingNode.
+
+    * Default ``dry_run=True``: warm-up + reconcile only (safe without venue keys).
+    * ``paper=True``: offline LiveKernel (ReplayDataClient + PaperFillExec), no keys.
+    * ``--no-dry-run`` without paper: real venue loop (requires API keys + coinext_py).
+    """
+    import asyncio
+
     from coinext_kernel import Environment
     from coinext_live import TradingNode, TradingNodeConfig
     from coinext_strategy import SmaCross
 
-    # Resolve the layered RunConfig (CLI > env > yaml > defaults) — symbol may come from any layer.
     run_config = _resolve_run_config(env, symbol=symbol)
-    cfg = TradingNodeConfig(env=Environment(env), symbol=run_config.symbol)
+    cfg = TradingNodeConfig(
+        env=Environment(env),
+        symbol=run_config.symbol,
+        dry_run=dry_run and not paper,
+        paper=paper,
+        redis_url=getattr(run_config, "redis_url", "redis://redis:6379/0"),
+    )
     node = TradingNode(config=cfg, strategy=SmaCross(), run_config=run_config)
     print(
-        f"[stub] TradingNode ready: env={cfg.env.value} symbol={cfg.symbol} "
-        f"redis={run_config.redis_url}; run() is a stub"
+        f"TradingNode: env={cfg.env.value} symbol={cfg.symbol} "
+        f"dry_run={cfg.dry_run} paper={paper} redis={cfg.redis_url}"
     )
-    # TODO: anyio.run(node.run) once the native live loop is wired.
-    _ = node
+    try:
+        import anyio
+
+        anyio.run(node.run)
+    except ImportError:
+        asyncio.run(node.run())
+    mode = "paper" if paper else ("dry-run" if cfg.dry_run else "live")
+    print(f"TradingNode finished ({mode})")
     return 0
 
 
+def _cmd_capture_quotes(
+    symbol: str = "BTCUSDT",
+    seconds: float = 15.0,
+    interval: float = 0.5,
+    mode: str = "rest",
+    out: str | None = None,
+    testnet: bool = False,
+) -> int:
+    """Capture live bookTicker quotes into a replayable JSON recording (public, no key)."""
+    from coinext_data.quote_capture import capture_quotes
+
+    if out is None:
+        out = f"data/sample/quotes/BINANCE/{symbol}/capture.json"
+    print(f"capturing {symbol} bookTicker mode={mode} for {seconds}s -> {out}")
+    try:
+        result = capture_quotes(
+            symbol,
+            seconds=seconds,
+            interval=interval,
+            mode=mode,
+            testnet=testnet,
+            out=out,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"capture failed: {exc}")
+        return 1
+    print(f"captured {result['n']} quotes source={result['source']} path={result['path']}")
+    return 0 if result["n"] > 0 else 1
+
+
 def _cmd_reconcile(symbol: str = "BTCUSDT") -> int:
-    """Reconcile-on-restart against venue truth. STUB: prints the (empty) diff."""
+    """Reconcile-on-restart: local event log vs optional venue open-order fixture."""
     from coinext_kernel import Environment
     from coinext_live import TradingNode, TradingNodeConfig
     from coinext_strategy import SmaCross
@@ -591,8 +649,9 @@ def _cmd_reconcile(symbol: str = "BTCUSDT") -> int:
         config=TradingNodeConfig(env=Environment.LIVE, symbol=symbol),
         strategy=SmaCross(),
     )
-    print(f"[stub] reconcile report: {node.reconcile()}")
-    return 0
+    report = node.reconcile()
+    print(f"reconcile report: {report}")
+    return 0 if report.get("reconciled", False) else 1
 
 
 def _cmd_catalog(venue: str = "BINANCE") -> int:
@@ -727,14 +786,31 @@ def _build_typer_app():
         raise typer.Exit(_cmd_kill_switch(release, reason, actor, api_base, api_key))
 
     @app.command()
-    def live(env: str = "sandbox", symbol: str = "BTCUSDT") -> None:
-        """Start the live/sandbox TradingNode."""
-        raise typer.Exit(_cmd_live(env, symbol))
+    def live(
+        env: str = "sandbox",
+        symbol: str = "BTCUSDT",
+        dry_run: bool = True,
+        paper: bool = False,
+    ) -> None:
+        """Start the live/sandbox TradingNode (default dry-run; --paper for offline LiveKernel)."""
+        raise typer.Exit(_cmd_live(env, symbol, dry_run, paper))
 
     @app.command()
     def reconcile(symbol: str = "BTCUSDT") -> None:
-        """Reconcile local state against venue truth."""
+        """Reconcile local event log against venue open orders (fixture or empty)."""
         raise typer.Exit(_cmd_reconcile(symbol))
+
+    @app.command("capture-quotes")
+    def capture_quotes(
+        symbol: str = "BTCUSDT",
+        seconds: float = 15.0,
+        interval: float = 0.5,
+        mode: str = "rest",
+        out: str | None = None,
+        testnet: bool = False,
+    ) -> None:
+        """Capture live bookTicker quotes (REST poll or WS) into a JSON recording."""
+        raise typer.Exit(_cmd_capture_quotes(symbol, seconds, interval, mode, out, testnet))
 
     @app.command()
     def catalog(venue: str = "BINANCE") -> None:
@@ -836,9 +912,27 @@ def _build_argparse_parser():
     p = sub.add_parser("live", help="Start the live/sandbox TradingNode.")
     p.add_argument("--env", default="sandbox")
     p.add_argument("--symbol", default="BTCUSDT")
+    p.add_argument(
+        "--no-dry-run",
+        action="store_true",
+        help="Run the full native live loop (requires keys + coinext_py live wiring).",
+    )
+    p.add_argument(
+        "--paper",
+        action="store_true",
+        help="Offline paper LiveKernel (no venue keys; ReplayDataClient + PaperFillExec).",
+    )
 
-    p = sub.add_parser("reconcile", help="Reconcile local state against venue truth.")
+    p = sub.add_parser("reconcile", help="Reconcile local event log vs venue open orders.")
     p.add_argument("--symbol", default="BTCUSDT")
+
+    p = sub.add_parser("capture-quotes", help="Capture live bookTicker into a JSON recording.")
+    p.add_argument("--symbol", default="BTCUSDT")
+    p.add_argument("--seconds", type=float, default=15.0)
+    p.add_argument("--interval", type=float, default=0.5)
+    p.add_argument("--mode", default="rest", choices=["rest", "ws"])
+    p.add_argument("--out", default=None)
+    p.add_argument("--testnet", action="store_true")
 
     p = sub.add_parser("catalog", help="Inspect the data lake.")
     p.add_argument("--venue", default="BINANCE")
@@ -875,11 +969,12 @@ def _run_argparse(argv: list[str] | None) -> int:
             ns.release, ns.reason, ns.actor, ns.api_base, ns.api_key
         ),
         "download": lambda: _cmd_download(ns.symbols, ns.interval, ns.days, ns.venue),
-        "ingest-trades": lambda: _cmd_ingest_trades(
-            ns.symbol, ns.interval, ns.limit, ns.venue
-        ),
-        "live": lambda: _cmd_live(ns.env, ns.symbol),
+        "ingest-trades": lambda: _cmd_ingest_trades(ns.symbol, ns.interval, ns.limit, ns.venue),
+        "live": lambda: _cmd_live(ns.env, ns.symbol, dry_run=not ns.no_dry_run, paper=ns.paper),
         "reconcile": lambda: _cmd_reconcile(ns.symbol),
+        "capture-quotes": lambda: _cmd_capture_quotes(
+            ns.symbol, ns.seconds, ns.interval, ns.mode, ns.out, ns.testnet
+        ),
         "catalog": lambda: _cmd_catalog(ns.venue),
     }
     return dispatch[ns.command]()

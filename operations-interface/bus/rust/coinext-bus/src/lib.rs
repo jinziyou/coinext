@@ -60,8 +60,8 @@ impl MessageBus for InProcBus {
     }
 }
 
-/// Versioned cross-service wire format (serialized to MessagePack on Redis Streams in prod; the
-/// scaffold (and Python `coinext_contracts`) agree on this shape). `trace_id` propagates distributed
+/// Versioned cross-service wire format (MessagePack on Redis Streams in multi-process deploy;
+/// Rust here and Python `coinext_contracts` share this shape). `trace_id` propagates distributed
 /// traces; `payload` is the encoded domain object identified by `msg_type`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {

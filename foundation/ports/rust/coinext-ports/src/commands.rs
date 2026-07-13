@@ -117,11 +117,11 @@ pub enum DenyReason {
     MaxPositionExceeded,
     MaxGrossExposureExceeded,
     MaxOrderNotional,
-    /// Reserved for live; rate-limit throttling is not enforced in the deterministic scaffold.
+    /// Reserved for live; rate-limit throttling is not enforced in deterministic backtest.
     OrderRateThrottled,
     MinNotional,
     KillSwitchEngaged,
-    /// Reserved for live; instrument halts are not modeled in the deterministic scaffold.
+    /// Reserved for live; instrument halts are not modeled in deterministic backtest.
     InstrumentHalted,
     /// Opening/increasing the position would need more initial margin than the free equity.
     InsufficientMargin,
@@ -141,7 +141,7 @@ pub struct RiskLimits {
     /// Reserved: per-position notional cap; not yet consumed by the risk gate.
     pub max_position_notional: Option<Money>,
     pub max_order_notional: Option<Money>,
-    /// Reserved for live; the rate-limit throttle is not enforced in the deterministic scaffold.
+    /// Reserved for live; the rate-limit throttle is not enforced in deterministic backtest.
     pub max_orders_per_sec: Option<u32>,
     pub max_gross_exposure: Option<Money>,
     /// Max account leverage: an order increasing exposure needs `added_notional / leverage` of free

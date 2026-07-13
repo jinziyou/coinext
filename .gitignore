@@ -26,7 +26,10 @@ operations-interface/ui/service/ui/dist/
 # Data lake (local) — keep sample/ tracked, ignore bulk
 /data/*
 !/data/sample/
+!/data/sample/**
 !/data/.gitkeep
+# Local API/control-plane state (runs, fills)
+.coinext/
 
 # Secrets & local config
 .env

@@ -4,7 +4,7 @@ A thin Python wrapper (`main.py`) that builds a single `coinext_live` `TradingNo
 for **one account** and runs it. All load-bearing logic lives in the Rust core + `coinext_live`; this
 process just selects the account, wires the strategy, and drives the run loop.
 
-**One process per account** ([`ARCHITECTURE.md`](../../ARCHITECTURE.md) §4; see also [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) open questions): each set of API keys / sub-account gets its
+**One process per account** ([`ARCHITECTURE.md`](../../../../ARCHITECTURE.md) §4; see also [`docs/ARCHITECTURE.md`](../../../../docs/ARCHITECTURE.md) open questions): each set of API keys / sub-account gets its
 own trader process. This isolates blast radius, preserves the deterministic single-threaded core per
 node, and sidesteps cross-account SeqCursor namespacing. Scale out = more trader processes,
 coordinated only via the Redis bus.

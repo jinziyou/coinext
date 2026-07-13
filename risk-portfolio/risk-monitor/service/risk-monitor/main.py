@@ -96,9 +96,7 @@ class AccountState:
         """Project this account state onto a ``coinext_risk.PortfolioSnapshot`` (the shared view)."""
         from coinext_risk import PortfolioSnapshot  # local import: keeps coinext_risk optional
 
-        return PortfolioSnapshot(
-            ts_ns=0, equity=self.equity, peak_equity=self.session_peak_equity
-        )
+        return PortfolioSnapshot(ts_ns=0, equity=self.equity, peak_equity=self.session_peak_equity)
 
     @property
     def drawdown_pct(self) -> float:
@@ -296,7 +294,9 @@ async def run(poll_interval_s: float = 1.0) -> None:
         while True:  # pragma: no cover - long-running
             await asyncio.sleep(poll_interval_s)
 
-    logger.info("risk-monitor consuming telemetry on %s; limits=%s", STREAM_TELEMETRY, supervisor.limits)
+    logger.info(
+        "risk-monitor consuming telemetry on %s; limits=%s", STREAM_TELEMETRY, supervisor.limits
+    )
     await asyncio.to_thread(consume_loop, bus, supervisor)  # pragma: no cover - long-running
 
 

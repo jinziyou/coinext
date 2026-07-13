@@ -2,7 +2,7 @@
 
 A FastAPI app (`app.py`, exposing `app = FastAPI(...)`) that is the HTTP/WebSocket control plane the
 UI and operators talk to. It is **not** on the hot path — the deterministic Rust core (`coinext_py`) runs
-inside the `trader` / `ingestor` / `exec-svc` processes (see [`ARCHITECTURE.md`](../../ARCHITECTURE.md)
+inside the `trader` / `ingestor` / `exec-svc` processes (see [`ARCHITECTURE.md`](../../../../ARCHITECTURE.md)
 §3 and §7). This service reads state, triggers authoritative backtests through the Rust kernel, fans out
 live telemetry from the Redis-Streams bus, and exposes operator controls.
 

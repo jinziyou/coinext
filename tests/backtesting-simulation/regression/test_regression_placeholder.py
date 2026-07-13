@@ -1,7 +1,7 @@
 """Pinned-statistics regression gate (LEAN-style determinism check).
 
 Coinext's core invariant is that the event-driven backtest is **deterministic** (see
-``docs/ARCHITECTURE.md`` §1-2: the synchronous core merge-sorts events by ``ts_event``; there is no
+root ``ARCHITECTURE.md`` §1/§5: the synchronous core merge-sorts events by ``ts_event``; there is no
 RNG and ``synthetic_bars`` is a closed-form series). This test enforces two things:
 
 1. **Bit-for-bit reproducibility** — running the SAME ``SmaCross`` over the SAME bars twice yields

@@ -29,9 +29,13 @@ from coinext_contracts import (
 
 # Default stream keys on the bus (mirror the Rust publisher's keyspace).
 STREAM_MARKET = "coinext.market"  # quotes/trades/bars/deltas from the ingestor
-STREAM_EXEC = "coinext.exec"  # order events / fills from exec-svc
-STREAM_CTRL = "coinext.control"  # control-plane commands (kill-switch, etc.); api + risk-monitor publish here
+STREAM_EXEC = "coinext.exec"  # order events / fills from exec-svc (outbound reports)
+STREAM_EXEC_CMD = "coinext.exec.cmd"  # strategy commands into exec-svc paper/venue OMS
+STREAM_CTRL = (
+    "coinext.control"  # control-plane commands (kill-switch, etc.); api + risk-monitor publish here
+)
 STREAM_LIVE = "coinext.live"  # account/position/PnL telemetry from trader processes
+
 
 def _require_redis() -> Any:
     try:
@@ -255,6 +259,35 @@ class Publisher:
             kill_switch_payload(engaged=engaged, reason=reason, source=source, actor=actor),
         )
 
+    def publish_exec_command(
+        self,
+        *,
+        kind: str = "SubmitMarket",
+        strategy_id: str = "default",
+        symbol: str = "BTCUSDT",
+        venue: str = "BINANCE",
+        side: str = "buy",
+        qty: float = 0.01,
+        client_order_id: str | None = None,
+        stream: str = STREAM_EXEC_CMD,
+    ) -> str:
+        """Publish a paper/venue OMS command envelope to ``coinext.exec.cmd`` (default).
+
+        Matches the payload shape consumed by ``coinext-exec-svc`` paper OMS.
+        """
+        payload: dict[str, Any] = {
+            "kind": kind,
+            "strategy_id": strategy_id,
+            "symbol": symbol,
+            "venue": venue,
+            "side": side,
+            "qty": qty,
+        }
+        if client_order_id:
+            payload["client_order_id"] = client_order_id
+        return self.publish_payload(stream, payload, msg_type=MsgType.CMD)
+
+
     def publish_live_telemetry(
         self,
         stream: str,
@@ -324,6 +357,7 @@ __all__ = [
     "dispatch_control",
     "STREAM_MARKET",
     "STREAM_EXEC",
+    "STREAM_EXEC_CMD",
     "STREAM_CTRL",
     "STREAM_LIVE",
 ]

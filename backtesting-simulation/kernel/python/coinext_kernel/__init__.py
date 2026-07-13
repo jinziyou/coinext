@@ -1,6 +1,6 @@
 """coinext_kernel — thin Python wrapper over the compiled ``coinext_py`` Kernel.
 
-The Kernel is the synchronous deterministic core (ARCHITECTURE.md §2). This package is a *thin*
+The Kernel is the synchronous deterministic core (ARCHITECTURE.md §5). This package is a *thin*
 adapter: it picks the :class:`Environment`, builds the SAME ``RunConfig``, and asks ``coinext_py`` to
 wire the core. Only three things differ per environment — the Clock, the Cache contents, and the
 Data/Execution clients (behind byte-identical ports) — and that swap lives entirely on the Rust
@@ -75,7 +75,9 @@ def build_kernel(
             "coinext_backtest.run or coinext_kernel.run_backtest for backtests."
         )
     if strategy is None:
-        raise ValueError("coinext_kernel.build_kernel requires a Strategy instance for sandbox/live")
+        raise ValueError(
+            "coinext_kernel.build_kernel requires a Strategy instance for sandbox/live"
+        )
     coinext_py = _coinext_py()
     builder = getattr(coinext_py, "build_kernel", None)
     if builder is None:  # pragma: no cover - native builder not yet exposed

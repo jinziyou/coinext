@@ -1,0 +1,17 @@
+{
+  "sma_cross": {
+    "final_equity": 97017.44108799999,
+    "fills": 11,
+    "orders_submitted": 11
+  },
+  "rsi_reversion": {
+    "final_equity": 103834.7983,
+    "fills": 14,
+    "orders_submitted": 14
+  },
+  "limit_maker": {
+    "final_equity": 101041.383952,
+    "fills": 100,
+    "orders_submitted": 100
+  }
+}

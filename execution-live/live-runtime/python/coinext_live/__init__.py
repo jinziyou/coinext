@@ -3,18 +3,22 @@
 Builds the SAME ``RunConfig`` as the backtest, but tells the Kernel to inject ``Environment::Live``
 (or ``Sandbox``) pieces: a ``LiveClock``, the ``BinanceDataClient``, and the
 ``BinanceExecutionClient`` — behind byte-identical ports, so the OMS / Risk / Portfolio / Strategy
-above are unchanged (ARCHITECTURE.md §1, §7). NOTHING else changes vs backtest.
+above are unchanged (root ARCHITECTURE.md §1, §6). NOTHING else changes vs backtest.
 
 Key live-only responsibilities (partly wired here; native I/O still lives in Rust):
 
 * **Warm-up from the LOCAL HistoryReader** — indicators are warmed from the lake, never via live
-  REST at handler time, so they are byte-identical to backtest (ARCHITECTURE.md §7, §10).
+  REST at handler time, so they are byte-identical to backtest.
 * **Dual fill path** — fills/acks arrive on the WS user-stream (fast) with a REST poll loop
   (fallback). Both fold into the event-sourced Order/Position.
 * **Portfolio telemetry** — native ``PortfolioSnapshot`` values are adapted via
   ``publish_native_snapshot`` / ``publish_kernel_portfolio`` and emitted on ``coinext.live``.
-* **Reconcile-on-restart** — :meth:`reconcile` replays the local event log and diffs it against
-  venue truth before trading resumes.
+* **Reconcile-on-restart** — :meth:`reconcile` folds the local JSONL event log and diffs it against
+  an optional venue open-order snapshot (fixture or injected list). Full REST venue query remains
+  in the Rust adapter path.
+
+Status: **partial** — lifecycle, warm-up, telemetry, and file-backed reconcile are implemented;
+continuous venue WS/REST I/O still requires the native live loop + API keys.
 
 The Binance clients live in Rust (``coinext-adapters/binance``); this node only orchestrates lifecycle.
 Async is via ``anyio`` (the ``live`` extra); imports are deferred so this module loads without it.
@@ -54,10 +58,32 @@ class TradingNodeConfig:
     warmup_bars: int = 200  # how many local bars to warm indicators with before going live
     reconcile_on_start: bool = True
     rest_poll_secs: float = 5.0  # REST fill fallback cadence
+    # JSONL event log for crash-recovery reconcile (see coinext_live.reconcile).
+    event_log_path: str | None = None
+    # Optional venue open-order JSON fixture for offline reconcile / tests.
+    venue_open_orders_path: str | None = None
+    # When True, run() only warms up + reconciles and returns (no native venue loop).
+    dry_run: bool = False
+    # Offline paper LiveKernel (ReplayDataClient + PaperFillExec) — no venue keys.
+    paper: bool = False
+    # Bars for paper mode: list of OHLCV tuples, or None to load from the lake / synthetic.
+    paper_bars: list | None = None
+    # SQLite DB for SeqCursor + event log (COINEXT__PERSIST__DB).
+    persist_db: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.env, Environment):
             self.env = Environment(self.env)
+        if self.event_log_path is None:
+            import os
+
+            raw = os.environ.get("COINEXT__PERSIST__EVENT_LOG", "").strip()
+            self.event_log_path = raw or None
+        if self.persist_db is None:
+            import os
+
+            raw = os.environ.get("COINEXT__PERSIST__DB", "").strip()
+            self.persist_db = raw or None
 
 
 @dataclass
@@ -102,28 +128,80 @@ class TradingNode:
         """Load warm-up bars from the LOCAL data lake and prime the strategy's indicators.
 
         Identical mechanism to backtest warm-up — this is the parity guarantee for indicator state.
+        Bars are replayed through ``on_bar`` with a warm-up context that rejects order submits.
         """
         from coinext_data import (  # local import: keeps coinext_data optional at import
             BarSpec,
             HistoryReader,
         )
 
+        lake_root = None
+        if self.run_config is not None:
+            lake_root = getattr(getattr(self.run_config, "data", None), "lake_root", None)
         reader = HistoryReader()
+        if lake_root:
+            from coinext_data import DataCatalog
+
+            reader = HistoryReader(DataCatalog(lake_root))
         spec = BarSpec(symbol=self.config.symbol)
-        # TODO: derive end_ns from the LiveClock at start; for now read the tail of the lake.
         bars = reader.warmup_bars(spec, end_ns=2**63 - 1, n=self.config.warmup_bars)
-        # TODO: feed bars through the strategy's on_bar with a warmup ctx (no orders emitted).
+        self._warmup_strategy(bars)
         return bars
 
-    def reconcile(self) -> dict[str, Any]:
-        """Reconcile-on-restart: replay the local event log and diff against venue truth.
+    def _warmup_strategy(self, bars: list[tuple[int, float]]) -> None:
+        """Feed historical bars through strategy handlers without allowing order submission."""
+        strategy = self.strategy
+        on_bar = getattr(strategy, "on_bar", None)
+        if not callable(on_bar) or not bars:
+            return
 
-        Returns a diff report (missing fills, orphan orders, position mismatch). On disagreement the
-        node must NOT resume trading until the operator resolves it. ARCHITECTURE.md §7, §11.
+        class _WarmupCtx:
+            def submit_market(self, *a, **k):  # noqa: ANN002, ANN003
+                raise RuntimeError("orders disabled during warm-up")
+
+            def submit_limit(self, *a, **k):  # noqa: ANN002, ANN003
+                raise RuntimeError("orders disabled during warm-up")
+
+            def submit_stop(self, *a, **k):  # noqa: ANN002, ANN003
+                raise RuntimeError("orders disabled during warm-up")
+
+            def cancel(self, *a, **k):  # noqa: ANN002, ANN003
+                raise RuntimeError("orders disabled during warm-up")
+
+            def position(self, *a, **k):  # noqa: ANN002, ANN003
+                return None
+
+        ctx = _WarmupCtx()
+        for ts, close in bars:
+            bar = type("Bar", (), {"ts_event": ts, "close": close, "symbol": self.config.symbol})()
+            try:
+                on_bar(bar, ctx)
+            except RuntimeError as exc:
+                if "warm-up" not in str(exc):
+                    raise
+
+    def reconcile(self) -> dict[str, Any]:
+        """Reconcile-on-restart: fold the local event log and diff against venue open orders.
+
+        Prefers the SQLite event log (``persist_db``) when configured, exporting JSONL for the
+        shared reconcile helper. Venue REST is optional — provide ``venue_open_orders_path``.
         """
-        # TODO: read append-only OrderEvent store (coinext-persistence) + query Binance REST for open
-        # orders / positions / balances, then compute the diff.
-        return {"reconciled": False, "missing_fills": [], "orphan_orders": [], "note": "stub"}
+        from coinext_live.reconcile import reconcile_from_paths
+
+        event_log = self.config.event_log_path
+        if self.config.persist_db:
+            from coinext_live.persist import SqliteEventLog
+
+            log = SqliteEventLog(self.config.persist_db)
+            # Materialize JSONL beside the DB for the file-based diff path.
+            jsonl = str(self.config.persist_db) + ".events.jsonl"
+            log.export_jsonl(jsonl)
+            event_log = jsonl
+        report = reconcile_from_paths(
+            event_log,
+            venue_fixture=self.config.venue_open_orders_path,
+        )
+        return report.to_dict()
 
     def publish_telemetry(
         self,
@@ -219,25 +297,84 @@ class TradingNode:
            ``PortfolioSnapshot`` that this node publishes to ``coinext.live``.
         """
         if self.config.reconcile_on_start:
-            self.reconcile()
+            report = self.reconcile()
+            if not report.get("reconciled", False):
+                raise RuntimeError(
+                    f"reconcile failed — resolve missing/orphan orders before trading: {report}"
+                )
         self.warmup()
 
-        from coinext_kernel import build_kernel  # local import: compiled extension is optional
+        if self.config.dry_run and not self.config.paper:
+            # Operator smoke path: warm-up + reconcile only (no venue loop).
+            return
 
-        self._kernel = build_kernel(
-            self._effective_run_config(),
-            self.config.env,
-            strategy=self.strategy,
-        )
+        if self.config.paper:
+            self._kernel = self._build_paper_kernel()
+        else:
+            from coinext_kernel import build_kernel  # local import: compiled extension is optional
+
+            self._kernel = build_kernel(
+                self._effective_run_config(),
+                self.config.env,
+                strategy=self.strategy,
+            )
         run_with_callback = getattr(self._kernel, "run_with_portfolio_callback", None)
         if not callable(run_with_callback):
             raise RuntimeError("native kernel handle does not expose run_with_portfolio_callback")
 
         self._running = True
         try:
-            run_with_callback(lambda snapshot: self.publish_native_snapshot(snapshot))
+            # Paper path has no Redis requirement for the loop itself; telemetry may still fail soft.
+            def _on_snap(snapshot: Any) -> None:
+                try:
+                    self.publish_native_snapshot(snapshot)
+                except Exception:
+                    pass
+
+            run_with_callback(_on_snap)
         finally:
             self._running = False
+
+    def _build_paper_kernel(self) -> Any:
+        """Build an offline LiveKernel (ReplayDataClient + PaperFillExec) via coinext_py."""
+        import coinext_py
+
+        bars = self.config.paper_bars
+        if not bars:
+            warm = self.warmup()
+            # Promote close-only warm-up bars to flat OHLC for the paper bridge.
+            bars = [(ts, px, px, px, px, 0.0) for ts, px in warm]
+        if not bars:
+            from coinext_backtest import synthetic_ohlc_bars
+
+            bars = synthetic_ohlc_bars(n=120)
+        # Normalize to 6-tuples.
+        ohlcv: list[tuple[int, float, float, float, float, float]] = []
+        for row in bars:
+            if len(row) == 2:
+                ts, c = row
+                ohlcv.append((int(ts), float(c), float(c), float(c), float(c), 0.0))
+            elif len(row) >= 6:
+                ohlcv.append(
+                    (
+                        int(row[0]),
+                        float(row[1]),
+                        float(row[2]),
+                        float(row[3]),
+                        float(row[4]),
+                        float(row[5]),
+                    )
+                )
+            else:
+                ts, o, h, low, c = row[:5]
+                ohlcv.append((int(ts), float(o), float(h), float(low), float(c), 0.0))
+        return coinext_py.build_paper_kernel(
+            self.strategy,
+            ohlcv,
+            symbol=self.config.symbol,
+            venue=self.config.venue,
+            env=self.config.env.value,
+        )
 
     def stop(self) -> None:
         """Request graceful shutdown: signal native kernel, stop Python lifecycle, close publisher."""
@@ -289,3 +426,5 @@ __all__ = [
     "on_control_message",
     "subscribe_control",
 ]
+
+# Submodule: coinext_live.reconcile (event log + open-order diff)

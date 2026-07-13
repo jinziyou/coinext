@@ -108,9 +108,12 @@ Backing services: Postgres for event/audit state, Redis for cross-process Envelo
 
 ## 8. Doc map
 
+Full index: [`docs/README.md`](docs/README.md).
+
 - [`README.md`](README.md) — platform positioning, status, quick starts, root module layout.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — verified work, next research work, deferred live/ops work.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — status snapshot, verified work, next research, deferred live/ops.
 - [`docs/TESTNET.md`](docs/TESTNET.md) — Binance public data + spot testnet runbook.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — build order + open questions (stub → this doc).
 - [`tests/backtesting-simulation/parity/README.md`](tests/backtesting-simulation/parity/README.md) — advisory cross-check and sandbox gate notes.
 - [`operations-interface/deployment/README.md`](operations-interface/deployment/README.md) — compose/deployment/observability.
 - [`operations-interface/deployment/services.md`](operations-interface/deployment/services.md) — service index.

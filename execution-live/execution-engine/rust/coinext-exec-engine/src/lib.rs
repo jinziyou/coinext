@@ -1,7 +1,7 @@
 //! `coinext-exec-engine` — the OMS. Routes strategy order intents through the pre-trade RiskEngine to
 //! the ExecutionClient, and folds `ExecutionReport`s back into the event-sourced Order FSM and the
-//! Position. It TRACKS the OrderFactory-assigned `ClientOrderId` (never mints one). In the scaffold
-//! the ExecutionClient is the SimulatedExecutionClient; the live path swaps it behind the same port.
+//! Position. It TRACKS the OrderFactory-assigned `ClientOrderId` (never mints one). Backtest injects
+//! `SimulatedExecutionClient`; sandbox/live swap a venue client behind the same `ExecutionClient` port.
 
 use coinext_cache::Cache;
 use coinext_core::UnixNanos;

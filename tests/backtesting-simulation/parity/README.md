@@ -1,7 +1,7 @@
 # tests/backtesting-simulation/parity/ — the parity test plan
 
 Coinext's single most important property is **backtest↔live parity** (see
-[`ARCHITECTURE.md`](../../ARCHITECTURE.md) §1, §6): ONE Strategy API, ONE set of engines, ONE deterministic core. Only
+[`ARCHITECTURE.md`](../../../ARCHITECTURE.md) §1, §6): ONE Strategy API, ONE set of engines, ONE deterministic core. Only
 the Kernel-injected **Clock**, **Cache** contents, and **Data/Execution clients** differ between
 `Backtest` / `Sandbox` / `Live`. These tests are the guardrails that keep that promise true.
 
@@ -16,7 +16,7 @@ reduced to a `coinext_parity.SessionResult` (an `equity_curve` of `(ts_ns, equit
 The authoritative runner is the **event-driven** `coinext_backtest.run` (through the Rust kernel: Risk +
 Exec + BrokerageModel + SimulatedExecutionClient). A separate **vectorized** `populate_*` research
 screen exists for fast parameter sweeps but is **explicitly non-authoritative** — it skips the
-Risk/Exec/Brokerage path, so it can never validate a strategy for promotion (ARCHITECTURE.md §1, §5).
+Risk/Exec/Brokerage path, so it can never validate a strategy for promotion (ARCHITECTURE.md §1, §6).
 
 The cross-check runs the SAME strategy logic both ways over the SAME bars and measures **drift**:
 

@@ -1,6 +1,7 @@
 //! `coinext-cache` — the central in-memory object store. A single read/write interface, identical
 //! across backtest and live, with id-keyed `O(1)` hash lookups. The mark source for Portfolio
-//! unrealized PnL. (In live it can be Redis-backed for crash recovery; the scaffold is in-memory.)
+//! unrealized PnL. Currently process-local memory; a Redis-backed live cache for crash recovery is
+//! deferred with the live/ops work.
 
 use coinext_model::{
     AccountState, ClientOrderId, Instrument, InstrumentId, Order, OrderBook, OrderBookDelta,

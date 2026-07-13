@@ -102,6 +102,130 @@ impl ParquetWriter {
         Ok(())
     }
 
+    /// Read OHLCV rows written by [`write_ohlcv`] as
+    /// `(ts_event, open, high, low, close, volume)`. Missing file → empty vec.
+    pub fn read_ohlcv(&self, path: &str) -> PersistResult<Vec<(i64, f64, f64, f64, f64, f64)>> {
+        if !std::path::Path::new(path).exists() {
+            return Ok(Vec::new());
+        }
+        let file = File::open(path)?;
+        let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
+        let mut out = Vec::new();
+        for batch in reader {
+            let batch = batch?;
+            let ts = batch
+                .column_by_name("ts_event")
+                .ok_or_else(|| PersistError::Corrupt("missing ts_event".into()))?
+                .as_any()
+                .downcast_ref::<arrow::array::Int64Array>()
+                .ok_or_else(|| PersistError::Corrupt("ts_event not int64".into()))?;
+            let open = batch
+                .column_by_name("open")
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+                .ok_or_else(|| PersistError::Corrupt("open".into()))?;
+            let high = batch
+                .column_by_name("high")
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+                .ok_or_else(|| PersistError::Corrupt("high".into()))?;
+            let low = batch
+                .column_by_name("low")
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+                .ok_or_else(|| PersistError::Corrupt("low".into()))?;
+            let close = batch
+                .column_by_name("close")
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+                .ok_or_else(|| PersistError::Corrupt("close".into()))?;
+            let volume = batch
+                .column_by_name("volume")
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>())
+                .ok_or_else(|| PersistError::Corrupt("volume".into()))?;
+            for i in 0..batch.num_rows() {
+                out.push((
+                    ts.value(i),
+                    open.value(i),
+                    high.value(i),
+                    low.value(i),
+                    close.value(i),
+                    volume.value(i),
+                ));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Write OHLCV rows (without needing full [`Bar`] domain objects) — used for monthly merges.
+    pub fn write_ohlcv_rows(
+        &self,
+        path: &str,
+        rows: &[(i64, f64, f64, f64, f64, f64)],
+    ) -> PersistResult<()> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("ts_event", DataType::Int64, false),
+            Field::new("open", DataType::Float64, false),
+            Field::new("high", DataType::Float64, false),
+            Field::new("low", DataType::Float64, false),
+            Field::new("close", DataType::Float64, false),
+            Field::new("volume", DataType::Float64, false),
+        ]));
+        let ts: Vec<i64> = rows.iter().map(|r| r.0).collect();
+        let open: Vec<f64> = rows.iter().map(|r| r.1).collect();
+        let high: Vec<f64> = rows.iter().map(|r| r.2).collect();
+        let low: Vec<f64> = rows.iter().map(|r| r.3).collect();
+        let close: Vec<f64> = rows.iter().map(|r| r.4).collect();
+        let volume: Vec<f64> = rows.iter().map(|r| r.5).collect();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(arrow::array::Int64Array::from(ts)),
+                Arc::new(Float64Array::from(open)),
+                Arc::new(Float64Array::from(high)),
+                Arc::new(Float64Array::from(low)),
+                Arc::new(Float64Array::from(close)),
+                Arc::new(Float64Array::from(volume)),
+            ],
+        )?;
+        let file = File::create(path)?;
+        let mut writer = ArrowWriter::try_new(file, schema, None)?;
+        writer.write(&batch)?;
+        writer.close()?;
+        Ok(())
+    }
+
+    /// Write OHLCV-only Parquet matching Python `coinext_data.lake` schema
+    /// (`ts_event, open, high, low, close, volume`) for HistoryReader compatibility.
+    pub fn write_ohlcv(&self, path: &str, bars: &[Bar]) -> PersistResult<()> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("ts_event", DataType::Int64, false),
+            Field::new("open", DataType::Float64, false),
+            Field::new("high", DataType::Float64, false),
+            Field::new("low", DataType::Float64, false),
+            Field::new("close", DataType::Float64, false),
+            Field::new("volume", DataType::Float64, false),
+        ]));
+        let ts: Vec<i64> = bars.iter().map(|b| b.ts_event.as_u64() as i64).collect();
+        let open: Vec<f64> = bars.iter().map(|b| b.open.as_f64()).collect();
+        let high: Vec<f64> = bars.iter().map(|b| b.high.as_f64()).collect();
+        let low: Vec<f64> = bars.iter().map(|b| b.low.as_f64()).collect();
+        let close: Vec<f64> = bars.iter().map(|b| b.close.as_f64()).collect();
+        let volume: Vec<f64> = bars.iter().map(|b| b.volume.as_f64()).collect();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(arrow::array::Int64Array::from(ts)),
+                Arc::new(Float64Array::from(open)),
+                Arc::new(Float64Array::from(high)),
+                Arc::new(Float64Array::from(low)),
+                Arc::new(Float64Array::from(close)),
+                Arc::new(Float64Array::from(volume)),
+            ],
+        )?;
+        let file = File::create(path)?;
+        let mut writer = ArrowWriter::try_new(file, schema, None)?;
+        writer.write(&batch)?;
+        writer.close()?;
+        Ok(())
+    }
+
     /// Read a Parquet file written by [`write_bars`](Self::write_bars) back into `RecordBatch`es —
     /// a test/inspection helper. The lake's authoritative reader is the `coinext_data` catalog.
     pub fn read_batches(&self, path: &str) -> PersistResult<Vec<RecordBatch>> {

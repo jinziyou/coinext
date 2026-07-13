@@ -4,7 +4,7 @@ A minimal Vite + React + TypeScript operator cockpit for Coinext. It is a
 **read-only-by-default** dashboard over the `api` service (FastAPI), with one
 guarded mutating action: the global **kill-switch**.
 
-See [`ARCHITECTURE.md`](../../ARCHITECTURE.md) §7 (deployment forms & observability) for where this fits.
+See [`ARCHITECTURE.md`](../../../../ARCHITECTURE.md) §7 (deployment forms & observability) for where this fits.
 
 ## Panels
 

@@ -1,7 +1,7 @@
 """coinext_risk — Python-side risk config facade + protections pipeline.
 
 The AUTHORITATIVE pre-trade gate is the Rust ``coinext-risk-engine`` (a synchronous gate + atomic
-kill-switch, ARCHITECTURE.md §8). This package is the Python-side facade: it owns the *config* the
+kill-switch, ARCHITECTURE.md §6–§7). This package is the Python-side facade: it owns the *config* the
 Rust gate reads (``COINEXT__RISK__*``) and a defense-in-depth **protections pipeline** modelled on
 Freqtrade's protections (StoplossGuard / MaxDrawdown / CooldownPeriod). This package is the SINGLE
 SOURCE OF TRUTH for the drawdown circuit-breaker math: the out-of-band ``risk-portfolio/risk-monitor/service/risk-monitor``
@@ -147,7 +147,7 @@ class ProtectionsPipeline:
 
     The ``risk-monitor`` runs the canonical :class:`MaxDrawdown` breaker over portfolio snapshots
     from the bus (and may run this full pipeline) and, on a trip, publishes the global kill-switch
-    (the Rust engine reads it atomically — ARCHITECTURE.md §8).
+    (the Rust engine reads it atomically — ARCHITECTURE.md §6–§7).
     """
 
     def __init__(self, cfg: ProtectionConfig | None = None) -> None:

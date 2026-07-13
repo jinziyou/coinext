@@ -26,8 +26,22 @@ from coinext_contracts import (
     live_position_pnl_payload,
 )
 
-_RISK_MONITOR = pathlib.Path(__file__).resolve().parents[2] / "risk-portfolio" / "risk-monitor" / "service" / "risk-monitor" / "main.py"
-_TRADER = pathlib.Path(__file__).resolve().parents[2] / "execution-live" / "trader-service" / "service" / "trader" / "main.py"
+_RISK_MONITOR = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "risk-portfolio"
+    / "risk-monitor"
+    / "service"
+    / "risk-monitor"
+    / "main.py"
+)
+_TRADER = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "execution-live"
+    / "trader-service"
+    / "service"
+    / "trader"
+    / "main.py"
+)
 
 
 def _load_risk_monitor():
@@ -106,6 +120,7 @@ def test_live_position_pnl_payload_shape_and_wire_scalars():
     assert is_live_position_pnl(payload) is True
     assert is_live_position_pnl({"kind": "OtherTelemetry"}) is False
 
+
 # --------------------------------------------------------------------------------------------------
 # coinext_bus — Publisher + dispatch_control (codec stubbed; no msgpack/redis needed)
 # --------------------------------------------------------------------------------------------------
@@ -144,9 +159,10 @@ def test_publisher_publish_control_builds_ctrl_envelope(monkeypatch):
     assert env.msg_type == MsgType.CTRL
     assert len(env.trace_id) == 16  # 16-byte correlation id
     # Payload was encoded from the documented kill-switch map.
-    assert env.payload == ("ENC", kill_switch_payload(
-        engaged=True, reason="breach", source="api", actor="op"
-    ))
+    assert env.payload == (
+        "ENC",
+        kill_switch_payload(engaged=True, reason="breach", source="api", actor="op"),
+    )
 
 
 def test_publisher_publish_live_telemetry_builds_live_payload_envelope(monkeypatch):
@@ -231,7 +247,6 @@ def test_dispatch_control_ignores_release_and_noncontrol(monkeypatch):
     monkeypatch.setattr(coinext_bus, "decode_payload", _boom)
     quote = Envelope.of(MsgType.QUOTE, b"\x00" * 16, 0, b"x")
     assert coinext_bus.dispatch_control(quote, seen.append) is False
-
 
 
 # --------------------------------------------------------------------------------------------------
@@ -496,7 +511,6 @@ def test_live_node_run_builds_native_kernel_and_publishes_callback_snapshot(monk
     assert node._running is False
 
 
-
 @pytest.mark.parametrize("kernel_stop_method", ["request_stop", "stop"])
 def test_live_node_stop_signals_native_kernel_and_closes_publisher(kernel_stop_method):
     """TradingNode.stop wakes the attached native kernel and closes telemetry publication."""
@@ -517,9 +531,7 @@ def test_live_node_stop_signals_native_kernel_and_closes_publisher(kernel_stop_m
     kernel = _NativeKernel()
     setattr(kernel, kernel_stop_method, lambda: kernel.calls.append(kernel_stop_method))
     publisher = _Publisher()
-    node = TradingNode(
-        config=TradingNodeConfig(env=Environment.SANDBOX), strategy=object()
-    )
+    node = TradingNode(config=TradingNodeConfig(env=Environment.SANDBOX), strategy=object())
     node._kernel = kernel
     node._telemetry_publisher = publisher
     node._running = True
@@ -556,9 +568,7 @@ def test_live_on_control_message_engages_kill_switch(monkeypatch):
 
     kernel = _NativeKernel()
     publisher = _Publisher()
-    node = TradingNode(
-        config=TradingNodeConfig(env=Environment.LIVE), strategy=object()
-    )
+    node = TradingNode(config=TradingNodeConfig(env=Environment.LIVE), strategy=object())
     node._kernel = kernel
     node._telemetry_publisher = publisher
     node._running = True
@@ -663,7 +673,14 @@ def test_live_node_publish_telemetry_wires_config_to_bus_and_closes(monkeypatch)
     ("position", "expected_side", "expected_unrealized", "expected_notional", "expected_row"),
     [
         pytest.param(
-            {"symbol": "BTCUSDT", "venue": "BINANCE", "net_qty": 2.0, "avg_price": 100.0, "mark_price": 115.0, "realized_pnl": 3.25},
+            {
+                "symbol": "BTCUSDT",
+                "venue": "BINANCE",
+                "net_qty": 2.0,
+                "avg_price": 100.0,
+                "mark_price": 115.0,
+                "realized_pnl": 3.25,
+            },
             "long",
             30.0,
             230.0,
@@ -681,7 +698,14 @@ def test_live_node_publish_telemetry_wires_config_to_bus_and_closes(monkeypatch)
             id="long",
         ),
         pytest.param(
-            {"symbol": "ETHUSDT", "venue": "BINANCE", "net_qty": -1.5, "avg_price": 250.0, "mark_price": 200.0, "realized_pnl": -4.0},
+            {
+                "symbol": "ETHUSDT",
+                "venue": "BINANCE",
+                "net_qty": -1.5,
+                "avg_price": 250.0,
+                "mark_price": 200.0,
+                "realized_pnl": -4.0,
+            },
             "short",
             75.0,
             300.0,
@@ -699,7 +723,14 @@ def test_live_node_publish_telemetry_wires_config_to_bus_and_closes(monkeypatch)
             id="short",
         ),
         pytest.param(
-            {"symbol": "XRPUSDT", "venue": "COINBASE", "net_qty": 0.0, "avg_price": 0.25, "mark_price": 0.30, "realized_pnl": 0.0},
+            {
+                "symbol": "XRPUSDT",
+                "venue": "COINBASE",
+                "net_qty": 0.0,
+                "avg_price": 0.25,
+                "mark_price": 0.30,
+                "realized_pnl": 0.0,
+            },
             "flat",
             0.0,
             0.0,
@@ -1237,6 +1268,7 @@ def test_trader_build_node_wires_live_config_and_instantiates_strategy(monkeypat
     assert node.config.redis_url == "redis://unit:6379/9"
     assert isinstance(node.strategy, _Strategy)
 
+
 # --------------------------------------------------------------------------------------------------
 # risk-portfolio/risk-monitor/service/risk-monitor — consume + fold + trip exactly once
 # --------------------------------------------------------------------------------------------------
@@ -1370,9 +1402,7 @@ def test_load_config_precedence(monkeypatch, tmp_path):
     cfg_dir = tmp_path / "config"
     cfg_dir.mkdir()
     # base.yaml sets symbol + a risk limit; live.yaml overrides symbol.
-    (cfg_dir / "base.yaml").write_text(
-        "symbol: BTCUSDT\nrisk:\n  max_orders_per_sec: 5\n"
-    )
+    (cfg_dir / "base.yaml").write_text("symbol: BTCUSDT\nrisk:\n  max_orders_per_sec: 5\n")
     (cfg_dir / "live.yaml").write_text("symbol: ETHUSDT\n")
 
     # Default (no env/cli): file layer wins -> live.yaml symbol, base risk.
@@ -1405,7 +1435,9 @@ def test_load_config_skips_when_pyyaml_missing(monkeypatch, tmp_path):
 
     import coinext_config
 
-    real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
+    real_import = (
+        __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
+    )
 
     def _no_yaml(name, *a, **k):
         if name == "yaml":

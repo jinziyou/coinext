@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 # Heuristic thresholds for the overfitting screen. Deliberately loose — these flag the egregious,
-# not the merely good (see docs/ARCHITECTURE.md §11: thresholds tighten with evidence). The tells
+# not the merely good (thresholds tighten with evidence; see docs/ROADMAP open questions). The tells
 # here are annualization-INVARIANT (win rate, drawdown shape): an annualized-Sharpe threshold is
 # avoided on purpose because at minute-bar frequency the √525600 factor makes a modest per-bar edge
 # annualize to a double-digit Sharpe, which would false-positive constantly.

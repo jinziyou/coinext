@@ -11,13 +11,14 @@
 #    tear sheet (trade stats + bias screen).
 # 4. **Indicators** — an RSI strategy off the shared Rust `coinext_indicators`.
 # 5. **Portfolio** — a multi-instrument run through one kernel.
-# 6. **Ticks** — quote/trade feed so `on_trade` fires.
+# 6. **Ticks** — quote/trade feed so `on_trade` / `on_quote` fire.
 #
 # This is a `py:percent` script (each `# %%` is a cell). Run it:
-# `uv run python strategy-research/research-notebooks/notebooks/research_loop.py` (after `just py-build`). It uses
-# **synthetic** bars by default, so it is fully reproducible and needs no network. Set
-# `COINEXT_RESEARCH_USE_LAKE=1` (or edit `USE_LAKE`) to read the REAL Parquet lake after seeding it
-# with `uv run coinext download ...` or `uv run coinext ingest-trades ...`.
+# `uv run python strategy-research/research-notebooks/notebooks/research_loop.py` (after `just py-build`).
+#
+# **Data default:** when `data/sample/` has Parquet fixtures (committed), the loop uses the lake by
+# default. Override with `COINEXT_RESEARCH_USE_LAKE=0` for pure synthetic, or `=1` +
+# `COINEXT__DATA__LAKE_ROOT` for a custom lake.
 
 # %%
 from __future__ import annotations
@@ -57,21 +58,60 @@ from coinext_analytics import tear_sheet
 from coinext_optimize import walk_forward_optimize
 from coinext_strategy import MultiSma, RsiReversion, SmaCross
 
-USE_LAKE = os.environ.get("COINEXT_RESEARCH_USE_LAKE", "").lower() in {"1", "true", "yes"}
+_SAMPLE_LAKE = _ROOT / "data" / "sample"
+
+
+def _env_flag(name: str) -> str | None:
+    raw = os.environ.get(name)
+    return None if raw is None else raw.strip().lower()
+
+
+def _sample_lake_ready() -> bool:
+    try:
+        from coinext_data import DataLake
+
+        rows = DataLake(str(_SAMPLE_LAKE)).read_ohlcv("BINANCE", "BTCUSDT", "1m")
+        return bool(rows)
+    except Exception:
+        return False
+
+
+def _resolve_use_lake() -> tuple[bool, str | None]:
+    """Return ``(use_lake, lake_root)``.
+
+    Precedence:
+    1. ``COINEXT_RESEARCH_USE_LAKE`` forces on/off when set.
+    2. Else prefer committed ``data/sample`` Parquet when present.
+    3. Else synthetic bars.
+    """
+    flag = _env_flag("COINEXT_RESEARCH_USE_LAKE")
+    env_root = os.environ.get("COINEXT__DATA__LAKE_ROOT")
+    if flag in {"0", "false", "no"}:
+        return False, None
+    if flag in {"1", "true", "yes"}:
+        root = env_root or (str(_SAMPLE_LAKE) if _sample_lake_ready() else "data")
+        return True, root
+    if env_root:
+        return True, env_root
+    if _sample_lake_ready():
+        return True, str(_SAMPLE_LAKE)
+    return False, None
+
+
+USE_LAKE, LAKE_ROOT = _resolve_use_lake()
 
 
 def _bars(symbol: str = "BTCUSDT", n: int = 600):
     if USE_LAKE:
         from coinext_data import DataLake
 
-        rows = DataLake().read_ohlcv("BINANCE", symbol, "1m")
+        rows = DataLake(LAKE_ROOT).read_ohlcv("BINANCE", symbol, "1m")
         if not rows:
             raise RuntimeError(
-                f"no {symbol} 1m bars in the local lake; seed it with `coinext download` "
-                "or `coinext ingest-trades` before setting COINEXT_RESEARCH_USE_LAKE=1"
+                f"no {symbol} 1m bars in lake root {LAKE_ROOT!r}; seed with `coinext download` "
+                "or use the committed data/sample fixture"
             )
         return rows
-    # Distinct synthetic regimes per symbol so the portfolio isn't N copies of one series.
     base = 50_000.0 if symbol == "BTCUSDT" else 3_000.0
     period = 40 if symbol == "BTCUSDT" else 55
     return bt.synthetic_ohlc_bars(n=n, base=base, period=period)
@@ -79,12 +119,9 @@ def _bars(symbol: str = "BTCUSDT", n: int = 600):
 
 # %% [markdown]
 # ## 1. Vectorized screen + cross-check
-#
-# Rank a `(fast, slow)` grid in milliseconds with the NON-authoritative numpy screen, then check the
-# best params against the event-driven runner — signals should agree; absolute PnL drifts (no
-# fees/slippage in the screen, by design).
 
 # %%
+print(f"[data] USE_LAKE={USE_LAKE} lake_root={LAKE_ROOT}")
 bars = _bars("BTCUSDT")
 rows = coinext_screen.sweep_sma_cross(bars, fasts=[5, 10, 15, 20], slows=[30, 50])
 print("top vectorized (fast,slow) by Sharpe:")
@@ -96,9 +133,6 @@ print("cross-check drift:", drift or "none (screen tracks the runner)")
 
 # %% [markdown]
 # ## 2. Walk-forward optimization (out-of-sample)
-#
-# Optimize IN-SAMPLE per fold and re-score OUT-of-sample; the headline is the OOS degradation that
-# guards against overfitting (grid search over the AUTHORITATIVE backtest).
 
 # %%
 from coinext_analytics import compute_metrics  # noqa: E402
@@ -118,9 +152,6 @@ print(report.render())
 
 # %% [markdown]
 # ## 3. Authoritative backtest + tear sheet
-#
-# Run the chosen params through the Rust kernel and print the full tear sheet — headline metrics,
-# trade-level stats (win rate / profit factor / exposure / turnover), and the inline bias screen.
 
 # %%
 result = bt.run(SmaCross(**report.chosen_params), bars=bars)
@@ -128,9 +159,6 @@ print(tear_sheet(result, bars=bars))
 
 # %% [markdown]
 # ## 4. Indicators — RSI mean-reversion
-#
-# `RsiReversion` uses the SHARED Rust `coinext_indicators.Rsi` (identical to warm-up / live), not a
-# re-rolled Python copy.
 
 # %%
 rsi_res = bt.run(RsiReversion(period=14, low=35.0, high=65.0), bars=bars)
@@ -138,9 +166,6 @@ print(f"RsiReversion: {rsi_res.orders_submitted} orders, final equity {rsi_res.f
 
 # %% [markdown]
 # ## 5. Multi-instrument portfolio
-#
-# A per-symbol SMA portfolio through ONE kernel (shared Cache / risk / portfolio). The aggregate
-# result equals the union of the per-symbol standalone runs.
 
 # %%
 portfolio = bt.run_multi(
@@ -149,28 +174,37 @@ portfolio = bt.run_multi(
 print(f"portfolio: {portfolio.fills} fills, total return {portfolio.total_return * 100:.2f}%")
 
 # %% [markdown]
-# ## 6. Tick feed — on_trade fires
+# ## 6. Tick + quote feed — on_trade / on_quote fire
 #
-# Interleave a (synthetic) trade stream with the bars so `on_trade` fires on real prints. Swap in
-# `coinext_data.fetch_binance_agg_trades("BTCUSDT")` for genuine microstructure.
+# Quotes come from ``coinext_data.quotes`` (synthetic from bars or a JSON recording). Swap in a
+# WS-captured recording via ``load_quote_recording`` when you have real bookTicker history.
 
 # %%
+from coinext_data.quotes import synth_quotes_from_bars  # noqa: E402
 from coinext_strategy import Strategy  # noqa: E402
 
 
 class TradeCounter(Strategy):
     def __init__(self):
-        self.n = 0
+        self.n_trades = 0
+        self.n_quotes = 0
 
     def on_trade(self, tr, ctx):
-        self.n += 1
+        self.n_trades += 1
+
+    def on_quote(self, q, ctx):
+        self.n_quotes += 1
 
 
 counter = TradeCounter()
-bt.run(counter, bars=bars, trades=bt.synth_trades(bars))
-print(f"on_trade fired {counter.n} times over {len(bars)} bars")
+quotes = synth_quotes_from_bars(bars)
+bt.run(counter, bars=bars, trades=bt.synth_trades(bars), quotes=quotes)
+print(
+    f"on_trade fired {counter.n_trades} times, on_quote fired {counter.n_quotes} times "
+    f"over {len(bars)} bars"
+)
 
 # %% [markdown]
 # Each step ran on the SAME deterministic Rust core that runs live (only the Clock + Data/Execution
-# clients are swapped). Flip `USE_LAKE = True` (top) to run the identical loop over real history.
+# clients are swapped).
 print("\nresearch loop complete.")

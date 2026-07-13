@@ -1,22 +1,22 @@
-"""coinext_data — the data-lake catalog, history reader, and live data provider.
+"""coinext_data — the data-lake catalog, history reader, and download/ingest helpers.
 
-The data lake is a partitioned **Parquet** store on the local FS or S3/MinIO
-(``COINEXT__DATA__LAKE_ROOT``, ``COINEXT__MINIO__*``). Partition layout (Hive-style dirs + per-month
+The data lake is a partitioned **Parquet** store on the local FS (or S3/MinIO via
+``COINEXT__DATA__LAKE_ROOT`` / ``COINEXT__MINIO__*``). Partition layout (Hive-style dirs + per-month
 file shards, as implemented in ``lake.py``)::
 
     {lake_root}/bars/venue={v}/symbol={s}/interval={i}/{YYYYMM}.parquet
 
-Three roles, per ARCHITECTURE.md §7:
+Three roles (root ``ARCHITECTURE.md`` §4–§6):
 
-* :class:`DataCatalog`   — discovery/metadata over the lake (what symbols/intervals/date ranges).
-* :class:`HistoryReader` — bounded reads for **warm-up** (indicators are warmed from the LOCAL lake
-  in BOTH backtest and live, never via live REST at handler time — this is what keeps indicators
-  byte-identical across environments).
+* :class:`DataCatalog`   — discovery/metadata over the lake (symbols/intervals/date ranges).
+* :class:`HistoryReader` — bounded reads for **warm-up** (indicators warm from the LOCAL lake in
+  BOTH backtest and live, never via live REST at handler time — keeps indicators identical).
 * :class:`DataProvider`  — the backtest data-feed source the Kernel pulls ``(ts, close)`` bars from.
 
-The heavy reader is **DuckDB + Arrow** over Parquet (TODO). For now :func:`load_bars` reads a simple
-CSV or accepts an inline list so the scaffold runs with zero heavy deps. ``import duckdb`` /
-``pyarrow`` are deferred and guarded.
+**Parquet path** (when ``pyarrow`` is installed via the ``research`` extra): :class:`DataLake`
+read/write, coverage, and CLI download/catalog. **Zero-dep fallback**: :func:`load_bars` reads CSV
+or accepts an inline list so imports stay light without heavy deps. DuckDB is reserved for future
+analytical queries over large lakes; it is not required for the current HistoryReader path.
 """
 
 from __future__ import annotations
@@ -25,6 +25,15 @@ import csv
 import os
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+
+from .quote_capture import capture_quotes, capture_quotes_rest, capture_quotes_ws
+from .quotes import (
+    dump_quote_recording,
+    fetch_binance_book_ticker,
+    load_quote_recording,
+    quotes_from_trades,
+    synth_quotes_from_bars,
+)
 
 # The Parquet lake (write/read/coverage), trade ingestion, and paginated downloader. Guarded so
 # `import coinext_data` works even when pyarrow is absent — only lake-backed features then raise a
@@ -116,7 +125,7 @@ class HistoryReader:
     """Bounded historical reads, primarily for indicator **warm-up**.
 
     Warm-up is served from the LOCAL lake in both backtest and live so indicators are identical
-    (ARCHITECTURE.md §7, §10). ``warmup_bars`` returns the last ``n`` bars at/before ``end_ns`` —
+    (root ARCHITECTURE.md §4–§6). ``warmup_bars`` returns the last ``n`` bars at/before ``end_ns`` —
     these are fed through the SAME streaming indicators the strategy uses before the first live bar.
     """
 
@@ -261,6 +270,14 @@ def fetch_binance_agg_trades(
 
 
 __all__ = [
+    "capture_quotes",
+    "capture_quotes_rest",
+    "capture_quotes_ws",
+    "fetch_binance_book_ticker",
+    "load_quote_recording",
+    "dump_quote_recording",
+    "quotes_from_trades",
+    "synth_quotes_from_bars",
     "BarSpec",
     "CatalogEntry",
     "DataCatalog",

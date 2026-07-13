@@ -1,8 +1,13 @@
-# Coinext Architecture
+# Coinext Architecture (stub)
 
 > **Canonical document:** [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
+>
+> Full doc index: [`README.md`](README.md).
 
-The root architecture document describes the current root-level lifecycle modules, parity invariant, domain model, ports, Kernel, data flow, deployment forms, and doc map. This stub remains for stable links and keeps the historical build order plus open questions.
+The root architecture document is the single source of truth for lifecycle modules, the parity
+invariant, domain model, ports, Kernel, data flow, deployment forms, and the doc map. **This file
+is intentionally a stub** for stable deep-links (CI, historical issues, nested README paths). It
+only keeps the historical build order and open questions.
 
 ## Build order
 

@@ -134,8 +134,11 @@ class DataLake:
         for fname in sorted(os.listdir(sdir)):
             if not fname.endswith(".parquet"):
                 continue
+            # Accept `202401.parquet` and ingest parts like `202401-ingest-<ts>.parquet`.
+            stem = fname[: -len(".parquet")]
+            ym_token = stem.split("-", 1)[0]
             try:
-                ym = int(fname[:-8])
+                ym = int(ym_token)
             except ValueError:
                 continue
             if start_ym is not None and ym < start_ym:

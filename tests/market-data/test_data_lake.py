@@ -183,9 +183,7 @@ def test_ingest_agg_trades_to_lake_is_idempotent_and_history_readable(tmp_path):
     ]
 
 
-def test_cli_ingest_trades_uses_mocked_agg_trades_and_reports_rows(
-    tmp_path, monkeypatch, capsys
-):
+def test_cli_ingest_trades_uses_mocked_agg_trades_and_reports_rows(tmp_path, monkeypatch, capsys):
     """The CLI ingests mocked public aggTrades into COINEXT__DATA__LAKE_ROOT without network."""
     import coinext_cli.main as cli
     import coinext_data
