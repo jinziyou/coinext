@@ -42,6 +42,24 @@ heartbeat, retry/backoff, auth signing, weight limiting) so each adapter only en
   order **modify** returns `PortError::Unsupported` (cancel-replace is a TODO). The WS depth-diff
   resync hardening is tracked inline.
 
+## Research-side equity venues (no live adapter yet)
+
+Mainstream stock / ETF markets are registered for **history + backtest** in
+`market-data/data-lake/python/coinext_data/venues.py`:
+
+| Focus | Venues | Group aliases | Presets |
+|---|---|---|---|
+| A股 | SSE, SZSE | `ASHARE`, `A股` | `@default`, `@etf` |
+| 美股 | NYSE, NASDAQ, AMEX | `US`, `美股` | `@default`, `@etf` |
+| 港股 | HKEX | `HK`, `港股` | `@default`, `@etf` |
+| ETF | same as above | `ETF` | `@etf` |
+
+Public OHLCV is downloaded via Yahoo Finance into the same Parquet lake
+(`coinext download --venue ASHARE|US|HKEX|SSE|… --symbols @default|@etf|…`).
+Python research broker: [`equity/`](./equity/) (`coinext_broker` paper + IB scaffold).
+Live Kernel `ExecutionClient` for stocks is still deferred — only Binance implements the Rust
+hexagonal ports for execution today.
+
 ## Adding a new venue
 
 1. Create `coinext-adapters/<venue>/` with its own `Cargo.toml` (these crates are **excluded** from the

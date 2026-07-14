@@ -13,7 +13,12 @@ Subcommands map onto the control-plane packages:
 * ``optimize``       → Optuna walk-forward search (``coinext_optimize``).
 * ``screen``         → FAST vectorized SMA-cross sweep (``coinext_screen``, non-authoritative) cross-checked
   against the event-driven runner.
-* ``download``       → fetch venue history into the data lake (``coinext_data``).
+* ``download``       → fetch venue history into the data lake (``coinext_data``); crypto via
+  Binance, equity/index via Yahoo Finance using the venue catalog.
+* ``download-fx``    → Yahoo FX pairs into ``venue=FX`` (USDCNY/USDHKD for multi-ccy).
+* ``paper-equity``   → replay lake bars through ``PaperEquityBroker`` (A-share T+1 / 涨跌停).
+* ``ib-status``      → probe IB TWS/Gateway connectivity (optional ``ib_insync``).
+* ``venues``         → list registered global venues (crypto + mainstream stock markets).
 * ``live``           → start the live/sandbox ``TradingNode`` (``coinext_live``).
 * ``reconcile``      → reconcile-on-restart against venue truth (``coinext_live.reconcile``).
 * ``catalog``        → inspect the data lake (``coinext_data.DataCatalog``).
@@ -42,6 +47,7 @@ def _cmd_backtest(
     from_lake: bool = False,
     interval: str = "1m",
     strategy: str = "sma",
+    venue: str = "BINANCE",
 ) -> int:
     """Run a strategy through the Rust kernel and print the tear sheet. Returns an exit code.
 
@@ -49,6 +55,7 @@ def _cmd_backtest(
     rests LIMIT orders that fill on intrabar high/low — the OHLC-aware path (synthetic data uses an
     OHLC series with wicks; the lake serves real OHLC). ``--from-lake`` reads the LOCAL Parquet lake
     (reproducible; run ``coinext download`` first); ``--real`` fetches a fresh window; else synthetic.
+    Equity venues (``--venue NYSE`` …) default the instrument to cash equity when using lake/real.
     """
     import coinext_analytics
     import coinext_backtest
@@ -58,6 +65,39 @@ def _cmd_backtest(
         print(f"unknown --strategy {strategy!r} (expected 'sma' or 'limit-maker')")
         return 1
 
+    venue_raw = venue.strip() or "BINANCE"
+    from coinext_data import (
+        instrument_spec,
+        is_equity_venue,
+        resolve_listing,
+        resolve_market_group,
+    )
+
+    # Equity CLI defaults: 1m/crypto-shaped interval → 1d when reading lake/real.
+    if is_equity_venue(venue_raw) and (from_lake or real) and interval == "1m":
+        interval = "1d"
+        print("note: equity venue — using interval=1d (pass --interval explicitly to override)")
+
+    # Market groups (A股/美股/港股) and aliases resolve to a concrete lake venue + symbol.
+    try:
+        if resolve_market_group(venue_raw) is not None or is_equity_venue(venue_raw):
+            venue_code, lake_sym = resolve_listing(venue_raw, symbol)
+        else:
+            venue_code, lake_sym = venue_raw.upper(), symbol
+    except (ValueError, KeyError):
+        venue_code, lake_sym = venue_raw.upper(), symbol
+
+    spec = instrument_spec(venue_code, lake_sym)
+    instrument = (
+        coinext_backtest.Instrument.equity() if spec.asset_class == "equity" else None
+    )
+    if is_equity_venue(venue_code):
+        print(
+            f"[instrument] {venue_code}/{lake_sym} kind={spec.kind} ccy={spec.currency} "
+            f"lot={spec.lot_size} fees={spec.maker_fee:.4f}/{spec.taker_fee:.4f} "
+            f"px_prec={spec.price_precision} sz_prec={spec.size_precision}"
+        )
+
     if from_lake:
         from coinext_data import _HAVE_LAKE, DataLake
 
@@ -65,18 +105,28 @@ def _cmd_backtest(
             print("pyarrow not installed — `--from-lake` needs the lake (`uv pip install pyarrow`)")
             return 1
         # OHLCV so resting limits fill on the real intrabar high/low and against real volume.
-        bars = DataLake().read_ohlcv("BINANCE", symbol, interval)
+        bars = DataLake().read_ohlcv(venue_code, lake_sym, interval)
         if not bars:
             print(
-                f"lake empty for {symbol} {interval} — run `coinext download --symbols {symbol}` first"
+                f"lake empty for {venue_code}/{lake_sym} {interval} — run "
+                f"`coinext download --venue {venue_code} --symbols {lake_sym}` first"
             )
             return 1
-        print(f"[lake] loaded {len(bars)} {symbol} {interval} OHLC bars from the lake")
+        print(
+            f"[lake] loaded {len(bars)} {venue_code}/{lake_sym} {interval} OHLC bars from the lake"
+        )
     elif real:
         from coinext_data import fetch_binance_klines
 
-        bars = fetch_binance_klines(symbol, interval, min(n, 1000))
-        print(f"[real] fetched {len(bars)} live {symbol} {interval} bars")
+        if is_equity_venue(venue_code):
+            from coinext_data import download_equity_bars
+
+            bars = download_equity_bars(lake_sym, interval, venue=venue_code, days=max(n, 30))
+            # download_equity_bars returns full OHLCV; runner accepts that shape.
+            print(f"[real] fetched {len(bars)} {venue_code}/{lake_sym} {interval} equity bars")
+        else:
+            bars = fetch_binance_klines(lake_sym, interval, min(n, 1000))
+            print(f"[real] fetched {len(bars)} live {lake_sym} {interval} bars")
     elif strategy == "limit-maker":
         bars = coinext_backtest.synthetic_ohlc_bars(
             n=n
@@ -84,7 +134,17 @@ def _cmd_backtest(
     else:
         bars = coinext_backtest.synthetic_bars(n=n)
     strat = LimitMaker() if strategy == "limit-maker" else SmaCross(fast=fast, slow=slow)
-    result = coinext_backtest.run(strat, symbol=symbol, bars=bars)
+    result = coinext_backtest.run(
+        strat,
+        symbol=lake_sym,
+        venue=venue_code,
+        bars=bars,
+        instrument=instrument,
+        price_precision=spec.price_precision,
+        size_precision=spec.size_precision,
+        maker_fee=spec.maker_fee,
+        taker_fee=spec.taker_fee,
+    )
     print(coinext_analytics.tear_sheet(result, bars=bars))
     return 0
 
@@ -96,23 +156,60 @@ def _cmd_backtest_multi(
     n: int = 400,
     from_lake: bool = False,
     interval: str = "1m",
+    venue: str = "BINANCE",
+    base_ccy: str | None = None,
 ) -> int:
     """Run a per-symbol SMA portfolio (``MultiSma``) across MANY instruments through one kernel.
 
     ``--from-lake`` reads each symbol's real OHLC from the lake; otherwise each gets a distinct
-    synthetic series (varied period/base) so the symbols are not identical. Prints the aggregate
-    portfolio tear sheet.
+    synthetic series (varied period/base) so the symbols are not identical. ``--symbols @default``
+    expands the venue's liquid universe. ``--base-ccy USD|CNY|HKD`` converts multi-currency equity
+    prices into one settlement currency via :class:`coinext_data.FxBook` before the run.
     """
     import coinext_analytics
     import coinext_backtest
+    from coinext_data import (
+        FxBook,
+        filter_trading_bars,
+        instrument_spec,
+        is_equity_venue,
+        resolve_listings,
+        revalue_bar_map,
+        venue_currency,
+    )
     from coinext_strategy import MultiSma
 
-    syms = [s.strip() for s in symbols.split(",") if s.strip()]
-    if not syms:
-        print("no symbols given")
+    venue_raw = venue.strip() or "BINANCE"
+    if is_equity_venue(venue_raw) and from_lake and interval == "1m":
+        interval = "1d"
+        print("note: equity venue — using interval=1d (pass --interval explicitly to override)")
+
+    try:
+        listings = resolve_listings(venue_raw, symbols)
+    except (ValueError, KeyError) as exc:
+        print(f"symbols: {exc}")
         return 1
 
+    # Multi-venue groups need one primary venue label for the kernel; symbol keys stay unique
+    # across venues via "VENUE:SYM" when more than one concrete venue is present.
+    venues_used = {v for v, _ in listings}
+    multi_venue = len(venues_used) > 1
+    primary_venue = next(iter(venues_used))
+
+    # Per-symbol research instrument specs (fees / whole-share precision).
+    inst_overrides: dict[str, dict] = {}
+    for vcode, sym in listings:
+        key = f"{vcode}:{sym}" if multi_venue else sym
+        sp = instrument_spec(vcode, sym)
+        inst_overrides[key] = {
+            "price_precision": sp.price_precision,
+            "size_precision": sp.size_precision,
+            "maker_fee": sp.maker_fee,
+            "taker_fee": sp.taker_fee,
+        }
+
     bars: dict[str, list] = {}
+    symbol_venues: dict[str, str] = {}
     if from_lake:
         from coinext_data import _HAVE_LAKE, DataLake
 
@@ -120,24 +217,69 @@ def _cmd_backtest_multi(
             print("pyarrow not installed — `--from-lake` needs the lake (`uv pip install pyarrow`)")
             return 1
         lake = DataLake()
-        for sym in syms:
-            rows = lake.read_ohlcv("BINANCE", sym, interval)
+        for vcode, sym in listings:
+            rows = lake.read_ohlcv(vcode, sym, interval)
             if not rows:
                 print(
-                    f"lake empty for {sym} {interval} — run `coinext download --symbols {sym}` first"
+                    f"lake empty for {vcode}/{sym} {interval} — run "
+                    f"`coinext download --venue {vcode} --symbols {sym}` first"
                 )
                 return 1
-            bars[sym] = rows
-        print(f"[lake] loaded {len(syms)} symbols of {interval} OHLC from the lake")
+            # Calendar hygiene on daily equity series (idempotent if already filtered at download).
+            if is_equity_venue(vcode) and interval in ("1d", "5d", "1wk"):
+                rows, _st = filter_trading_bars(rows, vcode)
+            key = f"{vcode}:{sym}" if multi_venue else sym
+            bars[key] = rows
+            symbol_venues[key] = vcode
+        print(
+            f"[lake] loaded {len(listings)} symbols across {sorted(venues_used)} "
+            f"of {interval} OHLC from the lake"
+        )
     else:
         # Give each symbol a distinct synthetic regime so the portfolio is not N copies of one.
-        for i, sym in enumerate(syms):
-            bars[sym] = coinext_backtest.synthetic_bars(
+        for i, (vcode, sym) in enumerate(listings):
+            key = f"{vcode}:{sym}" if multi_venue else sym
+            bars[key] = coinext_backtest.synthetic_bars(
                 n=n, base=50_000.0 * (1.0 + 0.2 * i), period=40 + 7 * i
             )
+            symbol_venues[key] = vcode
 
-    result = coinext_backtest.run_multi(MultiSma(fast=fast, slow=slow), bars=bars)
-    print(f"[multi] {len(syms)} instruments: {', '.join(syms)}")
+    # Multi-currency revaluation into a single kernel settlement currency.
+    ccy_set = {venue_currency(v) for v in venues_used}
+    if base_ccy:
+        base = base_ccy.strip().upper()
+    elif is_equity_venue(venue_raw) and len(ccy_set) > 1:
+        base = "USD"
+        print(f"note: multi-currency portfolio {sorted(ccy_set)} → auto --base-ccy USD")
+    else:
+        base = None
+
+    if base is not None and is_equity_venue(venue_raw):
+        from coinext_data import load_fx_book
+
+        book = load_fx_book(prefer_lake=True, yahoo_if_empty=False)
+        n_lake = sum(1 for _ in getattr(book, "curves", {}) or [])
+        bars = revalue_bar_map(bars, symbol_venues=symbol_venues, book=book, base=base)
+        print(
+            f"[fx] revalued prices into {base} "
+            f"(FxBook curves={n_lake}; prefer lake venue=FX then static fallbacks)"
+        )
+
+    # Shared fee defaults from primary venue; per-symbol overrides above.
+    primary_spec = instrument_spec(primary_venue)
+    result = coinext_backtest.run_multi(
+        MultiSma(fast=fast, slow=slow),
+        bars=bars,
+        venue=primary_venue,
+        instruments=inst_overrides,
+        price_precision=primary_spec.price_precision,
+        size_precision=primary_spec.size_precision,
+        maker_fee=primary_spec.maker_fee,
+        taker_fee=primary_spec.taker_fee,
+    )
+    labels = [f"{v}/{s}" for v, s in listings]
+    ccy_note = f" base={base}" if base else ""
+    print(f"[multi] {venue_raw} × {len(listings)} instruments{ccy_note}: {', '.join(labels)}")
     print(coinext_analytics.tear_sheet(result))
     return 0
 
@@ -506,26 +648,317 @@ def _cmd_screen(
 
 
 def _cmd_download(
-    symbols: str = "BTCUSDT", interval: str = "1m", days: float = 7.0, venue: str = "BINANCE"
+    symbols: str = "BTCUSDT",
+    interval: str = "1m",
+    days: float = 7.0,
+    venue: str = "BINANCE",
+    *,
+    apply_calendar: bool = True,
 ) -> int:
-    """Download REAL venue history (public Binance REST, no key) into the local Parquet lake.
+    """Download REAL venue history into the local Parquet lake (no API key).
 
-    Pages past the 1000-bar request limit to pull ``--days`` of history for each ``--symbols``,
-    writing partitioned Parquet (deduped/idempotent). Then prints per-symbol coverage.
+    * Crypto (``--venue BINANCE``): public Binance klines REST (paginated past 1000-bar limit).
+    * Equity / index (``--venue NYSE|NASDAQ|HKEX|SSE|SZSE|…|INDEX``): Yahoo Finance chart API.
+    * Market groups: ``ASHARE``/``A股``, ``US``/``美股``, ``HK``/``港股``, ``ETF`` — multi-venue
+      download with auto-routing (A-share codes → SSE/SZSE).
+
+    ``--symbols @default`` expands liquid equities; ``@etf`` expands liquid ETFs.
+    Equity default interval is usually ``1d``. See ``coinext venues``.
     """
-    from coinext_data import _HAVE_LAKE, DataLake, download_to_lake
+    from coinext_data import (
+        _HAVE_LAKE,
+        DataLake,
+        download_to_lake,
+        get_venue,
+        is_equity_venue,
+        resolve_listings,
+        resolve_market_group,
+        suggest_equity_download_defaults,
+    )
 
     if not _HAVE_LAKE:
         print("pyarrow not installed — the data lake needs pyarrow (`uv pip install pyarrow`)")
         return 1
+    venue_raw = venue.strip() or "BINANCE"
+    group = resolve_market_group(venue_raw)
+    info = get_venue(venue_raw)
+    # Equity / market-group: rewrite crypto-shaped CLI defaults (1m×7d, BTCUSDT).
+    if is_equity_venue(venue_raw):
+        interval, days, symbols, notes = suggest_equity_download_defaults(
+            venue_raw, interval=interval, days=days, symbols=symbols
+        )
+        for note in notes:
+            print(f"note: {note}")
+        if apply_calendar:
+            print("note: equity calendar filter on (holidays + flat-halt bars); --no-calendar-filter to disable")
+    try:
+        listings = resolve_listings(venue_raw, symbols)
+    except (ValueError, KeyError) as exc:
+        print(f"symbols: {exc}")
+        return 1
     lake = DataLake()
-    syms = [s.strip() for s in symbols.split(",") if s.strip()]
-    print(f"downloading {days}d of {interval} for {syms} -> {lake.root}/bars ...")
-    counts = download_to_lake(lake, syms, interval=interval, days=days, venue=venue)
-    for sym, n in counts.items():
-        cov = lake.coverage(venue, sym, interval)
+    multi = len({v for v, _ in listings}) > 1
+    src = "yahoo" if (group is not None or (info and info.data_source == "yahoo")) else (
+        (info.data_source if info else "binance") or "binance"
+    )
+    label = ", ".join(f"{v}/{s}" for v, s in listings[:12])
+    if len(listings) > 12:
+        label += f", … (+{len(listings) - 12})"
+    print(
+        f"downloading {days}d of {interval} for [{label}] "
+        f"venue={venue_raw} source={src} -> {lake.root}/bars ..."
+    )
+    try:
+        if group is not None or multi:
+            counts = download_to_lake(
+                lake,
+                [],
+                interval=interval,
+                days=days,
+                venue=venue_raw,
+                listings=listings,
+                apply_calendar=apply_calendar,
+            )
+        else:
+            vcode = listings[0][0]
+            syms = [s for _, s in listings]
+            counts = download_to_lake(
+                lake,
+                syms,
+                interval=interval,
+                days=days,
+                venue=vcode,
+                apply_calendar=apply_calendar,
+            )
+    except (ValueError, RuntimeError, KeyError) as exc:
+        print(f"download failed: {exc}")
+        return 1
+    for key, n in counts.items():
+        if "/" in key:
+            vcode, sym = key.split("/", 1)
+        else:
+            vcode, sym = listings[0][0], key
+        cov = lake.coverage(vcode, sym, interval)
         a, b = cov.span_utc()
-        print(f"  {sym} {interval}: {n} rows  [{a} .. {b}]")
+        print(f"  {vcode}/{sym} {interval}: {n} rows  [{a} .. {b}]")
+    return 0
+
+
+def _cmd_download_fx(
+    pairs: str = "USDCNY,USDHKD", days: float = 365.0, lake_root: str | None = None
+) -> int:
+    """Download Yahoo FX pairs into ``venue=FX`` for multi-currency revaluation."""
+    from coinext_data import _HAVE_LAKE, DataLake, download_fx_to_lake
+
+    if not _HAVE_LAKE:
+        print("pyarrow not installed — the data lake needs pyarrow (`uv pip install pyarrow`)")
+        return 1
+    pair_list = [p.strip().upper().removesuffix("=X") for p in pairs.split(",") if p.strip()]
+    if not pair_list:
+        print("no FX pairs given")
+        return 1
+    lake = DataLake(lake_root)
+    print(f"downloading FX {pair_list} days={days:g} -> {lake.root}/bars/venue=FX ...")
+    try:
+        counts = download_fx_to_lake(lake, pair_list, days=days, pause=0.15)
+    except (ValueError, RuntimeError) as exc:
+        print(f"download-fx failed: {exc}")
+        return 1
+    for pair, n in counts.items():
+        cov = lake.coverage("FX", pair, "1d")
+        a, b = cov.span_utc()
+        print(f"  FX/{pair} 1d: {n} rows  [{a} .. {b}]")
+    print("use: coinext backtest-multi --base-ccy USD --from-lake ...")
+    return 0
+
+
+def _cmd_paper_equity(
+    symbol: str = "600519",
+    venue: str = "SSE",
+    interval: str = "1d",
+    strategy: str = "sma",
+    fast: int = 5,
+    slow: int = 20,
+    qty: float | None = None,
+    cash: float = 1_000_000.0,
+    multi: bool = False,
+) -> int:
+    """Replay lake bars through PaperEquityBroker (A-share T+1 / price limits).
+
+    ``--multi`` treats ``--symbols``-style venue groups: pass ``--venue ASHARE --symbol @default``
+    to expand defaults, or ``--symbol 600519,000001`` under ASHARE auto-routing.
+    """
+    from coinext_data import instrument_spec, resolve_listing, resolve_listings
+
+    try:
+        from coinext_broker import replay_from_lake, replay_portfolio_from_lake
+    except ImportError:
+        print(
+            "coinext_broker not on PYTHONPATH — ensure "
+            "market-data/venue-adapters/equity/python is importable"
+        )
+        return 1
+    if strategy not in ("sma", "buyhold", "none"):
+        print(f"unknown --strategy {strategy!r} (sma|buyhold|none)")
+        return 1
+
+    # Multi-listing portfolio on one paper broker.
+    if multi or "," in symbol or symbol.strip().startswith("@"):
+        try:
+            listings = resolve_listings(venue, symbol)
+        except (ValueError, KeyError) as exc:
+            print(f"listings: {exc}")
+            return 1
+        starting: dict[str, float] = {}
+        for v, s in listings:
+            ccy = instrument_spec(v, s).currency
+            starting.setdefault(ccy, float(cash))
+        try:
+            port = replay_portfolio_from_lake(
+                listings,
+                interval=interval,
+                strategy=strategy,
+                fast=fast,
+                slow=slow,
+                qty=qty,
+                starting_cash=starting,
+            )
+        except FileNotFoundError as exc:
+            print(exc)
+            return 1
+        print(port.summary())
+        return 0
+
+    try:
+        vcode, lake_sym = resolve_listing(venue, symbol)
+    except (ValueError, KeyError) as exc:
+        print(f"listing: {exc}")
+        return 1
+    ccy = instrument_spec(vcode, lake_sym).currency
+    try:
+        result = replay_from_lake(
+            vcode,
+            lake_sym,
+            interval=interval,
+            strategy=strategy,
+            fast=fast,
+            slow=slow,
+            qty=qty,
+            starting_cash={ccy: float(cash)},
+        )
+    except FileNotFoundError as exc:
+        print(exc)
+        return 1
+    print(result.summary())
+    if result.orders:
+        print("  last orders:")
+        for o in result.orders[-5:]:
+            extra = f" reason={o.reject_reason}" if o.reject_reason else ""
+            print(
+                f"    {o.client_order_id} {o.side} {o.qty:g} @ {o.avg_price or o.limit_price} "
+                f"→ {o.status}{extra}"
+            )
+    return 0
+
+
+def _cmd_ib_status(readonly: bool = True) -> int:
+    """Probe IB TWS/Gateway: connect, list cash, optional mark for AAPL."""
+    try:
+        from coinext_broker import IbConfig, IbPaperBroker
+    except ImportError:
+        print("coinext_broker not importable")
+        return 1
+    cfg = IbConfig.from_env()
+    if readonly:
+        cfg = IbConfig(
+            host=cfg.host,
+            port=cfg.port,
+            client_id=cfg.client_id,
+            account=cfg.account,
+            readonly=True,
+            timeout_s=cfg.timeout_s,
+            fill_wait_s=cfg.fill_wait_s,
+        )
+    print(
+        f"IB target {cfg.host}:{cfg.port} clientId={cfg.client_id} "
+        f"readonly={cfg.readonly} (see docs/IB_PAPER.md)"
+    )
+    br = IbPaperBroker(config=cfg, mode="ib")
+    try:
+        br.connect()
+    except ImportError as exc:
+        print(f"missing dep: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"connect failed: {exc}")
+        return 1
+    try:
+        print(f"cash: {br.cash()}")
+        mark = br.req_mark("NASDAQ", "AAPL")
+        print(f"NASDAQ/AAPL mark: {mark}")
+        print("ib-status: OK")
+        return 0
+    finally:
+        br.disconnect()
+
+
+def _cmd_venues(family: str | None = None) -> int:
+    """List registered venues (crypto + global equity markets)."""
+    from coinext_data import (
+        default_universe,
+        etf_universe,
+        format_market_groups,
+        format_venue_table,
+    )
+
+    fam = family.strip().lower() if family else None
+    if fam is not None and fam not in ("crypto", "equity", "index"):
+        print(f"unknown --family {family!r} (expected crypto|equity|index)")
+        return 1
+    print(format_venue_table(family=fam))  # type: ignore[arg-type]
+    print()
+    print(format_market_groups())
+    print()
+    print("Default universes (--symbols @default):")
+    for code in (
+        "BINANCE",
+        "NASDAQ",
+        "NYSE",
+        "HKEX",
+        "SSE",
+        "SZSE",
+        "TSE",
+        "LSE",
+        "INDEX",
+    ):
+        uni = default_universe(code)
+        if uni:
+            print(f"  {code}: {', '.join(uni)}")
+    print()
+    print("ETF universes (--symbols @etf):")
+    for code in ("NYSE", "NASDAQ", "SSE", "SZSE", "HKEX"):
+        uni = etf_universe(code)
+        if uni:
+            print(f"  {code}: {', '.join(uni)}")
+    print()
+    print("Examples:")
+    print("  coinext download --venue BINANCE --symbols BTCUSDT,ETHUSDT --interval 1m --days 7")
+    print("  # 美股")
+    print("  coinext download --venue NASDAQ --symbols @default --interval 1d --days 365")
+    print("  coinext download --venue US --symbols AAPL,JPM,SPY --interval 1d --days 365")
+    print("  # 港股")
+    print("  coinext download --venue HKEX --symbols 0700,0941 --interval 1d --days 365")
+    print("  coinext download --venue 港股 --symbols @default --interval 1d --days 365")
+    print("  # A股")
+    print("  coinext download --venue SSE --symbols 600519 --interval 1d --days 365")
+    print("  coinext download --venue ASHARE --symbols 600519,000001,300750 --interval 1d --days 365")
+    print("  # ETF")
+    print("  coinext download --venue NYSE --symbols @etf --interval 1d --days 365")
+    print("  coinext download --venue SSE --symbols @etf --interval 1d --days 365")
+    print("  coinext download --venue HKEX --symbols @etf --interval 1d --days 365")
+    print("  coinext download --venue INDEX --symbols @default --interval 1d --days 365")
+    print("  coinext backtest --venue NASDAQ --symbol AAPL --from-lake --interval 1d")
+    print("  coinext backtest-multi --venue NASDAQ --symbols AAPL,MSFT --from-lake --interval 1d")
     return 0
 
 
@@ -655,22 +1088,32 @@ def _cmd_reconcile(symbol: str = "BTCUSDT") -> int:
 
 
 def _cmd_catalog(venue: str = "BINANCE") -> int:
-    """Report coverage (rows + UTC span) for every series in the local Parquet lake."""
+    """Report coverage (rows + UTC span) for every series in the local Parquet lake.
+
+    Pass ``--venue ALL`` (or empty ``*``) to list every venue partition present in the lake.
+    """
     from coinext_data import _HAVE_LAKE, DataLake
 
     if not _HAVE_LAKE:
         print("pyarrow not installed — the catalog needs the lake (`uv pip install pyarrow`)")
         return 1
     lake = DataLake()
-    series = [s for s in lake.list_series() if s[0] == venue]
+    venue_code = (venue or "BINANCE").strip().upper()
+    all_series = lake.list_series()
+    if venue_code in ("ALL", "*", "ANY"):
+        series = all_series
+        label = "ALL"
+    else:
+        series = [s for s in all_series if s[0] == venue_code]
+        label = venue_code
     if not series:
-        print(f"{venue} ({lake.root}/bars): no series found (lake empty or missing)")
+        print(f"{label} ({lake.root}/bars): no series found (lake empty or missing)")
         return 0
-    print(f"{venue} ({lake.root}/bars):")
+    print(f"{label} ({lake.root}/bars):")
     for v, s, i in series:
         cov = lake.coverage(v, s, i)
         a, b = cov.span_utc()
-        print(f"  {s} {i}: {cov.n_rows} rows  [{a} .. {b}]")
+        print(f"  {v}/{s} {i}: {cov.n_rows} rows  [{a} .. {b}]")
     return 0
 
 
@@ -696,13 +1139,17 @@ def _build_typer_app():
         from_lake: bool = False,
         interval: str = "1m",
         strategy: str = "sma",
+        venue: str = "BINANCE",
     ) -> None:
         """Run a strategy through the Rust kernel and print the tear sheet.
 
         --strategy sma|limit-maker; --from-lake reads the local Parquet lake; --real fetches a fresh
         window; else synthetic. limit-maker rests LIMIT orders (the OHLC-aware fill path).
+        --venue selects lake partition / instrument family (BINANCE, NYSE, HKEX, …).
         """
-        raise typer.Exit(_cmd_backtest(symbol, fast, slow, n, real, from_lake, interval, strategy))
+        raise typer.Exit(
+            _cmd_backtest(symbol, fast, slow, n, real, from_lake, interval, strategy, venue)
+        )
 
     @app.command("backtest-multi")
     def backtest_multi(
@@ -712,9 +1159,17 @@ def _build_typer_app():
         n: int = 400,
         from_lake: bool = False,
         interval: str = "1m",
+        venue: str = "BINANCE",
+        base_ccy: str | None = None,
     ) -> None:
-        """Run a per-symbol SMA portfolio across many instruments through one kernel."""
-        raise typer.Exit(_cmd_backtest_multi(symbols, fast, slow, n, from_lake, interval))
+        """Run a per-symbol SMA portfolio across many instruments through one kernel.
+
+        --symbols @default expands the venue liquid universe; --venue selects lake partition.
+        --base-ccy USD|CNY|HKD revalues multi-currency equity prices into one settlement ccy.
+        """
+        raise typer.Exit(
+            _cmd_backtest_multi(symbols, fast, slow, n, from_lake, interval, venue, base_ccy)
+        )
 
     @app.command()
     def parity(symbol: str = "BTCUSDT", fast: int = 10, slow: int = 30, n: int = 400) -> None:
@@ -759,10 +1214,59 @@ def _build_typer_app():
 
     @app.command()
     def download(
-        symbols: str = "BTCUSDT", interval: str = "1m", days: float = 7.0, venue: str = "BINANCE"
+        symbols: str = "BTCUSDT",
+        interval: str = "1m",
+        days: float = 7.0,
+        venue: str = "BINANCE",
+        no_calendar_filter: bool = False,
     ) -> None:
-        """Download REAL venue history into the local Parquet lake (paginated, no key)."""
-        raise typer.Exit(_cmd_download(symbols, interval, days, venue))
+        """Download REAL venue history into the local Parquet lake (no key).
+
+        Crypto: Binance klines. Equity/index: Yahoo Finance (see `coinext venues`).
+        Equity daily bars drop holidays / flat-halt prints unless --no-calendar-filter.
+        """
+        raise typer.Exit(
+            _cmd_download(symbols, interval, days, venue, apply_calendar=not no_calendar_filter)
+        )
+
+    @app.command()
+    def venues(family: str | None = None) -> None:
+        """List registered global venues (crypto + mainstream stock markets)."""
+        raise typer.Exit(_cmd_venues(family))
+
+    @app.command("download-fx")
+    def download_fx(
+        pairs: str = "USDCNY,USDHKD",
+        days: float = 365.0,
+        lake_root: str | None = None,
+    ) -> None:
+        """Download Yahoo FX pairs into the lake under venue=FX (for --base-ccy revaluation)."""
+        raise typer.Exit(_cmd_download_fx(pairs, days, lake_root))
+
+    @app.command("paper-equity")
+    def paper_equity(
+        symbol: str = "600519",
+        venue: str = "SSE",
+        interval: str = "1d",
+        strategy: str = "sma",
+        fast: int = 5,
+        slow: int = 20,
+        qty: float | None = None,
+        cash: float = 1_000_000.0,
+        multi: bool = False,
+    ) -> None:
+        """Replay lake bars through PaperEquityBroker (T+1 / 涨跌停 for A-shares).
+
+        Use --multi or comma/@default symbols for a shared multi-market paper portfolio.
+        """
+        raise typer.Exit(
+            _cmd_paper_equity(symbol, venue, interval, strategy, fast, slow, qty, cash, multi)
+        )
+
+    @app.command("ib-status")
+    def ib_status(readonly: bool = True) -> None:
+        """Probe IB TWS/Gateway connectivity (requires ib_insync + running TWS paper)."""
+        raise typer.Exit(_cmd_ib_status(readonly))
 
     @app.command("ingest-trades")
     def ingest_trades(
@@ -814,7 +1318,7 @@ def _build_typer_app():
 
     @app.command()
     def catalog(venue: str = "BINANCE") -> None:
-        """Inspect the data lake."""
+        """Inspect the data lake (pass --venue ALL for every partition)."""
         raise typer.Exit(_cmd_catalog(venue))
 
     return app
@@ -834,18 +1338,41 @@ def _build_argparse_parser():
     p.add_argument("--fast", type=int, default=10)
     p.add_argument("--slow", type=int, default=30)
     p.add_argument("--n", type=int, default=400)
-    p.add_argument("--real", action="store_true", help="Use REAL Binance klines (no key).")
+    p.add_argument(
+        "--real",
+        action="store_true",
+        help="Use REAL market data (Binance klines or Yahoo equity, no key).",
+    )
     p.add_argument("--from-lake", action="store_true", help="Read the local Parquet lake.")
     p.add_argument("--interval", default="1m")
     p.add_argument("--strategy", default="sma", choices=["sma", "limit-maker"])
+    p.add_argument(
+        "--venue",
+        default="BINANCE",
+        help="Venue or market group: BINANCE, NASDAQ, HKEX, SSE, ASHARE/A股, US/美股, HK/港股, …",
+    )
 
     p = sub.add_parser("backtest-multi", help="Per-symbol SMA portfolio across many instruments.")
-    p.add_argument("--symbols", default="BTCUSDT,ETHUSDT", help="comma-separated, e.g. BTC,ETH")
+    p.add_argument(
+        "--symbols",
+        default="BTCUSDT,ETHUSDT",
+        help="comma-separated, @default equities, or @etf for liquid ETFs",
+    )
     p.add_argument("--fast", type=int, default=10)
     p.add_argument("--slow", type=int, default=30)
     p.add_argument("--n", type=int, default=400)
     p.add_argument("--from-lake", action="store_true", help="Read each symbol's OHLC from the lake")
     p.add_argument("--interval", default="1m")
+    p.add_argument(
+        "--venue",
+        default="BINANCE",
+        help="Venue or market group: BINANCE, NASDAQ, HKEX, SSE, ASHARE/A股, US/美股, HK/港股, …",
+    )
+    p.add_argument(
+        "--base-ccy",
+        default=None,
+        help="Revalue multi-currency equity prices into USD|CNY|HKD before the kernel run",
+    )
 
     p = sub.add_parser("parity", help="Run the pre-live promotion gate (backtest vs sandbox).")
     p.add_argument("--symbol", default="BTCUSDT")
@@ -890,11 +1417,71 @@ def _build_argparse_parser():
     p.add_argument("--interval", default="1m")
     p.add_argument("--n", type=int, default=1200)
 
-    p = sub.add_parser("download", help="Download REAL history into the local Parquet lake.")
-    p.add_argument("--symbols", default="BTCUSDT", help="comma-separated, e.g. BTCUSDT,ETHUSDT")
+    p = sub.add_parser(
+        "download",
+        help="Download REAL history into the local Parquet lake (Binance or Yahoo equity).",
+    )
+    p.add_argument(
+        "--symbols",
+        default="BTCUSDT",
+        help="comma-separated (BTCUSDT,AAPL,0700,600519) or @default / @etf presets",
+    )
     p.add_argument("--interval", default="1m")
     p.add_argument("--days", type=float, default=7.0)
-    p.add_argument("--venue", default="BINANCE")
+    p.add_argument(
+        "--venue",
+        default="BINANCE",
+        help="BINANCE | NYSE|NASDAQ|HKEX|SSE|SZSE | ASHARE/A股 | US/美股 | HK/港股 | ETF",
+    )
+    p.add_argument(
+        "--no-calendar-filter",
+        action="store_true",
+        help="Keep weekend/holiday/flat-halt equity bars (default: filter them out)",
+    )
+
+    p = sub.add_parser("venues", help="List registered global venues (crypto + stock markets).")
+    p.add_argument(
+        "--family",
+        default=None,
+        choices=["crypto", "equity", "index"],
+        help="Optional filter by asset family.",
+    )
+
+    p = sub.add_parser(
+        "download-fx",
+        help="Download Yahoo FX pairs into venue=FX (USDCNY/USDHKD for multi-ccy).",
+    )
+    p.add_argument("--pairs", default="USDCNY,USDHKD", help="comma-separated bare pairs")
+    p.add_argument("--days", type=float, default=365.0)
+    p.add_argument("--lake-root", default=None)
+
+    p = sub.add_parser(
+        "paper-equity",
+        help="Replay lake bars through PaperEquityBroker (A-share T+1 / 涨跌停).",
+    )
+    p.add_argument("--symbol", default="600519")
+    p.add_argument("--venue", default="SSE", help="SSE, SZSE, NASDAQ, HKEX, ASHARE, …")
+    p.add_argument("--interval", default="1d")
+    p.add_argument("--strategy", default="sma", choices=["sma", "buyhold", "none"])
+    p.add_argument("--fast", type=int, default=5)
+    p.add_argument("--slow", type=int, default=20)
+    p.add_argument("--qty", type=float, default=None, help="order size (default: board lot)")
+    p.add_argument("--cash", type=float, default=1_000_000.0, help="starting cash in listing ccy")
+    p.add_argument(
+        "--multi",
+        action="store_true",
+        help="Multi-symbol portfolio on one paper broker (comma symbols or @default)",
+    )
+
+    p = sub.add_parser(
+        "ib-status",
+        help="Probe IB TWS/Gateway (ib_insync); see docs/IB_PAPER.md",
+    )
+    p.add_argument(
+        "--no-readonly",
+        action="store_true",
+        help="Connect without forcing readonly (default is readonly)",
+    )
 
     p = sub.add_parser("ingest-trades", help="Aggregate public aggTrades into the local lake.")
     p.add_argument("--symbol", default="BTCUSDT")
@@ -935,7 +1522,11 @@ def _build_argparse_parser():
     p.add_argument("--testnet", action="store_true")
 
     p = sub.add_parser("catalog", help="Inspect the data lake.")
-    p.add_argument("--venue", default="BINANCE")
+    p.add_argument(
+        "--venue",
+        default="BINANCE",
+        help="Venue partition to list, or ALL for every venue present.",
+    )
 
     return parser
 
@@ -945,10 +1536,25 @@ def _run_argparse(argv: list[str] | None) -> int:
     ns = parser.parse_args(argv)
     dispatch = {
         "backtest": lambda: _cmd_backtest(
-            ns.symbol, ns.fast, ns.slow, ns.n, ns.real, ns.from_lake, ns.interval, ns.strategy
+            ns.symbol,
+            ns.fast,
+            ns.slow,
+            ns.n,
+            ns.real,
+            ns.from_lake,
+            ns.interval,
+            ns.strategy,
+            ns.venue,
         ),
         "backtest-multi": lambda: _cmd_backtest_multi(
-            ns.symbols, ns.fast, ns.slow, ns.n, ns.from_lake, ns.interval
+            ns.symbols,
+            ns.fast,
+            ns.slow,
+            ns.n,
+            ns.from_lake,
+            ns.interval,
+            ns.venue,
+            getattr(ns, "base_ccy", None),
         ),
         "parity": lambda: _cmd_parity(ns.symbol, ns.fast, ns.slow, ns.n),
         "testnet-gate": lambda: _cmd_testnet_gate(
@@ -968,7 +1574,27 @@ def _run_argparse(argv: list[str] | None) -> int:
         "kill-switch": lambda: _cmd_kill_switch(
             ns.release, ns.reason, ns.actor, ns.api_base, ns.api_key
         ),
-        "download": lambda: _cmd_download(ns.symbols, ns.interval, ns.days, ns.venue),
+        "download": lambda: _cmd_download(
+            ns.symbols,
+            ns.interval,
+            ns.days,
+            ns.venue,
+            apply_calendar=not getattr(ns, "no_calendar_filter", False),
+        ),
+        "download-fx": lambda: _cmd_download_fx(ns.pairs, ns.days, getattr(ns, "lake_root", None)),
+        "paper-equity": lambda: _cmd_paper_equity(
+            ns.symbol,
+            ns.venue,
+            ns.interval,
+            ns.strategy,
+            ns.fast,
+            ns.slow,
+            ns.qty,
+            ns.cash,
+            getattr(ns, "multi", False),
+        ),
+        "ib-status": lambda: _cmd_ib_status(readonly=not getattr(ns, "no_readonly", False)),
+        "venues": lambda: _cmd_venues(ns.family),
         "ingest-trades": lambda: _cmd_ingest_trades(ns.symbol, ns.interval, ns.limit, ns.venue),
         "live": lambda: _cmd_live(ns.env, ns.symbol, dry_run=not ns.no_dry_run, paper=ns.paper),
         "reconcile": lambda: _cmd_reconcile(ns.symbol),
