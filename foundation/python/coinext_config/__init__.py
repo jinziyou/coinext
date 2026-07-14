@@ -1,18 +1,6 @@
-"""coinext_config — layered configuration for the Coinext control plane.
+"""coinext_config — Layered YAML + env config (COINEXT__SECTION__KEY).
 
-Resolution order (highest precedence first), per root ``ARCHITECTURE.md`` and ``.env.example``::
-
-    CLI flags  >  env (COINEXT__SECTION__KEY)  >  YAML files under DEFAULT_CONFIG_DIR  >  built-in defaults
-
-The same ``RunConfig`` is built for every :class:`~coinext_kernel.Environment` — only the Kernel-injected
-Clock / Cache / Data+Exec clients differ between backtest, sandbox, and live (the parity invariant).
-The ``BrokerageModel`` economics carried under ``VenueConfig`` are SHARED between backtest and live
-so the two agree on venue *economics*, not just order flow.
-
-Optional deps are guarded: pydantic is used for validation when present, otherwise a stdlib
-``dataclasses`` fallback provides the same field surface. PyYAML is loaded lazily and only when a
-config file is actually read. ``from coinext_config import load_config`` imports cleanly with NO heavy
-deps installed.
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

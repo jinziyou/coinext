@@ -1,27 +1,6 @@
-"""coinext_live — the TradingNode (live / sandbox runtime).
+"""coinext_live — Live/sandbox TradingNode runtime (same engines as backtest).
 
-Builds the SAME ``RunConfig`` as the backtest, but tells the Kernel to inject ``Environment::Live``
-(or ``Sandbox``) pieces: a ``LiveClock``, the ``BinanceDataClient``, and the
-``BinanceExecutionClient`` — behind byte-identical ports, so the OMS / Risk / Portfolio / Strategy
-above are unchanged (root ARCHITECTURE.md §1, §6). NOTHING else changes vs backtest.
-
-Key live-only responsibilities (partly wired here; native I/O still lives in Rust):
-
-* **Warm-up from the LOCAL HistoryReader** — indicators are warmed from the lake, never via live
-  REST at handler time, so they are byte-identical to backtest.
-* **Dual fill path** — fills/acks arrive on the WS user-stream (fast) with a REST poll loop
-  (fallback). Both fold into the event-sourced Order/Position.
-* **Portfolio telemetry** — native ``PortfolioSnapshot`` values are adapted via
-  ``publish_native_snapshot`` / ``publish_kernel_portfolio`` and emitted on ``coinext.live``.
-* **Reconcile-on-restart** — :meth:`reconcile` folds the local JSONL event log and diffs it against
-  an optional venue open-order snapshot (fixture or injected list). Full REST venue query remains
-  in the Rust adapter path.
-
-Status: **partial** — lifecycle, warm-up, telemetry, and file-backed reconcile are implemented;
-continuous venue WS/REST I/O still requires the native live loop + API keys.
-
-The Binance clients live in Rust (``coinext-adapters/binance``); this node only orchestrates lifecycle.
-Async is via ``anyio`` (the ``live`` extra); imports are deferred so this module loads without it.
+Status: partial. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

@@ -1,33 +1,33 @@
 # Coinext — local DEV overrides.
 #
-# Layered on top of docker-compose.yml (and optionally docker-compose.obs.yml):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 #   # with observability:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.obs.yml up -d
 #
-# What this overlay changes vs prod:
-#   * Exposes every service port on localhost so you can hit them directly.
-#   * Bind-mounts root workflow modules into the Python/UI containers for fast iteration.
-#   * Switches long-running app processes to hot-reload entrypoints where the runtime supports it.
+# Changes vs prod:
+#   * Publish service ports on localhost.
+#   * Bind-mount lifecycle sources for pure-Python iteration.
+#   * API uses uvicorn --reload on */python + service app.
 #
-# HOT-RELOAD NOTES
-#   * api (FastAPI/uvicorn): `--reload` watches the bind-mounted root workflow modules' */python trees
-#     plus the API service app. NOTE the compiled coinext_py extension is built into the image; if you
-#     change Rust under foundation/crates/coinext-py you must rebuild (`just py-build` locally,
-#     or `docker compose build api`). Pure-Python edits reload.
-#   * trader / risk-monitor: bind-mounted source; restart the container to pick up changes, or run
-#     them under `watchfiles` (see commented command). The Kernel itself is the compiled coinext_py.
-#   * ingestor / exec-svc (Rust): no in-container hot reload — rebuild the image, or run the binary
-#     on the host with `cargo run --manifest-path market-data/crates/coinext-ingest/Cargo.toml` /
-#     `cargo run --manifest-path execution-live/crates/coinext-exec-svc/Cargo.toml`
-#     against the dev infra ports below.
-#   * ui (Vite): for true HMR run `npm run dev` on the host (port 3000; stop the compose `ui`
-#     service first). This overlay serves the built static bundle via nginx on :3000.
+# Hot-reload notes:
+#   * api: pure-Python reloads; rebuild image for coinext_py / Rust changes.
+#   * trader / risk-monitor: remount source; restart container to pick up changes.
+#   * ingestor / exec-svc: rebuild image, or cargo run on host against published infra ports.
+#   * ui: host `npm run dev` for HMR (stop compose ui first); this overlay serves the built bundle.
 
 name: coinext
 
+# Per-path anchors (Compose cannot merge sequence anchors into another sequence).
+x-vol-foundation: &vol-foundation ./foundation:/app/foundation:ro
+x-vol-market-data: &vol-market-data ./market-data:/app/market-data:ro
+x-vol-strategy: &vol-strategy ./strategy-research:/app/strategy-research:ro
+x-vol-backtest: &vol-backtest ./backtesting-simulation:/app/backtesting-simulation:ro
+x-vol-analytics: &vol-analytics ./analytics-optimization:/app/analytics-optimization:ro
+x-vol-risk: &vol-risk ./risk-portfolio:/app/risk-portfolio:ro
+x-vol-exec: &vol-exec ./execution-live:/app/execution-live:ro
+x-vol-ops: &vol-ops ./operations-interface:/app/operations-interface:ro
+
 services:
-  # --- Infra: expose ports to the host for psql / redis-cli / mc / browser console ---
   postgres:
     ports:
       - "5432:5432"
@@ -38,57 +38,53 @@ services:
 
   minio:
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # web console
+      - "9000:9000"
+      - "9001:9001"
 
-  # --- Rust hot path: expose metrics + control; rebuild image to change code ---
   ingestor:
     ports:
-      - "9101:9101"   # prometheus metrics
+      - "9101:9101"
     environment:
       COINEXT__LOG__LEVEL: debug
 
   exec-svc:
     ports:
-      - "9102:9102"   # prometheus metrics
-      - "8081:8081"   # control/admin API
+      - "9102:9102"
+      - "8081:8081"
     environment:
       COINEXT__LOG__LEVEL: debug
 
-  # --- Python control plane: bind-mount source for fast iteration ---
   trader:
     ports:
-      - "9103:9103"   # prometheus metrics
+      - "9103:9103"
     environment:
       COINEXT__LOG__LEVEL: debug
     volumes:
-      - ./foundation:/app/foundation:ro
-      - ./market-data:/app/market-data:ro
-      - ./strategy-research:/app/strategy-research:ro
-      - ./backtesting-simulation:/app/backtesting-simulation:ro
-      - ./analytics-optimization:/app/analytics-optimization:ro
-      - ./risk-portfolio:/app/risk-portfolio:ro
-      - ./execution-live:/app/execution-live:ro
-      - ./operations-interface:/app/operations-interface:ro
+      - *vol-foundation
+      - *vol-market-data
+      - *vol-strategy
+      - *vol-backtest
+      - *vol-analytics
+      - *vol-risk
+      - *vol-exec
+      - *vol-ops
       - ./execution-live/services/trader:/app/trader:ro
       - ./data:/data
-    # Restart-to-reload by default. For auto-reload uncomment:
-    # command: ["uv", "run", "watchfiles", "python -m main", "foundation", "market-data", "strategy-research", "backtesting-simulation", "analytics-optimization", "risk-portfolio", "execution-live", "operations-interface", "trader"]
 
   risk-monitor:
     ports:
-      - "9104:9104"   # prometheus metrics
+      - "9104:9104"
     environment:
       COINEXT__LOG__LEVEL: debug
     volumes:
-      - ./foundation:/app/foundation:ro
-      - ./market-data:/app/market-data:ro
-      - ./strategy-research:/app/strategy-research:ro
-      - ./backtesting-simulation:/app/backtesting-simulation:ro
-      - ./analytics-optimization:/app/analytics-optimization:ro
-      - ./risk-portfolio:/app/risk-portfolio:ro
-      - ./execution-live:/app/execution-live:ro
-      - ./operations-interface:/app/operations-interface:ro
+      - *vol-foundation
+      - *vol-market-data
+      - *vol-strategy
+      - *vol-backtest
+      - *vol-analytics
+      - *vol-risk
+      - *vol-exec
+      - *vol-ops
       - ./risk-portfolio/services/risk-monitor:/app/risk_monitor:ro
 
   api:
@@ -97,20 +93,47 @@ services:
     environment:
       COINEXT__LOG__LEVEL: debug
     volumes:
-      - ./foundation:/app/foundation:ro
-      - ./market-data:/app/market-data:ro
-      - ./strategy-research:/app/strategy-research:ro
-      - ./backtesting-simulation:/app/backtesting-simulation:ro
-      - ./analytics-optimization:/app/analytics-optimization:ro
-      - ./risk-portfolio:/app/risk-portfolio:ro
-      - ./execution-live:/app/execution-live:ro
-      - ./operations-interface:/app/operations-interface:ro
+      - *vol-foundation
+      - *vol-market-data
+      - *vol-strategy
+      - *vol-backtest
+      - *vol-analytics
+      - *vol-risk
+      - *vol-exec
+      - *vol-ops
       - ./operations-interface/services/api:/app/api:ro
       - ./data:/data
-    # uvicorn auto-reload on the bind-mounted app + root workflow modules (pure-Python changes only; see header note).
-    command: ["uvicorn", "app:app", "--app-dir", "/app/api", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/api", "--reload-dir", "/app/foundation", "--reload-dir", "/app/market-data", "--reload-dir", "/app/strategy-research", "--reload-dir", "/app/backtesting-simulation", "--reload-dir", "/app/analytics-optimization", "--reload-dir", "/app/risk-portfolio", "--reload-dir", "/app/execution-live", "--reload-dir", "/app/operations-interface"]
+    command:
+      [
+        "uvicorn",
+        "app:app",
+        "--app-dir",
+        "/app/api",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "/app/api",
+        "--reload-dir",
+        "/app/foundation/python",
+        "--reload-dir",
+        "/app/market-data/python",
+        "--reload-dir",
+        "/app/strategy-research/python",
+        "--reload-dir",
+        "/app/backtesting-simulation/python",
+        "--reload-dir",
+        "/app/analytics-optimization/python",
+        "--reload-dir",
+        "/app/risk-portfolio/python",
+        "--reload-dir",
+        "/app/execution-live/python",
+        "--reload-dir",
+        "/app/operations-interface/python",
+      ]
 
-  # --- UI: serve the built bundle on :3000; use host `npm run dev` for HMR ---
   ui:
     ports:
       - "3000:80"

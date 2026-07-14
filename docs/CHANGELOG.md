@@ -11,11 +11,12 @@ Language: English (design/changelog). Operator quick-start remains Chinese in th
 - **Layout:** each lifecycle module uses `crates/`, `python/`, optional `services/` (no
   `component/rust|python` or `*/service/*` nesting). Config defaults: `foundation/config/`.
 - **Tooling:** Docker Rust images pinned to MSRV **1.95**; live-edge builds → `target/live-edge`;
-  `just clean-targets`; shared `pythonpath.env` + entrypoint for Python images.
-- **Python:** pure-Python packages are **uv workspace members** (installable by name after
-  `uv sync`); pytest keeps lifecycle `pythonpath` as a zero-install fallback.
-- **Docs:** `docs/CONTRIBUTING.md`, per-module READMEs, status labels aligned
-  (verified / partial / scaffold).
+  `just clean-targets`.
+- **Python:** pure-Python packages are **uv workspace members**; production images run
+  `uv sync --frozen` into `/opt/venv` and only append the service app via
+  `COINEXT_SERVICE_PYTHONPATH`. Pytest keeps lifecycle `pythonpath` as a zero-install fallback.
+- **Docs / comments:** `docs/CONTRIBUTING.md`, per-module and service READMEs; package module
+  docstrings shortened to role + status (see `docs/STATUS.md`).
 
 ## 2026-07-14 — global equity venues + Yahoo history
 

@@ -1,12 +1,6 @@
-"""Exchange trading calendars + bar hygiene for equity research.
+"""Trading calendars — CN/US/HK session filters for daily bars.
 
-Filters weekend / holiday sessions and likely halt bars (null already dropped by the Yahoo
-parser; zero-volume flat prints are treated as halted). Used by the equity downloader and
-optional lake re-reads so multi-market backtests do not see non-sessions.
-
-Calendars are **research-grade**: weekend rules are exact; holiday tables cover 2018–2028 for
-CN/HK and rule-based federal-style holidays for US. They are not a substitute for a licensed
-exchange calendar feed.
+Status: verified.
 """
 
 from __future__ import annotations

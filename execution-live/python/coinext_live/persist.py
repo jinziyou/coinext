@@ -1,12 +1,6 @@
-"""SQLite event log + SeqCursor matching ``coinext-persistence`` schemas (Python control plane).
+"""Live runtime persistence helpers (file/SQLite paths).
 
-Rust ``coinext-persistence`` remains the OMS-side source of truth in exec-svc. This module gives
-the Python ``TradingNode`` the same durable shapes for:
-
-* crash-recovery ``ClientOrderId`` sequences (``seq_cursor`` table)
-* append-only order event log (``order_events`` table) consumed by :mod:`coinext_live.reconcile`
-
-Paths: ``COINEXT__PERSIST__DB`` (default ``.coinext/live.db``) or an explicit path.
+Status: partial.
 """
 
 from __future__ import annotations

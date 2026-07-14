@@ -1,18 +1,6 @@
-"""Global venue registry — crypto + mainstream equity markets.
+"""Venue catalog — equity/crypto market groups, universes, symbol routing.
 
-Venues are free-form strings in the domain model (``InstrumentId.venue``). This module is the
-**research-side catalog**: canonical codes for the data lake partition key, Yahoo Finance
-symbology for public equity history, and human metadata for CLI / catalog listing.
-
-First-class **research** markets (download + backtest; live broker adapters still deferred):
-
-* **A-shares (A股)** — ``SSE`` / ``SZSE`` (aliases ``ASHARE``, ``A股``; code auto-routes 6xxxx→SSE)
-* **ETFs** — trade on the same venues; ``--symbols @etf`` expands liquid ETF presets
-* **US equities (美股)** — ``NYSE`` / ``NASDAQ`` / ``AMEX`` (aliases ``US``, ``美股``)
-* **Hong Kong (港股)** — ``HKEX`` (aliases ``HK``, ``港股``)
-
-Live execution adapters remain separate (only Binance is wired today). Equity venues here are
-for **data + backtest** until a broker adapter lands.
+Status: verified. See docs/EQUITY_RESEARCH.md.
 """
 
 from __future__ import annotations

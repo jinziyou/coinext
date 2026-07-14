@@ -1,15 +1,6 @@
-"""Equity broker port + offline paper implementation.
+"""Broker protocols and shared types for equity paper paths.
 
-Mirrors the spirit of ``coinext-ports::ExecutionClient`` without requiring the Rust kernel:
-research scripts and future live adapters share :class:`EquityBroker`.
-
-Paper rules for **A股** (SSE/SZSE):
-
-* **T+1** — shares bought on session day ``D`` cannot be sold until day ``D+1``
-  (tracked via :meth:`set_session_day` / bar timestamps).
-* **涨跌停** — when a previous close is known (:meth:`set_prev_close` / :meth:`on_bar`),
-  market/limit prices outside the ±limit band are rejected (or market orders clamp-to-limit
-  when ``clamp_to_limit=True``).
+Status: partial.
 """
 
 from __future__ import annotations

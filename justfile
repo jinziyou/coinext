@@ -54,7 +54,7 @@ clean-targets:
 
 # --- Python control plane ---
 
-# Create the venv and install research/config/api/bus deps plus dev tools
+# Create the venv and install workspace packages + research/config/api/bus + dev tools
 py-setup:
     uv sync --extra research --extra config --extra api --extra bus --group dev
 

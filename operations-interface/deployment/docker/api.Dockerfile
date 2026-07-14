@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
-# api — FastAPI control plane (:8000). Embeds coinext_py for domain types.
-# Status: scaffold. Multi-stage: maturin wheel → python:3.13-slim + uv.
+# api — FastAPI control plane (:8000). Embeds coinext_py. Status: scaffold.
+# Pure-Python packages installed via `uv sync` (workspace members); only the service app uses
+# COINEXT_SERVICE_PYTHONPATH.
 
 FROM rust:1.95-bookworm AS rust-builder
 RUN apt-get update \
@@ -26,21 +27,21 @@ COPY risk-portfolio ./risk-portfolio
 COPY execution-live ./execution-live
 COPY operations-interface ./operations-interface
 COPY operations-interface/services/api ./api
-COPY operations-interface/deployment/docker/pythonpath.env /etc/coinext/pythonpath.env
 COPY operations-interface/deployment/docker/entrypoint-python.sh /entrypoint-python.sh
 RUN chmod +x /entrypoint-python.sh
 
-RUN uv pip install --system --no-cache \
-      "fastapi>=0.110" "starlette>=1.3.1" "uvicorn>=0.29" \
-      "redis>=5" "msgpack>=1.2.1" \
-      "structlog>=24" "prometheus-client>=0.20" "opentelemetry-sdk>=1.25" \
-      "pydantic>=2.7" "pyyaml>=6" "numpy>=2.0"
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH=/opt/venv/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    COINEXT_SERVICE_PYTHONPATH=/app/api
+
+RUN uv venv /opt/venv \
+ && uv sync --frozen --no-dev --extra api --extra bus --extra obs
 
 COPY --from=rust-builder /wheels/*.whl /tmp/wheels/
-RUN uv pip install --system --no-cache /tmp/wheels/*.whl && rm -rf /tmp/wheels
-
-ENV PYTHONUNBUFFERED=1
-ENV COINEXT_SERVICE_PYTHONPATH=/app/api
+RUN uv pip install --no-cache /tmp/wheels/*.whl && rm -rf /tmp/wheels
 
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint-python.sh"]

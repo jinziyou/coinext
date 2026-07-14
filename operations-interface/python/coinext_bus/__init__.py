@@ -1,13 +1,6 @@
-"""coinext_bus — the Python Redis-Streams bus client.
+"""coinext_bus — Python Redis-Streams Envelope client (cross-service bus).
 
-Python never imports the Rust in-process bus crate (that hot path passes typed ``Arc`` with zero
-serialization, ARCHITECTURE.md §6). For cross-service / UI fan-out, Python consumes a **Redis
-Streams** bus and decodes the versioned **MessagePack** :class:`~coinext_contracts.Envelope`
-(``{schema_version, msg_type, trace_id, ts_init, payload}``). The ``ingestor`` (Rust ``coinext-ingest``)
-publishes normalized market data; the ``trader``/``api``/``risk-monitor`` consume it.
-
-``redis`` and ``msgpack`` are optional and guarded — this module imports cleanly without them; the
-error is raised only when you actually open a connection / decode a frame.
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

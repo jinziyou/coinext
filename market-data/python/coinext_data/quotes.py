@@ -1,24 +1,6 @@
-"""Quote-tick history: synthetic derivation, JSON recording, and optional live REST snapshot.
+"""Quote helpers — synth quotes from bars + optional live capture utilities.
 
-Research gap: ``on_quote`` in backtests usually runs on synthetic or trade-derived quotes.
-This module closes the ergonomics gap without requiring a live WS capture session:
-
-* :func:`synth_quotes_from_bars` — deterministic bid/ask around each bar close (research default).
-* :func:`quotes_from_trades` — reconstruct a one-sided quote stream from aggTrade prints.
-* :func:`dump_quote_recording` / :func:`load_quote_recording` — offline JSON fixtures for replay.
-* :func:`fetch_binance_book_ticker` — one-shot public REST snapshot (no API key); useful for
-  seeding a recording, not a historical time series (Binance does not expose full bookTicker
-  history on REST).
-
-Recorded layout (JSON)::
-
-    {
-      "schema_version": 1,
-      "symbol": "BTCUSDT",
-      "venue": "BINANCE",
-      "source": "synth|trades|bookTicker|ws-capture",
-      "quotes": [[ts_ns, bid, ask, bid_sz, ask_sz], ...]
-    }
+Status: verified. Used by research screens and CLI capture-quotes.
 """
 
 from __future__ import annotations

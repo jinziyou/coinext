@@ -1,32 +1,7 @@
-"""coinext_cli.main — the ``coinext`` CLI.
+"""coinext_cli.main — the ``coinext`` operator CLI.
 
-Subcommands map onto the control-plane packages:
-
-* ``backtest``       → run the AUTHORITATIVE ``coinext_backtest`` runner with ``coinext_strategy.SmaCross``
-  and print ``coinext_analytics.tear_sheet`` (the canonical end-to-end demo).
-* ``backtest-multi`` → run a per-symbol SMA portfolio (``coinext_strategy.MultiSma``) across many
-  instruments through one kernel (``coinext_backtest.run_multi``) and print the aggregate tear sheet.
-* ``parity``         → run the pre-live promotion gate (``coinext_parity.run_gate``): backtest SmaCross vs a
-  slightly-perturbed sandbox session and print ``render_verdict`` (the demo acceptance gate).
-* ``testnet-gate``   → the one-command closed loop: real klines → backtest → REAL Binance testnet fills →
-  ``coinext_parity`` gate (``--no-testnet`` dry-runs the orchestration without keys).
-* ``optimize``       → Optuna walk-forward search (``coinext_optimize``).
-* ``screen``         → FAST vectorized SMA-cross sweep (``coinext_screen``, non-authoritative) cross-checked
-  against the event-driven runner.
-* ``download``       → fetch venue history into the data lake (``coinext_data``); crypto via
-  Binance, equity/index via Yahoo Finance using the venue catalog.
-* ``download-fx``    → Yahoo FX pairs into ``venue=FX`` (USDCNY/USDHKD for multi-ccy).
-* ``paper-equity``   → replay lake bars through ``PaperEquityBroker`` (A-share T+1 / 涨跌停).
-* ``ib-status``      → probe IB TWS/Gateway connectivity (optional ``ib_insync``).
-* ``venues``         → list registered global venues (crypto + mainstream stock markets).
-* ``live``           → start the live/sandbox ``TradingNode`` (``coinext_live``).
-* ``reconcile``      → reconcile-on-restart against venue truth (``coinext_live.reconcile``).
-* ``catalog``        → inspect the data lake (``coinext_data.DataCatalog``).
-
-Typer is used when installed (rich help + the ``coinext`` console script ``coinext_cli.main:app``). Without
-it, an ``argparse`` driver provides the same subcommands so ``python -m coinext_cli.main`` always runs.
-The heavy work in each subcommand is imported LOCALLY so ``import coinext_cli.main`` stays light and the
-backtest path needs only ``coinext_py`` + the pure-Python packages.
+Status: verified. Subcommands: backtest, download, venues, optimize, screen, parity/testnet gates,
+paper-equity, ib-status, live helpers. Heavy imports are lazy. See root README.md.
 """
 
 from __future__ import annotations

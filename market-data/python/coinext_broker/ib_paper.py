@@ -1,21 +1,6 @@
-"""Interactive Brokers paper / live gateway via ``ib_insync`` (optional).
+"""Interactive Brokers paper broker scaffold (`ib_insync`).
 
-Modes
------
-* ``paper_local`` — offline :class:`PaperEquityBroker` (default, no TWS).
-* ``ib`` — connect to TWS / IB Gateway and place real paper/live orders.
-
-Environment::
-
-    COINEXT__IB__HOST=127.0.0.1
-    COINEXT__IB__PORT=7497          # 7497 TWS paper, 7496 TWS live, 4002 Gateway paper
-    COINEXT__IB__CLIENT_ID=1
-    COINEXT__IB__ACCOUNT=DUxxxx     # optional; first managed account if empty
-    COINEXT__IB__READONLY=0
-
-Install optional dep: ``uv pip install ib_insync`` (or ``coinext[ib]``).
-
-Tests inject a fake client via ``ib_factory=`` so the fill loop is covered offline.
+Status: partial. See docs/IB_PAPER.md.
 """
 
 from __future__ import annotations

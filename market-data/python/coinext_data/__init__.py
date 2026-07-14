@@ -1,22 +1,6 @@
-"""coinext_data — the data-lake catalog, history reader, and download/ingest helpers.
+"""coinext_data — Parquet data lake, HistoryReader, venue download helpers.
 
-The data lake is a partitioned **Parquet** store on the local FS (or S3/MinIO via
-``COINEXT__DATA__LAKE_ROOT`` / ``COINEXT__MINIO__*``). Partition layout (Hive-style dirs + per-month
-file shards, as implemented in ``lake.py``)::
-
-    {lake_root}/bars/venue={v}/symbol={s}/interval={i}/{YYYYMM}.parquet
-
-Three roles (root ``ARCHITECTURE.md`` §4–§6):
-
-* :class:`DataCatalog`   — discovery/metadata over the lake (symbols/intervals/date ranges).
-* :class:`HistoryReader` — bounded reads for **warm-up** (indicators warm from the LOCAL lake in
-  BOTH backtest and live, never via live REST at handler time — keeps indicators identical).
-* :class:`DataProvider`  — the backtest data-feed source the Kernel pulls ``(ts, close)`` bars from.
-
-**Parquet path** (when ``pyarrow`` is installed via the ``research`` extra): :class:`DataLake`
-read/write, coverage, and CLI download/catalog. **Zero-dep fallback**: :func:`load_bars` reads CSV
-or accepts an inline list so imports stay light without heavy deps. DuckDB is reserved for future
-analytical queries over large lakes; it is not required for the current HistoryReader path.
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

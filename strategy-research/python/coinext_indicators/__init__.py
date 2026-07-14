@@ -1,26 +1,6 @@
-"""coinext_indicators — streaming technical indicators (the SAME Rust code as warm-up + live).
+"""coinext_indicators — Python facades over streaming indicators.
 
-Thin re-export of the ``coinext-indicators`` Rust crate through the compiled ``coinext_py`` extension, so a
-Python strategy uses the IDENTICAL incremental indicator implementations the native-Rust path and
-live warm-up use — never a re-rolled Python copy that could drift. Each indicator is stateful:
-
-    sma = Sma(20)
-    def on_bar(self, bar, ctx):
-        sma.update(bar.close)
-        if sma.is_ready():
-            ...  # sma.value() is a float; None until warm
-
-* :class:`Sma` / :class:`Ema` / :class:`Rsi` — ``update(value)``; ``value()`` -> ``float | None``.
-* :class:`Atr` — ``update(high, low, close)``; ``value()`` -> ``float | None``.
-* :class:`Macd` — ``update(value)``; ``value()`` -> ``(macd, signal, hist) | None``.
-* :class:`Bollinger` — ``update(value)``; ``value()`` -> ``(lower, mid, upper) | None``.
-* :class:`Vwap` — ``update(price, volume)``; ``value()`` -> ``float | None``.
-
-:class:`Resampler` aggregates a finer bar stream (e.g. 1m) into a coarser one (5m / 1h) for
-multi-timeframe strategies (pure Python; no ``coinext_py`` needed).
-
-All indicators raise ``ValueError`` for ``period <= 0``. ``coinext_py`` must be built (maturin); the
-import error is surfaced with the build command if it isn't.
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

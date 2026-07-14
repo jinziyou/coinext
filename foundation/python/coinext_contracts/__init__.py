@@ -1,9 +1,6 @@
-"""coinext_contracts — the Python contract surface.
+"""coinext_contracts — Envelope / message-type contracts for the Redis bus and control plane.
 
-Re-exports the compiled domain/runtime types from ``coinext_py`` (the source of truth), and defines the
-MessagePack ``Envelope`` schema + ``MsgType`` registry that the Redis-Streams bus uses so the Rust
-side and Python side (``coinext_bus``) agree on the wire format. Port ``Protocol`` definitions describe
-the seams the Python control plane implements/consumes.
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

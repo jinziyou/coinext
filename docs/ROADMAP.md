@@ -41,8 +41,8 @@ See the **status snapshot** above and the full narrative in [`CHANGELOG.md`](CHA
    rolling partitions (today: CLI REST/WS session recorder).
 2. **Optional sample lake expansion** — more symbols/intervals under `data/sample` as needed by demos.
 3. **Regression golden review** — re-pin intentionally when BrokerageModel economics change.
-4. **Python packaging** — done: uv workspace members + shared Docker `pythonpath.env` / entrypoint
-   (images still use path layout for source trees; optional next: `uv sync` inside images).
+4. **Python packaging / images** — done: uv workspace members; production Python images use
+   `uv sync --frozen` + thin `COINEXT_SERVICE_PYTHONPATH` (no bulk PYTHONPATH).
 
 ## Deferred — live / ops (start when ready to trade)
 

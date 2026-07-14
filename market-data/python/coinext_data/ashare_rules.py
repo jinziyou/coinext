@@ -1,17 +1,6 @@
-"""A-share trading rules — single Python source of truth.
+"""A-share market rules helpers (lot sizes, limit bands for research).
 
-Used by:
-
-* :mod:`coinext_broker.rules` (paper path)
-* docs / tests that assert Kernel OMS parity
-
-Rust OMS in ``coinext-exec-engine`` mirrors these heuristics (keep in sync when changing):
-
-* T+1 venues: SSE, SZSE + Equity asset class
-* Session day: Asia/Shanghai (UTC+8)
-* Limit %: ST 5%, ChiNext/STAR (300/301/688/689) 20%, else 10%
-* Limit band prices rounded to 0.01 CNY
-* Prev close: last mark on the previous **session day that has a print** (skips weekends/holidays)
+Status: verified; Kernel T+1/涨跌停 live in OMS.
 """
 
 from __future__ import annotations
