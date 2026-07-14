@@ -28,7 +28,7 @@ coinext-model = { path = "../../../../foundation/domain-model/rust/coinext-model
 coinext-core = { path = "../../../../foundation/primitives/rust/coinext-core" }
 coinext-ports = { path = "../../../../foundation/ports/rust/coinext-ports" }
 coinext-adapters-binance = { path = "../../../../market-data/venue-adapters/binance/rust/coinext-adapters-binance" }
-redis = { version = "0.27" }
+redis = { version = "1.3" }
 rmp-serde = "1"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
