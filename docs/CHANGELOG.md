@@ -6,6 +6,83 @@ Historical record of **verified** research/backtest work. For current status and
 Language: English (design/changelog). Operator quick-start remains Chinese in the root `README.md`
 — see [`README.md`](README.md) language note.
 
+## 2026-07-14 — global equity venues + Yahoo history
+
+- Venue catalog (`coinext_data.venues`): mainstream stock markets (NYSE, NASDAQ, AMEX, HKEX, SSE,
+  SZSE, LSE, TSE, XETRA, Euronext, TSX, ASX, NSE, KRX, TWSE, SGX, B3, SIX) plus INDEX and crypto.
+- Equity/index downloader via Yahoo Finance chart API → same Parquet lake layout as Binance.
+- CLI: `coinext venues`, `coinext download --venue NYSE|HKEX|…`, `coinext catalog --venue ALL`,
+  `coinext backtest --venue … --from-lake` (equity instrument auto-selected).
+- Per-venue liquid universes (`--symbols @default`); `backtest-multi --venue` for equity portfolios.
+- Sample lake: ~90d daily fixtures for AAPL/JPM/0700/600519/7203/SHEL + ^GSPC/^HSI.
+
+## 2026-07-14b — A股 / ETF / 美股 / 港股 first-class research path
+
+- **Market groups:** `ASHARE`/`A股` → SSE+SZSE; `US`/`美股` → NASDAQ+NYSE+AMEX; `HK`/`港股` → HKEX;
+  `ETF` → cross-market ETF download target. Aliases accepted by CLI download/backtest.
+- **A-share code routing:** `6/5xxxxx` → SSE, `0/1/3xxxxx` → SZSE (`infer_ashare_venue` /
+  `resolve_listing`); 6-digit zero-pad for Yahoo/lake keys.
+- **ETF presets:** `--symbols @etf` per venue (US: SPY/QQQ/…; A股: 510300/159915/…; 港股: 2800/…).
+- **AMEX** venue added; ARCA remains NYSE alias for large US ETFs.
+- Multi-venue `download_to_lake(..., listings=…)` + `resolve_listings` for group downloads.
+- Sample lake expanded: NYSE/SPY, SSE/510300, HKEX/2800, SZSE/000001.
+
+## 2026-07-14c — equity research polish (specs, prefixes, CLI defaults)
+
+- **`instrument_spec(venue, symbol)`** — research fees / whole-share precision / currency / lot size
+  for A股 (CNY, lot 100), 港股 (HKD), 美股 (USD), ETF vs equity kind detection.
+- **`parse_user_symbol` / prefixes:** `sh600519`, `sz000001`, `hk0700`, `600519.SS` auto-route.
+- **`is_etf_symbol`** — universe membership + A-share 51/15 code heuristic.
+- **CLI:** equity download auto-rewrites `1m×7d` + `BTCUSDT` → `1d×365d` + `@default`; backtest
+  applies venue-aware fee/precision; multi-symbol overrides per listing.
+- **Research loop §7** — multi-market equity/ETF SMA demo on `data/sample` fixtures.
+
+## 2026-07-14d — calendar, multi-ccy FX, equity broker scaffold
+
+1. **Trading calendar** (`coinext_data.calendar`): CN/HK holiday tables + US rule-based holidays;
+   `filter_trading_bars` drops weekends/holidays/flat-halt prints; applied on equity daily download
+   (opt out: `--no-calendar-filter`).
+2. **Multi-currency FX** (`coinext_data.fx`): `FxBook` with USD/CNY/HKD fallbacks + Yahoo load;
+   `revalue_bar_map` / `convert_bars`; CLI `backtest-multi --base-ccy USD` (auto when mixed ccy).
+3. **Equity broker scaffold** (`coinext_broker`): `PaperEquityBroker` multi-ccy paper fills;
+   `IbPaperBroker` + IB contract map (SEHK / SMART / Northbound); `mode=ib` not wired yet.
+
+## 2026-07-14e — IB fill loop, A-share T+1/limits, FX lake
+
+1. **IB `mode=ib`**: `ib_insync` connect → qualify → placeOrder → execDetails/orderStatus fill loop;
+   injectable `ib_factory` for offline tests; optional extra `coinext[ib]`.
+2. **A-share paper rules**: T+1 `sellable_qty` / same-day sell reject; 涨跌停 bands (±10/20/5%) with
+   market clamp-to-limit; `set_prev_close` / `on_bar` roll.
+3. **FX venue + sample lake**: `venue=FX` (USDCNY/USDHKD), `download_fx_to_lake` / `FxBook.from_lake` /
+   `load_fx_book`; committed ~90d fixtures under `data/sample/bars/venue=FX/`.
+
+## 2026-07-14f — paper-equity replay + download-fx CLI + session hours
+
+1. **`coinext_broker.replay`**: walk OHLCV through `PaperEquityBroker` (`sma` / `buyhold`) with T+1.
+2. **CLI**: `coinext paper-equity`, `coinext download-fx`.
+3. **Intraday session filter**: `in_session` / `filter_session_bars` (A股午休、美/港开收盘);
+   equity intraday Yahoo download applies session slicing.
+
+## 2026-07-14g — Kernel T+1 + portfolio paper + IB runbook
+
+1. **Kernel A-share T+1** (`coinext-exec-engine`): SSE/SZSE **Equity** same-day sells denied
+   (`DenyReason::TPlusOne`); ledger from buy fills; next UTC day free. US/HK unaffected.
+2. **Multi-symbol paper portfolio**: `replay_portfolio` / `replay_portfolio_from_lake`;
+   CLI `paper-equity --multi` / comma / `@default`.
+3. **IB**: `docs/IB_PAPER.md` + `coinext ib-status` connectivity probe.
+
+## 2026-07-14h — e2e Python T+1 integration test
+
+- `tests/backtesting-simulation/test_ashare_t_plus_one.py`: full `coinext_backtest.run` path
+  with `Instrument.equity()` — SSE/SZSE same-day sell denied (`on_order_event` reason
+  `TPlusOne`), next-day sell fills; NASDAQ equity + SSE spot controls.
+
+## 2026-07-14i — Kernel 涨跌停 + equity research quick path
+
+1. **OMS 涨跌停** (`DenyReason::PriceLimit`): SSE/SZSE equity vs prior UTC-day mark; ±10/20/5%.
+2. E2E: `test_sse_equity_price_limit_denies_limit_above_band`.
+3. Docs: `docs/EQUITY_RESEARCH.md`; research_loop §8 A-share T+1 smoke.
+
 ## 2026-07-13 — hygiene + research/live partial stack
 
 - Sample lake Parquet fixtures under `data/sample` + quote recording helpers (`coinext_data.quotes`).

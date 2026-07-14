@@ -205,6 +205,156 @@ print(
 )
 
 # %% [markdown]
+# ## 7. A股 / ETF / 美股 / 港股 (sample lake)
+#
+# When the committed ``data/sample`` fixtures are present, run a multi-market equity SMA portfolio
+# with venue-aware fees (whole shares, CNY/HKD/USD friction). Skip silently if fixtures missing.
+
+# %%
+def _equity_demo() -> None:
+    from coinext_data import DataLake, SAMPLE_EQUITY_SERIES, instrument_spec
+
+    lake_root = LAKE_ROOT or str(_SAMPLE_LAKE)
+    lake = DataLake(lake_root)
+    # Focus set: one equity + one ETF per major market when available.
+    focus = (
+        ("NASDAQ", "AAPL"),
+        ("NYSE", "SPY"),
+        ("HKEX", "0700"),
+        ("HKEX", "2800"),
+        ("SSE", "600519"),
+        ("SSE", "510300"),
+        ("SZSE", "000001"),
+    )
+    eq_bars: dict[str, list] = {}
+    specs: dict[str, dict] = {}
+    for venue, sym in focus:
+        rows = lake.read_ohlcv(venue, sym, "1d")
+        if len(rows) < 30:
+            continue
+        key = f"{venue}:{sym}"
+        eq_bars[key] = rows
+        sp = instrument_spec(venue, sym)
+        specs[key] = {
+            "price_precision": sp.price_precision,
+            "size_precision": sp.size_precision,
+            "maker_fee": sp.maker_fee,
+            "taker_fee": sp.taker_fee,
+        }
+    if len(eq_bars) < 2:
+        print(
+            f"[equity] skip multi-market demo — need ≥2 series under {lake_root} "
+            f"(have {len(eq_bars)}; SAMPLE_EQUITY_SERIES={len(SAMPLE_EQUITY_SERIES)})"
+        )
+        return
+    primary = next(iter(eq_bars)).split(":", 1)[0]
+    primary_sp = instrument_spec(primary)
+    res = bt.run_multi(
+        MultiSma(5, 20),
+        bars=eq_bars,
+        venue=primary,
+        instruments=specs,
+        price_precision=primary_sp.price_precision,
+        size_precision=primary_sp.size_precision,
+        maker_fee=primary_sp.maker_fee,
+        taker_fee=primary_sp.taker_fee,
+    )
+    print(
+        f"[equity] multi-market SMA on {len(eq_bars)} names "
+        f"({', '.join(eq_bars)}): fills={res.fills}, "
+        f"return={res.total_return * 100:.2f}%, final={res.final_equity:,.2f}"
+    )
+    # Single-name A-share ETF check with explicit instrument defaults.
+    if ("SSE", "510300") in ((k.split(":")[0], k.split(":")[1]) for k in eq_bars):
+        sp = instrument_spec("SSE", "510300")
+        etf = bt.run(
+            SmaCross(5, 20),
+            symbol="510300",
+            venue="SSE",
+            bars=eq_bars["SSE:510300"],
+            instrument=bt.Instrument.equity(),
+            price_precision=sp.price_precision,
+            size_precision=sp.size_precision,
+            maker_fee=sp.maker_fee,
+            taker_fee=sp.taker_fee,
+        )
+        print(
+            f"[equity] SSE/510300 (CSI 300 ETF) kind={sp.kind} ccy={sp.currency}: "
+            f"orders={etf.orders_submitted}, final={etf.final_equity:,.2f}"
+        )
+
+
+try:
+    _equity_demo()
+except Exception as exc:  # noqa: BLE001 — research notebook should not abort on optional demo
+    print(f"[equity] demo failed (optional): {exc}")
+
+# %% [markdown]
+# ## 8. A-share Kernel T+1 smoke (synthetic)
+#
+# Same OMS path as ``tests/backtesting-simulation/test_ashare_t_plus_one.py``: buy day0, sell same
+# day denied, sell next day fills.
+
+# %%
+def _ashare_t1_smoke() -> None:
+    day0, day1 = 1_717_416_000, 1_717_416_000 + 86_400
+    ns = 1_000_000_000
+
+    def ohlc(ts: int, px: float):
+        return (ts, px, px + 1, px - 1, px, 1e6)
+
+    class BuyThenSell(Strategy):
+        def __init__(self):
+            self.bought = False
+            self.sell_pending = False
+            self.flat = False
+            self.denied = []
+
+        def on_bar(self, bar, ctx):
+            if not self.bought:
+                ctx.submit_market("buy", 100)
+                self.bought = True
+                return
+            if self.flat or self.sell_pending:
+                return
+            if ctx.position() >= 100 - 1e-9:
+                self.sell_pending = True
+                ctx.submit_market("sell", 100)
+
+        def on_order_filled(self, fill, ctx):
+            if fill.side < 0:
+                self.flat = True
+                self.sell_pending = False
+
+        def on_order_event(self, event, ctx):
+            if event.kind == "denied" and event.reason:
+                self.denied.append(event.reason)
+                self.sell_pending = False
+
+    bars = [ohlc((day0 + i * 3600) * ns, 100.0) for i in range(4)]
+    bars += [ohlc((day1 + i * 3600) * ns, 101.0) for i in range(3)]
+    s = BuyThenSell()
+    res = bt.run(
+        s,
+        symbol="600519",
+        venue="SSE",
+        bars=bars,
+        instrument=bt.Instrument.equity(),
+        starting_balance=1_000_000.0,
+        size_precision=0,
+    )
+    print(
+        f"[ashare-t1] denied={res.orders_denied} fills={res.fills} "
+        f"reasons={s.denied} final={res.final_equity:,.2f}"
+    )
+
+
+try:
+    _ashare_t1_smoke()
+except Exception as exc:  # noqa: BLE001
+    print(f"[ashare-t1] skip (optional; rebuild coinext_py?): {exc}")
+
+# %% [markdown]
 # Each step ran on the SAME deterministic Rust core that runs live (only the Clock + Data/Execution
 # clients are swapped).
 print("\nresearch loop complete.")

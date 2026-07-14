@@ -11,6 +11,8 @@ truth for module boundaries and parity invariants.
 | [`CHANGELOG.md`](CHANGELOG.md) | Historical verified-work narrative |
 | [`STATUS.md`](STATUS.md) | verified / partial / scaffold label convention |
 | [`TESTNET.md`](TESTNET.md) | Binance public market data + spot testnet paper-execution runbook |
+| [`IB_PAPER.md`](IB_PAPER.md) | Interactive Brokers TWS/Gateway paper path (`coinext_broker`) |
+| [`EQUITY_RESEARCH.md`](EQUITY_RESEARCH.md) | A股/港股/美股/ETF research quick path |
 | [`../README.md`](../README.md) | Platform positioning, status table, quick starts, toolchain |
 | [`../tests/backtesting-simulation/parity/README.md`](../tests/backtesting-simulation/parity/README.md) | Advisory cross-check + sandbox parity gate |
 | [`../operations-interface/deployment/README.md`](../operations-interface/deployment/README.md) | Compose, Docker, observability overlay |

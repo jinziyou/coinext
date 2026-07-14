@@ -37,7 +37,24 @@ See the **status snapshot** above and the full narrative in [`CHANGELOG.md`](CHA
 
 1. **Long-running quote capture service** — wrap `capture-quotes` as a compose sidecar writing
    rolling partitions (today: CLI REST/WS session recorder).
-2. **Optional sample lake expansion** — more symbols/intervals under `data/sample` as needed by demos.
+2. **Optional sample lake expansion** — more symbols/intervals under `data/sample` as needed by demos
+   (crypto fixtures present; equity daily sample set added 2026-07-14).
+2b. **Equity research path (done 2026-07-14)** — venue catalog + Yahoo OHLCV + `@default` universes +
+   sample fixtures; live broker adapters still deferred.
+2c. **A股 / ETF / 美股 / 港股 (done 2026-07-14)** — market groups (`ASHARE`/`US`/`HK`/`ETF`),
+   `@etf` presets, A-share code auto-routing, AMEX + expanded sample fixtures; live brokers deferred.
+2d. **Equity research polish (done 2026-07-14)** — `instrument_spec` fees/lots, `sh`/`sz`/`hk`
+   prefixes, CLI equity defaults (`1d×365`), research-loop multi-market demo; live brokers deferred.
+2e. **Calendar + multi-ccy + paper broker (done 2026-07-14)** — CN/US/HK calendars, halt filter,
+   `FxBook`/`--base-ccy`, `PaperEquityBroker` + IB scaffold.
+2f. **IB fill loop + A-share rules + FX lake (done 2026-07-14)** — `ib_insync` paper path, T+1/涨跌停,
+   `venue=FX` sample fixtures; Kernel equity ExecutionClient still deferred.
+2g. **Paper-equity CLI + session hours (done 2026-07-14)** — `coinext paper-equity` / `download-fx`,
+   bar replay engine, intraday session filter; Kernel equity ExecutionClient still deferred.
+2h. **Kernel T+1 + multi paper + IB runbook (done 2026-07-14)** — OMS deny same-day A-share sells,
+   portfolio paper replay, `ib-status` + `docs/IB_PAPER.md`; full IB Kernel port still deferred.
+2i. **Kernel 涨跌停 + equity quick path (done 2026-07-14)** — `PriceLimit` OMS, e2e tests,
+   `docs/EQUITY_RESEARCH.md` + research_loop T+1 smoke; stock live ExecutionClient still deferred.
 3. **Regression golden review** — re-pin intentionally when BrokerageModel economics change.
 
 ## Deferred — live / ops (start when ready to trade)

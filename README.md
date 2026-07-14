@@ -15,7 +15,7 @@
 | 根级模块 | 关键功能域 | 当前状态 |
 |---|---|---|
 | `foundation/` | 固定精度值类型、领域模型、端口、状态缓存、Python 契约、运行配置、PyO3 桥、testkit | ✅ 核心契约已实现；PyO3 桥用于回测路径；默认配置在 `foundation/runtime-config/config` |
-| `market-data/` | 数据引擎、Parquet 数据湖、REST/WS transport、Binance adapter、ingestion service | ✅ 数据湖/HistoryReader/公共数据下载已测试；adapter/network 有单测；`ingestor` 是 stub daemon |
+| `market-data/` | 数据引擎、Parquet 数据湖、REST/WS transport、Binance adapter、全球股市 venue 目录、ingestion service | ✅ 数据湖/HistoryReader/Binance+Yahoo 公共下载/股市 catalog 已测试；adapter/network 有单测；`ingestor` 是 stub daemon |
 | `strategy-research/` | Python Strategy API、Rust/Python 指标、research notebooks | ✅ 策略 API、SMA/RSI 等流式指标、research-loop 脚本已测试（需要构建 `coinext_py`） |
 | `backtesting-simulation/` | deterministic Kernel、SimulatedExchange、authoritative runner、parity gates、Rust example | ✅ 回测内核、模拟交易所、Python runner、示例 SMA 回测已测试；recorded sandbox-session replay gate 已测试，真实 testnet fills 捕获仍需 spot-testnet keys |
 | `analytics-optimization/` | metrics、tear sheet、bias screens、vectorized screen、walk-forward optimizer、derivatives pricing | ✅ 分析、筛选、优化、Black-Scholes/Greeks/IV 已测试 |
@@ -46,13 +46,38 @@ just test-live-edge
 just py-setup
 just py-build     # maturin develop --manifest-path foundation/ffi-bridge/rust/coinext-py/Cargo.toml --features python
 
+uv run coinext venues                              # 全球主流股市 + 加密 venue 目录
 uv run coinext download --symbols BTCUSDT,ETHUSDT --interval 1m --days 30
-uv run coinext catalog
+
+# 美股 / 港股 / A股 / ETF（Yahoo 公共历史，无需 key）
+uv run coinext download --venue NASDAQ --symbols @default --interval 1d --days 365
+uv run coinext download --venue US --symbols AAPL,JPM,SPY --interval 1d --days 365   # 美股市场组
+uv run coinext download --venue HKEX --symbols 0700,2800 --interval 1d --days 365     # 港股 + 港股 ETF
+uv run coinext download --venue ASHARE --symbols 600519,000001,510300 --interval 1d --days 365  # A股自动路由 SSE/SZSE
+uv run coinext download --venue SSE --symbols @etf --interval 1d --days 365           # A股 ETF 预设
+uv run coinext download --venue NYSE --symbols @etf --interval 1d --days 365          # 美股 ETF 预设
+uv run coinext download-fx --pairs USDCNY,USDHKD --days 365                             # 多币种 FX
+# A股纸交易回放（T+1 / 涨跌停；Kernel 回测对 SSE/SZSE equity 同样 enforce T+1）
+COINEXT__DATA__LAKE_ROOT=data/sample uv run coinext paper-equity --venue SSE --symbol 510300
+COINEXT__DATA__LAKE_ROOT=data/sample uv run coinext paper-equity --venue ASHARE --symbol @default --multi
+# IB TWS paper 连通性（需 ib_insync + 运行中的 TWS，见 docs/IB_PAPER.md）
+# uv run coinext ib-status
+
+uv run coinext catalog --venue ALL
 uv run coinext backtest --from-lake --symbol BTCUSDT
+# 离线 sample 股票 / ETF fixture（已提交 data/sample）
+COINEXT__DATA__LAKE_ROOT=data/sample uv run coinext backtest \
+  --venue NASDAQ --symbol AAPL --from-lake --interval 1d
+COINEXT__DATA__LAKE_ROOT=data/sample uv run coinext backtest \
+  --venue SSE --symbol 510300 --from-lake --interval 1d
+COINEXT__DATA__LAKE_ROOT=data/sample uv run coinext backtest-multi \
+  --venue INDEX --symbols '^GSPC,^HSI' --from-lake --interval 1d
 uv run coinext optimize --from-lake --mode anchored
 ```
 
 `coinext backtest` 使用 authoritative event-driven runner；`coinext screen` 是快速向量化扫描，只能收窄参数空间，不能替代 event-driven parity surface。数据湖运行态根仍是仓库根 `data/` 或容器内 `/data`，不是源码模块。
+
+**股票 / ETF 研究路径（已支持）：** A股（SSE/SZSE，别名 `ASHARE`/`A股`）、美股（NYSE/NASDAQ/AMEX，别名 `US`/`美股`）、港股（HKEX，别名 `HK`/`港股`）、ETF（`--symbols @etf` 或与股票相同 venue）。历史走 Yahoo 公共接口（无需 key）；`--symbols @default` 为蓝筹股票池，`@etf` 为流动性 ETF 池。A股代码按首位自动路由（6/5→上交所，0/1/3→深交所）；也支持 `sh600519` / `sz000001` / `hk0700` 前缀。CLI 在股票 venue 上会把加密默认的 `1m×7d` 改成 `1d×365`；回测自动套用分市场费率/整手精度（`instrument_spec`）。日线自动过滤周末/节假日/停牌扁条；跨币种组合用 `--base-ccy USD` 统一计价（sample 含 `FX/USDCNY`、`FX/USDHKD`）。纸交易 `PaperEquityBroker` 支持 A股 **T+1 / 涨跌停**；**Kernel 回测** 对 SSE/SZSE `Equity` 同样在 OMS 层拒绝 T+0 卖出（`orders_denied` / `TPlusOne`）。IB TWS paper：`IbPaperBroker(mode="ib")` + `coinext ib-status`（`docs/IB_PAPER.md`，`uv sync --extra ib`）。**Rust Kernel 股票实盘 ExecutionClient 尚未接入。**
 
 Research loop 脚本位于 `strategy-research/research-notebooks/notebooks`。直接运行：
 
@@ -87,6 +112,8 @@ docs/                       文档索引、路线图、testnet 手册、架构 s
 完整索引见 [`docs/README.md`](docs/README.md)。
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — 权威设计：领域模型、六边形端口、Kernel、数据流、部署形态（英文）。
+- [`docs/EQUITY_RESEARCH.md`](docs/EQUITY_RESEARCH.md) — A股/港股/美股/ETF 研究最短路径。
+- [`docs/IB_PAPER.md`](docs/IB_PAPER.md) — Interactive Brokers paper 联调。
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — 状态快照、下一步、延后 live/ops。
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md) — 已验证能力的历史叙事。
 - [`docs/STATUS.md`](docs/STATUS.md) — verified / partial / scaffold 标注约定。

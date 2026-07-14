@@ -125,6 +125,10 @@ pub enum DenyReason {
     InstrumentHalted,
     /// Opening/increasing the position would need more initial margin than the free equity.
     InsufficientMargin,
+    /// A-share cash T+1: cannot sell shares bought on the same trading day (SSE/SZSE equities).
+    TPlusOne,
+    /// A-share daily price limit (涨跌停): order price outside ±limit band vs previous close.
+    PriceLimit,
 }
 
 impl std::fmt::Display for DenyReason {

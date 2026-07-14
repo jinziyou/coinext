@@ -2,14 +2,26 @@
 //! the ExecutionClient, and folds `ExecutionReport`s back into the event-sourced Order FSM and the
 //! Position. It TRACKS the OrderFactory-assigned `ClientOrderId` (never mints one). Backtest injects
 //! `SimulatedExecutionClient`; sandbox/live swap a venue client behind the same `ExecutionClient` port.
+//!
+//! **A-share T+1:** for cash equities on SSE/SZSE, shares bought on calendar day D (UTC date of the
+//! fill) cannot be sold until day D+1. The ledger is updated on buy fills and enforced at submit
+//! (DenyReason::TPlusOne). US/HK equities are unaffected (day-trading allowed).
+//!
+//! **A-share 涨跌停:** for the same instruments, order prices (limit, or mark for market) must stay
+//! within ±limit of the previous UTC day's last mark (DenyReason::PriceLimit). Main board ±10%,
+//! ChiNext/STAR (300/688) ±20%, ST names ±5%.
 
 use coinext_cache::Cache;
 use coinext_core::UnixNanos;
-use coinext_model::{Order, OrderEvent, Position, PositionId, TradeId};
-use coinext_ports::{ExecutionReport, Portfolio, RiskDecision, RiskEngine};
+use coinext_model::{
+    AssetClass, InstrumentId, Order, OrderEvent, OrderSide, OrderType, Position, PositionId,
+    PositionSide, TradeId,
+};
+use coinext_ports::{DenyReason, ExecutionReport, Portfolio, RiskDecision, RiskEngine};
 use coinext_sim::SimulatedExecutionClient;
+use rust_decimal::Decimal;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 pub struct ExecutionEngine {
@@ -17,6 +29,12 @@ pub struct ExecutionEngine {
     /// Trade ids whose Fill has already been folded into the Position — guards against a duplicate /
     /// replayed Fill double-counting size & realized PnL.
     seen_trade_ids: RefCell<HashSet<TradeId>>,
+    /// A-share T+1 ledger: (instrument, yyyymmdd UTC) → qty bought that day (not yet free to sell).
+    bought_today: RefCell<HashMap<(InstrumentId, u32), Decimal>>,
+    /// Previous trading day's last mark (prev close) for 涨跌停 bands.
+    prev_close: RefCell<HashMap<InstrumentId, Decimal>>,
+    /// Last observed mark and its UTC day — used to promote prev_close on day change.
+    last_mark: RefCell<HashMap<InstrumentId, (u32, Decimal)>>,
 }
 
 impl ExecutionEngine {
@@ -24,7 +42,136 @@ impl ExecutionEngine {
         ExecutionEngine {
             cache,
             seen_trade_ids: RefCell::new(HashSet::new()),
+            bought_today: RefCell::new(HashMap::new()),
+            prev_close: RefCell::new(HashMap::new()),
+            last_mark: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// SSE / SZSE cash equities: T+1 + daily price limits.
+    fn is_ashare_equity(inst: &dyn coinext_model::Instrument) -> bool {
+        if inst.asset_class() != AssetClass::Equity {
+            return false;
+        }
+        matches!(inst.id().venue.as_str(), "SSE" | "SZSE")
+    }
+
+    fn is_t_plus_one(inst: &dyn coinext_model::Instrument) -> bool {
+        Self::is_ashare_equity(inst)
+    }
+
+    fn day_key(now: UnixNanos) -> u32 {
+        // UTC epoch day — same boundary as coinext_broker's UTC calendar date for T+1.
+        (now.as_u64() / 1_000_000_000 / 86_400) as u32
+    }
+
+    /// Limit fraction: ST 5%, ChiNext/STAR 20%, else main/ETF 10%.
+    fn price_limit_pct(symbol: &str) -> Decimal {
+        let s = symbol.to_ascii_uppercase();
+        if s.starts_with("*ST") || s.starts_with("ST") {
+            return Decimal::new(5, 2); // 0.05
+        }
+        let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+        if digits.len() >= 6 {
+            let code = &digits[digits.len() - 6..];
+            if code.starts_with("300")
+                || code.starts_with("301")
+                || code.starts_with("688")
+                || code.starts_with("689")
+            {
+                return Decimal::new(20, 2); // 0.20
+            }
+        }
+        Decimal::new(10, 2) // 0.10
+    }
+
+    /// Observe the cache mark for `id` at `now`; roll prev_close when the UTC day advances.
+    fn observe_mark(&self, id: &InstrumentId, now: UnixNanos) {
+        let Some(mark) = self.cache.borrow().mark(id) else {
+            return;
+        };
+        let day = Self::day_key(now);
+        let px = mark.as_decimal();
+        let mut last = self.last_mark.borrow_mut();
+        let mut prev = self.prev_close.borrow_mut();
+        match last.get(id).copied() {
+            Some((d, last_px)) if d != day => {
+                prev.insert(id.clone(), last_px);
+                last.insert(id.clone(), (day, px));
+            }
+            Some((d, _)) if d == day => {
+                last.insert(id.clone(), (day, px));
+            }
+            _ => {
+                // First observation: seed last_mark only; no prev_close yet (skip limit).
+                last.insert(id.clone(), (day, px));
+            }
+        }
+    }
+
+    fn price_limit_violation(
+        &self,
+        inst: &dyn coinext_model::Instrument,
+        order: &Order,
+        now: UnixNanos,
+    ) -> Option<String> {
+        if !Self::is_ashare_equity(inst) {
+            return None;
+        }
+        self.observe_mark(&order.instrument_id, now);
+        let prev = self.prev_close.borrow().get(&order.instrument_id).copied()?;
+        if prev <= Decimal::ZERO {
+            return None;
+        }
+        let pct = Self::price_limit_pct(order.instrument_id.symbol.as_str());
+        let up = prev * (Decimal::ONE + pct);
+        let down = prev * (Decimal::ONE - pct);
+        // Market: check mark; limit: check limit price.
+        let ref_px = match order.order_type {
+            OrderType::Limit | OrderType::StopLimit => order.price.map(|p| p.as_decimal()),
+            _ => self
+                .cache
+                .borrow()
+                .mark(&order.instrument_id)
+                .map(|p| p.as_decimal()),
+        }?;
+        let ok = match order.side {
+            OrderSide::Buy => ref_px <= up,
+            OrderSide::Sell => ref_px >= down,
+        };
+        if ok {
+            None
+        } else {
+            Some(format!(
+                "{}: px {} outside [{}, {}] (prev_close={}, pct={})",
+                DenyReason::PriceLimit,
+                ref_px,
+                down,
+                up,
+                prev,
+                pct
+            ))
+        }
+    }
+
+    fn sellable_qty(
+        &self,
+        portfolio: &dyn Portfolio,
+        id: &InstrumentId,
+        now: UnixNanos,
+    ) -> Decimal {
+        let long = match portfolio.position(id) {
+            Some(p) if p.side == PositionSide::Long => p.quantity.as_decimal(),
+            _ => Decimal::ZERO,
+        };
+        let day = Self::day_key(now);
+        let bought = self
+            .bought_today
+            .borrow()
+            .get(&(id.clone(), day))
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        (long - bought).max(Decimal::ZERO)
     }
 
     /// Submit an order: run the pre-trade risk gate, then route to the sim (or deny). Returns the
@@ -58,6 +205,31 @@ impl ExecutionEngine {
                 self.cache.borrow_mut().add_order(order);
                 return vec![ev];
             }
+        }
+        // A-share T+1: sell qty must be ≤ long − same-day buys.
+        if order.side == OrderSide::Sell && Self::is_t_plus_one(&*inst) {
+            let sellable = self.sellable_qty(portfolio, &order.instrument_id, now);
+            if order.quantity.as_decimal() > sellable {
+                let ev = OrderEvent::Denied {
+                    reason: format!(
+                        "{}: sellable {} < {}",
+                        DenyReason::TPlusOne,
+                        sellable,
+                        order.quantity.as_decimal()
+                    ),
+                    ts: now,
+                };
+                let _ = order.apply(ev.clone());
+                self.cache.borrow_mut().add_order(order);
+                return vec![ev];
+            }
+        }
+        // A-share 涨跌停 vs previous day's close.
+        if let Some(reason) = self.price_limit_violation(&*inst, &order, now) {
+            let ev = OrderEvent::Denied { reason, ts: now };
+            let _ = order.apply(ev.clone());
+            self.cache.borrow_mut().add_order(order);
+            return vec![ev];
         }
         match risk.check(&order, portfolio, &*inst) {
             RiskDecision::Approved => {
@@ -152,6 +324,13 @@ impl ExecutionEngine {
                 // double-count size & realized PnL here.
                 if fsm_ok {
                     if let Some(inst) = inst {
+                        // T+1 ledger: record same-day buy fills for SSE/SZSE equities.
+                        if fill.side == OrderSide::Buy && Self::is_ashare_equity(&*inst) {
+                            let day = Self::day_key(fill.ts_event);
+                            let mut ledger = self.bought_today.borrow_mut();
+                            let e = ledger.entry((iid.clone(), day)).or_insert(Decimal::ZERO);
+                            *e += fill.last_qty.as_decimal();
+                        }
                         let mut pos = cache.position(&iid).cloned().unwrap_or_else(|| {
                             Position::flat(
                                 PositionId::from(format!("{iid}-POS")),
@@ -431,6 +610,193 @@ mod tests {
         assert!(
             cache.borrow().position(&id).is_none(),
             "position must remain untouched for an unknown order's fill"
+        );
+    }
+
+    /// A-share T+1: same-day sell of newly bought shares is denied on SSE equities.
+    #[test]
+    fn ashare_t_plus_one_denies_same_day_sell() {
+        use coinext_model::Equity;
+
+        let cny = Currency::new("CNY", 2).unwrap();
+        let id = InstrumentId::parse("600519.SSE").unwrap();
+        let inst: Arc<dyn Instrument> = Arc::new(Equity {
+            id: id.clone(),
+            currency: cny,
+            price_precision: 2,
+            size_precision: 0,
+            price_increment: Price::from_decimal(dec!(0.01), 2).unwrap(),
+            size_increment: Quantity::from_decimal(dec!(1), 0).unwrap(),
+            min_notional: None,
+            maker_fee: dec!(0.00025),
+            taker_fee: dec!(0.00075),
+        });
+        let mut raw = Cache::new();
+        raw.add_instrument(inst);
+        raw.set_mark(id.clone(), Price::from_decimal(dec!(1700), 2).unwrap());
+        let cache = Rc::new(RefCell::new(raw));
+        let eng = ExecutionEngine::new(cache.clone());
+        let sim = SimulatedExecutionClient::new(
+            coinext_model::Venue::from("SSE"),
+            Rc::new(HistoricalClock::new(UnixNanos(0))) as Rc<dyn Clock>,
+            cache.clone(),
+            Box::new(coinext_sim::DefaultBrokerageModel::default()),
+        );
+        let risk = AlwaysApprove;
+        let day0 = UnixNanos(86_400 * 1_000_000_000);
+
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+        let buy = factory.market(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(100), 0).unwrap(),
+            day0,
+        );
+        let coid = buy.client_order_id.clone();
+        let _ = eng.submit(&risk, &FlatPortfolio(cny), &sim, buy, day0);
+        let _ = eng.apply_report(
+            ExecutionReport::Accepted {
+                client_order_id: coid.clone(),
+                venue_order_id: coinext_model::VenueOrderId::from("V-1"),
+            },
+            day0,
+        );
+        let mut buy_fill = fill(&id, &coid, "T-buy", OrderSide::Buy, "1700", "100", cny);
+        buy_fill.last_qty = Quantity::from_decimal(dec!(100), 0).unwrap();
+        buy_fill.ts_event = day0;
+        buy_fill.ts_init = day0;
+        let _ = eng.apply_report(ExecutionReport::Fill(buy_fill), day0);
+        assert!(cache.borrow().position(&id).is_some());
+
+        struct CachePf(Rc<RefCell<Cache>>, Currency);
+        impl Portfolio for CachePf {
+            fn position(&self, id: &InstrumentId) -> Option<Position> {
+                self.0.borrow().position(id).cloned()
+            }
+            fn net_exposure(&self, _id: &InstrumentId) -> Money {
+                Money::zero(self.1)
+            }
+            fn unrealized_pnl(&self, _id: &InstrumentId) -> Money {
+                Money::zero(self.1)
+            }
+            fn realized_pnl(&self, _id: &InstrumentId) -> Money {
+                Money::zero(self.1)
+            }
+            fn gross_exposure(&self) -> Money {
+                Money::zero(self.1)
+            }
+            fn balance(&self, ccy: &Currency) -> Money {
+                Money::zero(*ccy)
+            }
+            fn equity(&self) -> Money {
+                Money::zero(self.1)
+            }
+        }
+        let pf = CachePf(cache.clone(), cny);
+
+        let sell = factory.market(
+            id.clone(),
+            OrderSide::Sell,
+            Quantity::from_decimal(dec!(100), 0).unwrap(),
+            day0,
+        );
+        let denied = eng.submit(&risk, &pf, &sim, sell, day0);
+        assert!(
+            matches!(denied.as_slice(), [OrderEvent::Denied { reason, .. }] if reason.contains("TPlusOne")),
+            "same-day sell denied: {denied:?}"
+        );
+
+        let day1 = UnixNanos(86_400 * 2 * 1_000_000_000);
+        let sell2 = factory.market(
+            id.clone(),
+            OrderSide::Sell,
+            Quantity::from_decimal(dec!(100), 0).unwrap(),
+            day1,
+        );
+        let ok = eng.submit(&risk, &pf, &sim, sell2, day1);
+        assert!(
+            matches!(ok.as_slice(), [OrderEvent::Submitted { .. }]),
+            "next-day sell allowed: {ok:?}"
+        );
+    }
+
+    /// 涨跌停: limit buy above +10% of previous day's close is denied.
+    #[test]
+    fn ashare_price_limit_denies_limit_above_band() {
+        use coinext_model::{Equity, OrderFlags, TimeInForce};
+
+        let cny = Currency::new("CNY", 2).unwrap();
+        let id = InstrumentId::parse("600519.SSE").unwrap();
+        let inst: Arc<dyn Instrument> = Arc::new(Equity {
+            id: id.clone(),
+            currency: cny,
+            price_precision: 2,
+            size_precision: 0,
+            price_increment: Price::from_decimal(dec!(0.01), 2).unwrap(),
+            size_increment: Quantity::from_decimal(dec!(1), 0).unwrap(),
+            min_notional: None,
+            maker_fee: dec!(0.00025),
+            taker_fee: dec!(0.00075),
+        });
+        let mut raw = Cache::new();
+        raw.add_instrument(inst);
+        let day0 = UnixNanos(86_400 * 1_000_000_000);
+        let day1 = UnixNanos(86_400 * 2 * 1_000_000_000);
+        raw.set_mark(id.clone(), Price::from_decimal(dec!(100), 2).unwrap());
+        let cache = Rc::new(RefCell::new(raw));
+        let eng = ExecutionEngine::new(cache.clone());
+        let sim = SimulatedExecutionClient::new(
+            coinext_model::Venue::from("SSE"),
+            Rc::new(HistoricalClock::new(UnixNanos(0))) as Rc<dyn Clock>,
+            cache.clone(),
+            Box::new(coinext_sim::DefaultBrokerageModel::default()),
+        );
+        let risk = AlwaysApprove;
+        let pf = FlatPortfolio(cny);
+        let mut factory = OrderFactory::new(StrategyId::from("s1"));
+
+        let seed = factory.limit(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(1), 0).unwrap(),
+            Price::from_decimal(dec!(100), 2).unwrap(),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            day0,
+        );
+        let _ = eng.submit(&risk, &pf, &sim, seed, day0); // seeds last_mark day0 @ 100
+
+        cache
+            .borrow_mut()
+            .set_mark(id.clone(), Price::from_decimal(dec!(100), 2).unwrap());
+        let bad = factory.limit(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(100), 0).unwrap(),
+            Price::from_decimal(dec!(111), 2).unwrap(),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            day1,
+        );
+        let denied = eng.submit(&risk, &pf, &sim, bad, day1);
+        assert!(
+            matches!(denied.as_slice(), [OrderEvent::Denied { reason, .. }] if reason.contains("PriceLimit")),
+            "limit above band denied: {denied:?}"
+        );
+
+        let ok = factory.limit(
+            id.clone(),
+            OrderSide::Buy,
+            Quantity::from_decimal(dec!(100), 0).unwrap(),
+            Price::from_decimal(dec!(110), 2).unwrap(),
+            TimeInForce::Gtc,
+            OrderFlags::default(),
+            day1,
+        );
+        let allowed = eng.submit(&risk, &pf, &sim, ok, day1);
+        assert!(
+            matches!(allowed.as_slice(), [OrderEvent::Submitted { .. }]),
+            "at-limit buy allowed: {allowed:?}"
         );
     }
 }
