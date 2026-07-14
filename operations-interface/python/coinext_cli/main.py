@@ -407,10 +407,7 @@ def _cmd_testnet_gate(
                     "run",
                     "--quiet",
                     "--manifest-path",
-                    str(
-                        root
-                        / "market-data/crates/coinext-adapters-binance/Cargo.toml"
-                    ),
+                    str(root / "market-data/crates/coinext-adapters-binance/Cargo.toml"),
                     "--example",
                     "testnet_orders",
                 ],
@@ -798,10 +795,7 @@ def _cmd_paper_equity(
     try:
         from coinext_broker import replay_from_lake, replay_portfolio_from_lake
     except ImportError:
-        print(
-            "coinext_broker not on PYTHONPATH — ensure "
-            "market-data/python is importable"
-        )
+        print("coinext_broker not on PYTHONPATH — ensure market-data/python is importable")
         return 1
     if strategy not in ("sma", "buyhold", "none"):
         print(f"unknown --strategy {strategy!r} (sma|buyhold|none)")
