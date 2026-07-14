@@ -6,6 +6,17 @@ Historical record of **verified** research/backtest work. For current status and
 Language: English (design/changelog). Operator quick-start remains Chinese in the root `README.md`
 — see [`README.md`](README.md) language note.
 
+## 2026-07-14 — lifecycle layout flatten + deploy hygiene
+
+- **Layout:** each lifecycle module uses `crates/`, `python/`, optional `services/` (no
+  `component/rust|python` or `*/service/*` nesting). Config defaults: `foundation/config/`.
+- **Tooling:** Docker Rust images pinned to MSRV **1.95**; live-edge builds → `target/live-edge`;
+  `just clean-targets`; shared `pythonpath.env` + entrypoint for Python images.
+- **Python:** pure-Python packages are **uv workspace members** (installable by name after
+  `uv sync`); pytest keeps lifecycle `pythonpath` as a zero-install fallback.
+- **Docs:** `docs/CONTRIBUTING.md`, per-module READMEs, status labels aligned
+  (verified / partial / scaffold).
+
 ## 2026-07-14 — global equity venues + Yahoo history
 
 - Venue catalog (`coinext_data.venues`): mainstream stock markets (NYSE, NASDAQ, AMEX, HKEX, SSE,

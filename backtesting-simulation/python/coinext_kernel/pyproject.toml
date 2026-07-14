@@ -1,0 +1,17 @@
+# Coinext workspace member — import as `coinext_kernel`.
+[project]
+name = "coinext_kernel"
+version = "0.1.0"
+description = "Coinext pure-Python package `coinext_kernel`"
+requires-python = ">=3.13"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["coinext_kernel"]
+
+[tool.setuptools.package-dir]
+"coinext_kernel" = "."

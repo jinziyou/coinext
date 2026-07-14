@@ -26,9 +26,12 @@ Do **not** reintroduce `component/rust|python` nesting or `*/service/*` double w
 
 ## Adding a Python package
 
-1. Create `<lifecycle>/python/coinext_foo/` with `__init__.py`.
-2. Ensure the parent `*/python` dir is on pytest `pythonpath` in root `pyproject.toml`.
-3. Keep import name `coinext_foo` stable.
+1. Create `<lifecycle>/python/coinext_foo/` with `__init__.py` and a minimal `pyproject.toml`
+   (copy from a sibling package; setuptools `package-dir` maps `coinext_foo` → `.`).
+2. Add the path to root `pyproject.toml` `[tool.uv.workspace].members` and `[tool.uv.sources]`,
+   and list `coinext_foo` under root `[project].dependencies`.
+3. Keep import name `coinext_foo` stable. `uv sync` installs workspace members; pytest also keeps
+   lifecycle `pythonpath` as a zero-install fallback.
 
 ## Local checks
 
