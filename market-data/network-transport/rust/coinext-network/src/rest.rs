@@ -220,7 +220,11 @@ pub struct RestClient {
 
 impl RestClient {
     /// Construct a client over a config, a shared rate limiter, and optional credentials.
-    pub fn new(config: RestConfig, rate_limiter: RateLimiter, creds: Credentials) -> NetResult<Self> {
+    pub fn new(
+        config: RestConfig,
+        rate_limiter: RateLimiter,
+        creds: Credentials,
+    ) -> NetResult<Self> {
         let http = Client::builder()
             .timeout(Duration::from_millis(config.timeout_ms))
             .build()
@@ -250,13 +254,14 @@ impl RestClient {
         if !req.signed {
             return Ok(build_query(&req.query));
         }
-        let signer = self
-            .creds
-            .signer
-            .as_ref()
-            .ok_or_else(|| NetError::Auth("signing requested but no api secret configured".into()))?;
+        let signer = self.creds.signer.as_ref().ok_or_else(|| {
+            NetError::Auth("signing requested but no api secret configured".into())
+        })?;
         let mut params = req.query.clone();
-        params.push(("recvWindow".to_string(), self.config.recv_window_ms.to_string()));
+        params.push((
+            "recvWindow".to_string(),
+            self.config.recv_window_ms.to_string(),
+        ));
         params.push(("timestamp".to_string(), now_ms.to_string()));
         Ok(signed_query(&params, signer))
     }
@@ -279,9 +284,10 @@ impl RestClient {
             // Signed requests AND api-key-only requests both attach the key header; only signed
             // requests also append the HMAC signature (done in `build_query_string`).
             if req.signed || req.api_key {
-                let key = self.creds.api_key.as_deref().ok_or_else(|| {
-                    NetError::Auth("api key required but none configured".into())
-                })?;
+                let key =
+                    self.creds.api_key.as_deref().ok_or_else(|| {
+                        NetError::Auth("api key required but none configured".into())
+                    })?;
                 headers.insert(
                     "X-MBX-APIKEY",
                     HeaderValue::from_str(key)
@@ -406,7 +412,10 @@ mod tests {
         let unsigned = "symbol=BTCUSDT&side=BUY&recvWindow=5000&timestamp=1700000000000";
         assert!(q.starts_with(unsigned), "got: {q}");
         let expected_sig = Signer::new("SECRET").sign(unsigned);
-        assert!(q.ends_with(&format!("signature={expected_sig}")), "got: {q}");
+        assert!(
+            q.ends_with(&format!("signature={expected_sig}")),
+            "got: {q}"
+        );
     }
 
     #[test]
@@ -418,7 +427,10 @@ mod tests {
         assert!(req.api_key, "api_key flag must be set");
         assert!(!req.signed, "api_key request must not be signed");
         let q = c.build_query_string(&req, 1_700_000_000_000).unwrap();
-        assert_eq!(q, "", "unsigned api-key request appends no signature/timestamp");
+        assert_eq!(
+            q, "",
+            "unsigned api-key request appends no signature/timestamp"
+        );
     }
 
     #[test]
@@ -430,9 +442,11 @@ mod tests {
         assert!(!RestRequest::signed(HttpMethod::Delete, "/api/v3/order", 1).idempotent);
         assert!(!RestRequest::api_key(HttpMethod::Post, "/api/v3/userDataStream", 2).idempotent);
         // Opt-in builder flips it.
-        assert!(RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1)
-            .idempotent(true)
-            .idempotent);
+        assert!(
+            RestRequest::signed(HttpMethod::Post, "/api/v3/order", 1)
+                .idempotent(true)
+                .idempotent
+        );
     }
 
     #[test]

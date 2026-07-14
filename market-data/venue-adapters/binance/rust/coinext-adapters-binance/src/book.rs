@@ -197,10 +197,7 @@ mod tests {
         let mut book = LocalOrderBook::new();
         book.install_snapshot(100);
         // First non-stale diff starts at U=103 > 101 -> snapshot too old -> resync.
-        assert_eq!(
-            book.apply_diff(&upd(103, 110, None)),
-            ApplyOutcome::Resync
-        );
+        assert_eq!(book.apply_diff(&upd(103, 110, None)), ApplyOutcome::Resync);
         assert!(!book.is_synced());
     }
 

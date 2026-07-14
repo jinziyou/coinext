@@ -5,9 +5,7 @@
 //! port-driven [`crate::LiveKernel`] can be exercised end-to-end without Binance credentials.
 
 use coinext_core::{Currency, Money, Price, UnixNanos};
-use coinext_model::{
-    Bar, BarType, Fill, LiquiditySide, MarketEvent, TradeId, Venue, VenueOrderId,
-};
+use coinext_model::{Bar, BarType, Fill, LiquiditySide, MarketEvent, TradeId, Venue, VenueOrderId};
 use coinext_ports::{
     CancelOrder, DataClient, ExecutionClient, ExecutionReport, ModifyOrder, PortResult,
     SubmitOrder, Subscription,

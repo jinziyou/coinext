@@ -287,7 +287,6 @@ class Publisher:
             payload["client_order_id"] = client_order_id
         return self.publish_payload(stream, payload, msg_type=MsgType.CMD)
 
-
     def publish_live_telemetry(
         self,
         stream: str,

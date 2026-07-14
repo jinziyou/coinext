@@ -65,9 +65,7 @@ impl RateLimiter {
             None => return Ok(()), // zero-weight request: nothing to charge.
         };
         if cost > self.capacity {
-            return Err(NetError::RateLimited {
-                retry_after_ms: 0,
-            });
+            return Err(NetError::RateLimited { retry_after_ms: 0 });
         }
         self.inner
             .until_n_ready(n)

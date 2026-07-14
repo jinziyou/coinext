@@ -15,8 +15,9 @@ API sketch::
 from __future__ import annotations
 
 import bisect
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 from .venues import DEFAULT_FX_PAIRS, get_venue, instrument_spec
 
@@ -76,7 +77,7 @@ class FxCurve:
     def rate_asof(self, ts_ns: int) -> float | None:
         if not self.points:
             return None
-        ts = list(zip(*self.points))[0]
+        ts = list(zip(*self.points, strict=False))[0]
         i = bisect.bisect_right(ts, int(ts_ns)) - 1
         if i < 0:
             return self.points[0][1]  # before first: clamp
@@ -147,9 +148,9 @@ class FxBook:
         ``pairs`` entries are bare codes like ``USDCNY`` or full ``USDCNY=X``.
         Returns ``{pair: n_bars}``. FX trades nearly 24/5 — calendar filter is off by default.
         """
-        from .equity_download import download_equity_bars
         import time
 
+        from .equity_download import download_equity_bars
         from .venues import DEFAULT_FX_PAIRS
 
         pairs = list(pairs) if pairs is not None else list(DEFAULT_FX_PAIRS)

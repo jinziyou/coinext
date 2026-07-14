@@ -66,7 +66,7 @@ def test_bars_from_chart_adjust_scales_ohlc():
     payload = _chart_payload(3)
     # Inject adjclose at half price for all bars (incl. the null-close middle bar).
     quote = payload["chart"]["result"][0]["indicators"]["quote"][0]
-    n = len(quote["close"])
+    len(quote["close"])
     payload["chart"]["result"][0]["indicators"]["adjclose"] = [
         {"adjclose": [c * 0.5 if c is not None else None for c in quote["close"]]}
     ]

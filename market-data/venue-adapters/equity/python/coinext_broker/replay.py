@@ -7,8 +7,9 @@ before a full equity ``ExecutionClient`` exists.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 from .base import BrokerFill, BrokerOrder, PaperEquityBroker
 from .rules import trade_date_from_ns
@@ -288,7 +289,7 @@ def replay_portfolio(
             "rejected": 0,
         }
 
-    for ts, venue, symbol, row in events:
+    for _ts, venue, symbol, row in events:
         key = f"{venue}:{symbol}"
         meta = results_meta[key]
         meta["bars"] += 1

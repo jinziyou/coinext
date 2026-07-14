@@ -543,6 +543,10 @@ mod imp {
         }
     }
 
+    /// Position row: (symbol, venue, net_qty, avg_price, mark_price, realized_pnl,
+    /// unrealized_pnl, notional).
+    type PyPositionRow = (String, String, f64, f64, f64, f64, f64, f64);
+
     /// Native portfolio snapshot exported from the Rust cache/portfolio state.
     #[derive(Clone)]
     #[pyclass(name = "PortfolioSnapshot", skip_from_py_object)]
@@ -559,10 +563,8 @@ mod imp {
         pub net_exposure: f64,
         #[pyo3(get)]
         pub unrealized_pnl: f64,
-        /// Position rows: (symbol, venue, net_qty, avg_price, mark_price, realized_pnl,
-        /// unrealized_pnl, notional).
         #[pyo3(get)]
-        pub positions: Vec<(String, String, f64, f64, f64, f64, f64, f64)>,
+        pub positions: Vec<PyPositionRow>,
     }
 
     fn py_portfolio_snapshot(snapshot: NativePortfolioSnapshot) -> PyPortfolioSnapshot {

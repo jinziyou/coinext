@@ -82,8 +82,7 @@ mod tests {
     // Known vector built from the secret/query in the Binance "SIGNED endpoint examples" docs.
     // The expected digest is the HMAC-SHA256 of `VECTOR_QUERY` under `VECTOR_SECRET`, independently
     // cross-checked with `openssl dgst -sha256 -hmac <secret>` (a fixed, deterministic value).
-    const VECTOR_SECRET: &str =
-        "NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0";
+    const VECTOR_SECRET: &str = "NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0";
     const VECTOR_QUERY: &str = "symbol=LTCBTC&side=BUY&type=LIMIT&timeInForce=GTC&quantity=1&price=0.1&recvWindow=5000&timestamp=1499827319559";
     const VECTOR_SIG: &str = "b89008e7051ffbf2242be7dc5ae67fd146e6430688627b802c0cbec146e46aef";
 

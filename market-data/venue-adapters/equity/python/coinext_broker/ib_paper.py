@@ -23,8 +23,9 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from .base import BrokerFill, BrokerOrder, EquityBroker, OrderSide, OrderStatus, PaperEquityBroker
 
@@ -252,9 +253,7 @@ class IbPaperBroker:
             self._ib = None
         self._connected = False
 
-    def submit_market(
-        self, venue: str, symbol: str, side: OrderSide, qty: float
-    ) -> BrokerOrder:
+    def submit_market(self, venue: str, symbol: str, side: OrderSide, qty: float) -> BrokerOrder:
         self._ensure()
         fields = ib_contract_fields(venue, symbol)
         if self.mode == "paper_local":
@@ -410,7 +409,7 @@ class IbPaperBroker:
                 price=px,
                 fee=commission,
                 ts_event_ns=_now_ns(),
-                trade_id=str(getattr(exec_, "execId", "") or f"ib-{len(self._fills)+1}"),
+                trade_id=str(getattr(exec_, "execId", "") or f"ib-{len(self._fills) + 1}"),
             )
         )
         # Aggregate filled qty from trade if available.

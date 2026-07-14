@@ -111,9 +111,7 @@ impl ExecutionEngine {
             }
         };
         let px = mark.as_decimal();
-        self.close_by_day
-            .borrow_mut()
-            .insert((id.clone(), day), px);
+        self.close_by_day.borrow_mut().insert((id.clone(), day), px);
     }
 
     /// Last mark on a session day strictly before ``day`` (walk back ≤ 40 day-keys).

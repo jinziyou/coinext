@@ -209,9 +209,7 @@ class PaperEquityBroker:
         bought = self._bought_on.get((key, d.isoformat()), 0.0)
         return max(0.0, pos - bought)
 
-    def submit_market(
-        self, venue: str, symbol: str, side: OrderSide, qty: float
-    ) -> BrokerOrder:
+    def submit_market(self, venue: str, symbol: str, side: OrderSide, qty: float) -> BrokerOrder:
         self._require()
         order = self._new_order(venue, symbol, side, "market", qty, None)
         key = f"{order.venue}:{order.symbol}"

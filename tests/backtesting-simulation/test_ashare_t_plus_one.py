@@ -10,12 +10,12 @@ import pytest
 
 pytest.importorskip("coinext_py", reason="build coinext_py: just py-build")
 
-import coinext_backtest as bt  # noqa: E402
-from coinext_strategy import Strategy  # noqa: E402
-
 # Session-local days (Asia/Shanghai for A-share OMS), noon local → clean day boundaries.
 import datetime as _dt
 from zoneinfo import ZoneInfo
+
+import coinext_backtest as bt  # noqa: E402
+from coinext_strategy import Strategy  # noqa: E402
 
 _NS = 1_000_000_000
 _SH = ZoneInfo("Asia/Shanghai")

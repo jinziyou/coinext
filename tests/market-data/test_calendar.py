@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-
 from zoneinfo import ZoneInfo
 
 from coinext_data.calendar import (

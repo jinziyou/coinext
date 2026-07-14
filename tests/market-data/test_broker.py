@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 import pytest
-
 from coinext_broker import (
     IbConfig,
     IbPaperBroker,
@@ -252,9 +251,13 @@ def _patch_ib_insync(monkeypatch):
             self.lmtPrice = price
             self.orderType = "LMT"
 
-    monkeypatch.setattr(ibmod, "_make_contract", lambda fields: Stock(
-        fields["symbol"], fields["exchange"], fields["currency"], fields["primaryExchange"]
-    ))
+    monkeypatch.setattr(
+        ibmod,
+        "_make_contract",
+        lambda fields: Stock(
+            fields["symbol"], fields["exchange"], fields["currency"], fields["primaryExchange"]
+        ),
+    )
 
     def make_order(side, qty, *, order_type, limit_price, account, order_ref):
         if order_type == "market":

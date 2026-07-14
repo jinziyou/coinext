@@ -88,9 +88,7 @@ def _cmd_backtest(
         venue_code, lake_sym = venue_raw.upper(), symbol
 
     spec = instrument_spec(venue_code, lake_sym)
-    instrument = (
-        coinext_backtest.Instrument.equity() if spec.asset_class == "equity" else None
-    )
+    instrument = coinext_backtest.Instrument.equity() if spec.asset_class == "equity" else None
     if is_equity_venue(venue_code):
         print(
             f"[instrument] {venue_code}/{lake_sym} kind={spec.kind} ccy={spec.currency} "
@@ -169,7 +167,6 @@ def _cmd_backtest_multi(
     import coinext_analytics
     import coinext_backtest
     from coinext_data import (
-        FxBook,
         filter_trading_bars,
         instrument_spec,
         is_equity_venue,
@@ -691,7 +688,9 @@ def _cmd_download(
         for note in notes:
             print(f"note: {note}")
         if apply_calendar:
-            print("note: equity calendar filter on (holidays + flat-halt bars); --no-calendar-filter to disable")
+            print(
+                "note: equity calendar filter on (holidays + flat-halt bars); --no-calendar-filter to disable"
+            )
     try:
         listings = resolve_listings(venue_raw, symbols)
     except (ValueError, KeyError) as exc:
@@ -699,8 +698,10 @@ def _cmd_download(
         return 1
     lake = DataLake()
     multi = len({v for v, _ in listings}) > 1
-    src = "yahoo" if (group is not None or (info and info.data_source == "yahoo")) else (
-        (info.data_source if info else "binance") or "binance"
+    src = (
+        "yahoo"
+        if (group is not None or (info and info.data_source == "yahoo"))
+        else ((info.data_source if info else "binance") or "binance")
     )
     label = ", ".join(f"{v}/{s}" for v, s in listings[:12])
     if len(listings) > 12:
@@ -954,7 +955,9 @@ def _cmd_venues(family: str | None = None) -> int:
     print("  coinext download --venue 港股 --symbols @default --interval 1d --days 365")
     print("  # A股")
     print("  coinext download --venue SSE --symbols 600519 --interval 1d --days 365")
-    print("  coinext download --venue ASHARE --symbols 600519,000001,300750 --interval 1d --days 365")
+    print(
+        "  coinext download --venue ASHARE --symbols 600519,000001,300750 --interval 1d --days 365"
+    )
     print("  # ETF")
     print("  coinext download --venue NYSE --symbols @etf --interval 1d --days 365")
     print("  coinext download --venue SSE --symbols @etf --interval 1d --days 365")

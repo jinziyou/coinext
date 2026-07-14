@@ -210,6 +210,7 @@ print(
 # When the committed ``data/sample`` fixtures are present, run a multi-market equity SMA portfolio
 # with venue-aware fees (whole shares, CNY/HKD/USD friction). Skip silently if fixtures missing.
 
+
 # %%
 def _equity_demo() -> None:
     from coinext_data import DataLake, SAMPLE_EQUITY_SERIES, instrument_spec
@@ -294,6 +295,7 @@ except Exception as exc:  # noqa: BLE001 — research notebook should not abort 
 #
 # Same OMS path as ``tests/backtesting-simulation/test_ashare_t_plus_one.py``: buy day0, sell same
 # day denied, sell next day fills.
+
 
 # %%
 def _ashare_t1_smoke() -> None:

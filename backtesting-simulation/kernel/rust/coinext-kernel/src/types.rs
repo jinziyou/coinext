@@ -2,9 +2,7 @@
 
 use coinext_cache::Cache;
 use coinext_core::{Currency, Money, UnixNanos};
-use coinext_model::{
-    Instrument, PositionSide, Venue,
-};
+use coinext_model::{Instrument, PositionSide, Venue};
 use coinext_ports::RiskLimits;
 use coinext_sim::{BrokerageModel, DefaultBrokerageModel};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -207,4 +205,3 @@ pub(crate) fn snapshot_portfolio(cache: &Cache, settle: Currency) -> PortfolioSn
         positions,
     }
 }
-

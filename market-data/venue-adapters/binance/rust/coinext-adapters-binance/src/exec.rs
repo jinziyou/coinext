@@ -513,7 +513,12 @@ mod tests {
     #[test]
     fn build_params_for_limit_carries_price_tif_and_idempotent_client_id() {
         let params = build_order_params(&limit_order()).unwrap();
-        let get = |k: &str| params.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
+        let get = |k: &str| {
+            params
+                .iter()
+                .find(|(kk, _)| kk == k)
+                .map(|(_, v)| v.clone())
+        };
         assert_eq!(get("symbol").as_deref(), Some("BTCUSDT"));
         assert_eq!(get("side").as_deref(), Some("BUY"));
         assert_eq!(get("type").as_deref(), Some("LIMIT"));
@@ -537,7 +542,10 @@ mod tests {
         assert!(params.iter().all(|(k, _)| k != "price"));
         assert!(params.iter().all(|(k, _)| k != "timeInForce"));
         assert_eq!(
-            params.iter().find(|(k, _)| k == "type").map(|(_, v)| v.as_str()),
+            params
+                .iter()
+                .find(|(k, _)| k == "type")
+                .map(|(_, v)| v.as_str()),
             Some("MARKET")
         );
     }
@@ -596,7 +604,8 @@ mod tests {
             ExecutionReport::Rejected { reason, .. } => assert_eq!(reason, "INSUFFICIENT_BALANCE"),
             other => panic!("expected Rejected, got {other:?}"),
         }
-        let expired = r#"{"e":"executionReport","s":"BTCUSDT","c":"cid","x":"EXPIRED","X":"EXPIRED","i":1}"#;
+        let expired =
+            r#"{"e":"executionReport","s":"BTCUSDT","c":"cid","x":"EXPIRED","X":"EXPIRED","i":1}"#;
         assert!(matches!(
             map_execution_report(expired).unwrap(),
             ExecutionReport::Expired { .. }
@@ -629,7 +638,12 @@ mod tests {
         assert_eq!(req.method, HttpMethod::Delete);
         assert_eq!(req.path, "/api/v3/order");
         assert!(req.signed, "cancel is a signed trading endpoint");
-        let get = |k: &str| req.query.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
+        let get = |k: &str| {
+            req.query
+                .iter()
+                .find(|(kk, _)| kk == k)
+                .map(|(_, v)| v.clone())
+        };
         assert_eq!(get("symbol").as_deref(), Some("BTCUSDT"));
         assert_eq!(
             get("origClientOrderId").as_deref(),
@@ -637,7 +651,10 @@ mod tests {
         );
         // A cancel carries no venue-dedup key, so it must stay NON-idempotent: an ambiguous failure
         // (timeout / 5xx) must not blindly re-cancel; the caller reconciles instead.
-        assert!(!req.idempotent, "cancel must not auto-retry on ambiguous failure");
+        assert!(
+            !req.idempotent,
+            "cancel must not auto-retry on ambiguous failure"
+        );
     }
 
     #[test]
@@ -664,7 +681,12 @@ mod tests {
         assert_eq!(req.path, "/api/v3/userDataStream");
         assert!(req.api_key, "keepalive must attach X-MBX-APIKEY");
         assert!(!req.signed, "keepalive must NOT be signed");
-        let get = |k: &str| req.query.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
+        let get = |k: &str| {
+            req.query
+                .iter()
+                .find(|(kk, _)| kk == k)
+                .map(|(_, v)| v.clone())
+        };
         assert_eq!(
             get("listenKey").as_deref(),
             Some("pqia91ma19a5s61cv6a81va65sdf")

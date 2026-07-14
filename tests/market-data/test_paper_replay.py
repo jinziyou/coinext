@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-
 from coinext_broker import PaperEquityBroker, replay_bars
 from coinext_data.calendar import filter_session_bars, in_session
 

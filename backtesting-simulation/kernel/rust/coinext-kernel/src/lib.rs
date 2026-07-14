@@ -13,7 +13,6 @@
 //! live/sandbox trading against a real venue (reconnect, reconcile, full trader loop) is not yet
 //! the default verified path.
 
-
 mod backtest;
 mod live;
 mod paper;
@@ -36,7 +35,7 @@ mod tests {
     use coinext_model::{
         AggregationSource, Bar, BarAggregation, BarSpec, BarType, BookAction, CurrencyPair,
         FuturesContract, Instrument, InstrumentId, MarketEvent, OptionContract, OptionRight,
-        OrderBookDelta, OrderSide, PositionSide, StrategyId, Venue, PriceType,
+        OrderBookDelta, OrderSide, PositionSide, PriceType, StrategyId, Venue,
     };
     use coinext_ports::{Strategy, StrategyContext};
     use rust_decimal_macros::dec;

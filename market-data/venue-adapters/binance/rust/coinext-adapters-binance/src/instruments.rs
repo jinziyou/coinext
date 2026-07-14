@@ -76,7 +76,10 @@ impl InstrumentProvider for BinanceInstrumentProvider {
         // Fetch just this symbol; reuse the same pure parser.
         let resp = self
             .rest
-            .send(RestRequest::get("/api/v3/exchangeInfo", 20).with_param("symbol", id.symbol.as_str()))
+            .send(
+                RestRequest::get("/api/v3/exchangeInfo", 20)
+                    .with_param("symbol", id.symbol.as_str()),
+            )
             .await
             .map_err(crate::net_to_port)?;
         let instruments = parse_exchange_info(&resp.body)

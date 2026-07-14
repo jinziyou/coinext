@@ -29,7 +29,9 @@ async fn wait_fill(
     // Drain reports until a Fill (or timeout); returns (ts_ns, fill_px).
     loop {
         match tokio::time::timeout(Duration::from_secs(secs), rx.recv()).await {
-            Ok(Some(ExecutionReport::Fill(f))) => return Some((f.ts_event.as_u64(), f.last_px.as_f64())),
+            Ok(Some(ExecutionReport::Fill(f))) => {
+                return Some((f.ts_event.as_u64(), f.last_px.as_f64()))
+            }
             Ok(Some(_)) => continue, // Accepted/etc — keep waiting for the Fill
             _ => return None,
         }
@@ -38,8 +40,12 @@ async fn wait_fill(
 
 #[tokio::main]
 async fn main() {
-    let api_key = std::env::var("COINEXT__BINANCE__API_KEY").ok().filter(|s| !s.is_empty());
-    let api_secret = std::env::var("COINEXT__BINANCE__API_SECRET").ok().filter(|s| !s.is_empty());
+    let api_key = std::env::var("COINEXT__BINANCE__API_KEY")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let api_secret = std::env::var("COINEXT__BINANCE__API_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty());
     let symbol = env("COINEXT__ORDER__SYMBOL", "BTCUSDT.BINANCE");
     let orders_in = env("COINEXT__ORDERS_IN", "orders.json");
     let fills_out = env("COINEXT__FILLS_OUT", "fills.json");
@@ -61,14 +67,21 @@ async fn main() {
         eprintln!("bad symbol {symbol}");
         std::process::exit(1);
     };
-    let cfg = BinanceConfig { api_key, api_secret, testnet: true };
+    let cfg = BinanceConfig {
+        api_key,
+        api_secret,
+        testnet: true,
+    };
     let mut exec = BinanceExecutionClient::new(cfg).expect("build exec client");
     let mut reports = exec.take_reports();
     if let Err(e) = exec.connect().await {
         eprintln!("testnet_orders: connect failed: {e}");
         std::process::exit(1);
     }
-    eprintln!("testnet_orders: connected; placing {} market order(s) on testnet…", orders.len());
+    eprintln!(
+        "testnet_orders: connected; placing {} market order(s) on testnet…",
+        orders.len()
+    );
 
     let mut factory = OrderFactory::new(StrategyId::from("testnet-gate"));
     let mut results: Vec<serde_json::Value> = Vec::with_capacity(orders.len());
@@ -76,7 +89,11 @@ async fn main() {
     for (i, o) in orders.iter().enumerate() {
         let side_str = o.get("side").and_then(|v| v.as_str()).unwrap_or("buy");
         let qty_f = o.get("qty").and_then(|v| v.as_f64()).unwrap_or(0.001);
-        let side = if side_str.eq_ignore_ascii_case("sell") { OrderSide::Sell } else { OrderSide::Buy };
+        let side = if side_str.eq_ignore_ascii_case("sell") {
+            OrderSide::Sell
+        } else {
+            OrderSide::Buy
+        };
         let qty = match Quantity::from_f64(qty_f, 5) {
             Ok(q) => q,
             Err(e) => {
@@ -108,5 +125,8 @@ async fn main() {
     let _ = exec.disconnect().await;
     std::fs::write(&fills_out, serde_json::to_string_pretty(&results).unwrap())
         .unwrap_or_else(|e| panic!("testnet_orders: cannot write {fills_out}: {e}"));
-    eprintln!("testnet_orders: wrote {} fill record(s) -> {fills_out}", results.len());
+    eprintln!(
+        "testnet_orders: wrote {} fill record(s) -> {fills_out}",
+        results.len()
+    );
 }

@@ -134,11 +134,7 @@ impl Drop for WsClient {
 
 /// The reconnect supervisor: connect, stream frames, and on any disconnect back off and reconnect
 /// (emitting a `Reconnected` signal). Exits when the receiver is gone or shutdown fires.
-async fn run_loop(
-    cfg: WsConfig,
-    tx: mpsc::Sender<WsMessage>,
-    mut shutdown_rx: mpsc::Receiver<()>,
-) {
+async fn run_loop(cfg: WsConfig, tx: mpsc::Sender<WsMessage>, mut shutdown_rx: mpsc::Receiver<()>) {
     let mut backoff = cfg.base_backoff_ms;
     let mut first = true;
     loop {

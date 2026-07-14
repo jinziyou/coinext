@@ -718,9 +718,7 @@ def resolve_symbols(venue: str, symbols: str | list[str] | None) -> list[str]:
     ):
         uni = default_universe(venue)
         if not uni:
-            raise ValueError(
-                f"no default universe for venue {venue!r}; pass --symbols explicitly"
-            )
+            raise ValueError(f"no default universe for venue {venue!r}; pass --symbols explicitly")
         return [lake_symbol(venue_code, s) for s in uni]
 
     if len(raw_items) == 1 and raw_items[0].lower() in ("@etf", "@etfs", "etf", "etfs"):
@@ -735,9 +733,7 @@ def resolve_symbols(venue: str, symbols: str | list[str] | None) -> list[str]:
     return [lake_symbol(venue_code, s) for s in raw_items]
 
 
-def resolve_listings(
-    venue: str, symbols: str | list[str] | None
-) -> list[tuple[str, str]]:
+def resolve_listings(venue: str, symbols: str | list[str] | None) -> list[tuple[str, str]]:
     """Like :func:`resolve_symbols` but returns ``[(venue_code, lake_symbol), ...]``.
 
     Expands ``@default`` / ``@etf`` across market-group member venues so multi-venue
@@ -1029,11 +1025,15 @@ def is_etf_symbol(venue: str, symbol: str) -> bool:
     if lake_sym in ETF_UNIVERSES.get(vcode, ()):
         return True
 
-    members = set(expand_venues(venue)) if (
-        get_venue(venue) is not None or resolve_market_group(venue) is not None
-    ) else {vcode}
+    members = (
+        set(expand_venues(venue))
+        if (get_venue(venue) is not None or resolve_market_group(venue) is not None)
+        else {vcode}
+    )
     for uv, syms in ETF_UNIVERSES.items():
-        if lake_sym in syms and (uv == vcode or uv in members or resolve_market_group(venue) == "ETF"):
+        if lake_sym in syms and (
+            uv == vcode or uv in members or resolve_market_group(venue) == "ETF"
+        ):
             return True
 
     if vcode in ("SSE", "SZSE") or resolve_market_group(venue) == "ASHARE":

@@ -131,7 +131,11 @@ impl DataClient for BinanceDataClient {
         let url = if streams.is_empty() {
             self.config.ws_market_base().to_string()
         } else {
-            format!("{}?streams={}", self.config.ws_market_base(), streams.join("/"))
+            format!(
+                "{}?streams={}",
+                self.config.ws_market_base(),
+                streams.join("/")
+            )
         };
 
         let mut ws = WsClient::new(WsConfig {
@@ -192,8 +196,7 @@ impl DataClient for BinanceDataClient {
         end: UnixNanos,
     ) -> PortResult<Vec<Bar>> {
         let symbol = bar_type.instrument_id.symbol.as_str().to_string();
-        let interval =
-            bar_aggregation_to_interval(bar_type.spec.aggregation, bar_type.spec.step);
+        let interval = bar_aggregation_to_interval(bar_type.spec.aggregation, bar_type.spec.step);
         let start_ms = (start.as_u64() / 1_000_000).to_string();
         let end_ms = (end.as_u64() / 1_000_000).to_string();
         let resp = self
@@ -658,7 +661,8 @@ pub fn kline_to_bar(row: &serde_json::Value, bar_type: BarType) -> Result<Bar, S
         .as_array()
         .ok_or_else(|| "kline: row is not an array".to_string())?;
     let get = |i: usize| -> Result<&serde_json::Value, String> {
-        arr.get(i).ok_or_else(|| format!("kline: missing index {i}"))
+        arr.get(i)
+            .ok_or_else(|| format!("kline: missing index {i}"))
     };
     let as_str = |v: &serde_json::Value| -> Result<String, String> {
         v.as_str()
@@ -940,13 +944,10 @@ mod tests {
     fn normalize_depth_snapshot_rejects_missing_fields() {
         assert!(normalize_depth_snapshot("BTCUSDT", "{}", ti(), ti()).is_err());
         // missing asks
-        assert!(normalize_depth_snapshot(
-            "BTCUSDT",
-            r#"{"lastUpdateId":1,"bids":[]}"#,
-            ti(),
-            ti()
-        )
-        .is_err());
+        assert!(
+            normalize_depth_snapshot("BTCUSDT", r#"{"lastUpdateId":1,"bids":[]}"#, ti(), ti())
+                .is_err()
+        );
     }
 
     // Drives the real resync path through `process_frame`: a diff arrives on an unsynced book, the

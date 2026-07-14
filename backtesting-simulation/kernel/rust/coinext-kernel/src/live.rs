@@ -8,13 +8,9 @@ use coinext_cache::Cache;
 use coinext_core::{Clock, Currency};
 use coinext_data_engine::DataEngine;
 use coinext_exec_engine::ExecutionEngine;
-use coinext_model::{
-    MarketEvent, OrderEvent, StrategyId,
-};
+use coinext_model::{MarketEvent, OrderEvent, StrategyId};
 use coinext_portfolio::PortfolioState;
-use coinext_ports::{
-    BusMsg, MessageBus, Strategy, StrategyCommand, StrategyContext, Topic,
-};
+use coinext_ports::{BusMsg, MessageBus, Strategy, StrategyCommand, StrategyContext, Topic};
 use coinext_risk_engine::RiskGate;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -362,4 +358,3 @@ impl LiveKernel {
         Ok(())
     }
 }
-

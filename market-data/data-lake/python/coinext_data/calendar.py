@@ -12,8 +12,8 @@ exchange calendar feed.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Sequence
 
 from .venues import expand_venues, get_venue, resolve_market_group
 
@@ -552,9 +552,9 @@ def calendar_for(venue: str) -> TradingCalendar:
     # Default: weekends only (no holiday table).
     info = get_venue(code)
     sess = _SESSION.get(code)
-    return TradingCalendar(code, frozenset(), sess or (
-        SessionHours((0, 0), (23, 59), info.timezone) if info else None
-    ))
+    return TradingCalendar(
+        code, frozenset(), sess or (SessionHours((0, 0), (23, 59), info.timezone) if info else None)
+    )
 
 
 def _bar_date_utc(ts_ns: int) -> dt.date:

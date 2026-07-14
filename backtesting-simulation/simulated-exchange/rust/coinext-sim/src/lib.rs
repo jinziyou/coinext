@@ -653,7 +653,6 @@ impl SimulatedExecutionClient {
     }
 }
 
-
 mod port;
 pub use port::SimExecutionClientPort;
 #[cfg(test)]

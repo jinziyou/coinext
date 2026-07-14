@@ -1,16 +1,14 @@
 //! Deterministic backtest kernel (HistoricalClock + SimulatedExecutionClient).
 
-use crate::{
-    snapshot_portfolio, BacktestConfig, PortfolioSnapshot, RunResult,
-};
+use crate::{snapshot_portfolio, BacktestConfig, PortfolioSnapshot, RunResult};
 use coinext_bus::InProcBus;
 use coinext_cache::Cache;
 use coinext_core::{Clock, Currency, HistoricalClock, Money, Price, UnixNanos};
 use coinext_data_engine::DataEngine;
 use coinext_exec_engine::ExecutionEngine;
 use coinext_model::{
-    AssetClass, ClientOrderId, Fill, InstrumentId, LiquiditySide, MarketEvent,
-    OrderEvent, OrderSide, PositionSide, StrategyId, TradeId, VenueOrderId,
+    AssetClass, ClientOrderId, Fill, InstrumentId, LiquiditySide, MarketEvent, OrderEvent,
+    OrderSide, PositionSide, StrategyId, TradeId, VenueOrderId,
 };
 use coinext_portfolio::PortfolioState;
 use coinext_ports::{
@@ -476,4 +474,3 @@ impl BacktestKernel {
         }
     }
 }
-

@@ -26,26 +26,43 @@ use coinext_ports::{CancelOrder, ExecutionClient, ExecutionReport, OrderFactory,
 use std::time::Duration;
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 
 async fn wait_report(
     rx: &mut tokio::sync::mpsc::Receiver<ExecutionReport>,
     secs: u64,
 ) -> Option<ExecutionReport> {
-    tokio::time::timeout(Duration::from_secs(secs), rx.recv()).await.ok().flatten()
+    tokio::time::timeout(Duration::from_secs(secs), rx.recv())
+        .await
+        .ok()
+        .flatten()
 }
 
 fn fmt_report(r: &ExecutionReport) -> String {
     match r {
-        ExecutionReport::Accepted { client_order_id, venue_order_id } => {
+        ExecutionReport::Accepted {
+            client_order_id,
+            venue_order_id,
+        } => {
             format!("Accepted   coid={client_order_id} venue_id={venue_order_id}")
         }
         ExecutionReport::Fill(f) => {
-            format!("Fill       coid={} px={} qty={}", f.client_order_id, f.last_px, f.last_qty)
+            format!(
+                "Fill       coid={} px={} qty={}",
+                f.client_order_id, f.last_px, f.last_qty
+            )
         }
-        ExecutionReport::Canceled { client_order_id } => format!("Canceled   coid={client_order_id}"),
-        ExecutionReport::Rejected { client_order_id, reason } => {
+        ExecutionReport::Canceled { client_order_id } => {
+            format!("Canceled   coid={client_order_id}")
+        }
+        ExecutionReport::Rejected {
+            client_order_id,
+            reason,
+        } => {
             format!("Rejected   coid={client_order_id} reason={reason}")
         }
         other => format!("{other:?}"),
@@ -54,9 +71,14 @@ fn fmt_report(r: &ExecutionReport) -> String {
 
 #[tokio::main]
 async fn main() {
-    let api_key = std::env::var("COINEXT__BINANCE__API_KEY").ok().filter(|s| !s.is_empty());
-    let api_secret = std::env::var("COINEXT__BINANCE__API_SECRET").ok().filter(|s| !s.is_empty());
-    let symbol = std::env::var("COINEXT__ORDER__SYMBOL").unwrap_or_else(|_| "BTCUSDT.BINANCE".to_string());
+    let api_key = std::env::var("COINEXT__BINANCE__API_KEY")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let api_secret = std::env::var("COINEXT__BINANCE__API_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let symbol =
+        std::env::var("COINEXT__ORDER__SYMBOL").unwrap_or_else(|_| "BTCUSDT.BINANCE".to_string());
     let price_f = env_f64("COINEXT__ORDER__PRICE", 20_000.0); // far below market -> rests, no fill
     let qty_f = env_f64("COINEXT__ORDER__QTY", 0.001);
 
@@ -75,7 +97,11 @@ async fn main() {
         std::process::exit(2);
     }
 
-    let cfg = BinanceConfig { api_key, api_secret, testnet: true };
+    let cfg = BinanceConfig {
+        api_key,
+        api_secret,
+        testnet: true,
+    };
     let Some(iid) = InstrumentId::parse(&symbol) else {
         eprintln!("bad symbol `{symbol}` (expected e.g. BTCUSDT.BINANCE)");
         std::process::exit(1);
@@ -101,8 +127,15 @@ async fn main() {
     let qty = Quantity::from_f64(qty_f, 5).expect("qty");
     let now = SystemClock::new().now_ns();
     let mut factory = OrderFactory::new(StrategyId::from("testnet-smoke"));
-    let order =
-        factory.limit(iid.clone(), OrderSide::Buy, qty, price, TimeInForce::Gtc, OrderFlags::default(), now);
+    let order = factory.limit(
+        iid.clone(),
+        OrderSide::Buy,
+        qty,
+        price,
+        TimeInForce::Gtc,
+        OrderFlags::default(),
+        now,
+    );
     let coid = order.client_order_id.clone();
 
     println!("→ submitting LIMIT BUY coid={coid} (idempotent newClientOrderId)");

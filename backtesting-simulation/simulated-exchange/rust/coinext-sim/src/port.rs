@@ -154,4 +154,3 @@ impl coinext_ports::ExecutionClient for SimExecutionClientPort {
         Ok(())
     }
 }
-
