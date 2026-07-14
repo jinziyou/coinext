@@ -80,14 +80,15 @@ impl SqliteSeqCursor {
     /// after a restart.
     pub fn load(&self, strategy_id: &str) -> PersistResult<u64> {
         let conn = self.conn.lock().expect("seq cursor mutex poisoned");
-        let seq: Option<u64> = conn
+        // rusqlite ≥0.33 maps INTEGER as i64 only (SQLite affinity).
+        let seq: Option<i64> = conn
             .query_row(
                 "SELECT seq FROM seq_cursor WHERE strategy_id = ?1",
                 params![strategy_id],
                 |row| row.get(0),
             )
             .ok();
-        Ok(seq.unwrap_or(0))
+        Ok(seq.unwrap_or(0) as u64)
     }
 
     /// Durably persist `seq` as the high-water mark for `strategy_id` (UPSERT).
@@ -96,7 +97,7 @@ impl SqliteSeqCursor {
         conn.execute(
             "INSERT INTO seq_cursor (strategy_id, seq) VALUES (?1, ?2)
              ON CONFLICT(strategy_id) DO UPDATE SET seq = excluded.seq",
-            params![strategy_id, seq],
+            params![strategy_id, seq as i64],
         )?;
         Ok(())
     }
@@ -114,12 +115,12 @@ impl SeqCursor for SqliteSeqCursor {
                  ON CONFLICT(strategy_id) DO UPDATE SET seq = seq + 1",
                 params![namespace],
             )?;
-            let seq: u64 = conn.query_row(
+            let seq: i64 = conn.query_row(
                 "SELECT seq FROM seq_cursor WHERE strategy_id = ?1",
                 params![namespace],
                 |row| row.get(0),
             )?;
-            Ok(seq)
+            Ok(seq as u64)
         })();
         match &res {
             Ok(_) => conn.execute_batch("COMMIT;")?,

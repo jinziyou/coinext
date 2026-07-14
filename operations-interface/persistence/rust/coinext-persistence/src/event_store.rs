@@ -100,7 +100,8 @@ impl EventStore for SqliteEventStore {
         let event_json = serde_json::to_string(event)?;
         let conn = self.conn.lock().expect("event store mutex poisoned");
         // Next monotonic per-order seq: one past the current max for this stream (0-based).
-        let next_seq: u64 = conn.query_row(
+        // rusqlite ≥0.33 maps INTEGER as i64 only (SQLite affinity).
+        let next_seq: i64 = conn.query_row(
             "SELECT COALESCE(MAX(seq) + 1, 0) FROM order_events WHERE client_order_id = ?1",
             params![client_order_id.as_str()],
             |row| row.get(0),
@@ -112,11 +113,11 @@ impl EventStore for SqliteEventStore {
                 strategy_id.as_str(),
                 client_order_id.as_str(),
                 next_seq,
-                ts.as_u64(),
+                ts.as_u64() as i64,
                 event_json,
             ],
         )?;
-        Ok(next_seq)
+        Ok(next_seq as u64)
     }
 
     fn replay(&self, client_order_id: &ClientOrderId) -> PersistResult<Vec<OrderEvent>> {

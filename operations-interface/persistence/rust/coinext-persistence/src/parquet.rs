@@ -30,6 +30,9 @@ impl From<parquet::errors::ParquetError> for PersistError {
     }
 }
 
+/// One OHLCV row: `(ts_event, open, high, low, close, volume)`.
+pub type OhlcvRow = (i64, f64, f64, f64, f64, f64);
+
 /// Writes batches of [`Bar`]s to Parquet via Arrow. Stateless beyond the shared Arrow schema, so a
 /// single instance can fan out across files.
 pub struct ParquetWriter {
@@ -104,7 +107,7 @@ impl ParquetWriter {
 
     /// Read OHLCV rows written by [`write_ohlcv`] as
     /// `(ts_event, open, high, low, close, volume)`. Missing file → empty vec.
-    pub fn read_ohlcv(&self, path: &str) -> PersistResult<Vec<(i64, f64, f64, f64, f64, f64)>> {
+    pub fn read_ohlcv(&self, path: &str) -> PersistResult<Vec<OhlcvRow>> {
         if !std::path::Path::new(path).exists() {
             return Ok(Vec::new());
         }
