@@ -196,10 +196,11 @@ jobs:
         with:
           python-version: "3.13"
 
-      # pip-audit over the resolved Python dependency set (the uv lockfile -> requirements).
+      # pip-audit over third-party deps only. Workspace members are local editables and have no
+      # content hash for pip-audit (`uv export --no-emit-workspace`).
       - name: pip-audit (python deps)
         run: |
-          uv export --all-extras --no-emit-project --format requirements-txt -o /tmp/requirements.txt
+          uv export --all-extras --no-emit-project --no-emit-workspace --format requirements-txt -o /tmp/requirements.txt
           uvx pip-audit -r /tmp/requirements.txt
 
   # Validate compose topology parsing (services, build contexts, anchors, dev/obs overlays, combined dev+obs)

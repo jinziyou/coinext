@@ -1,6 +1,7 @@
 # Coinext — Python control plane (managed by uv). The Rust domain is exposed to Python by the
 # `coinext_py` extension module (built with maturin from foundation/crates/coinext-py);
-# pure-Python packages live under lifecycle modules' `python/` directories.
+# pure-Python packages live under lifecycle modules' `python/coinext_*` directories and are
+# uv workspace members (installable by name).
 [project]
 name = "coinext"
 version = "0.1.0"
@@ -8,17 +9,33 @@ description = "Coinext — Python control plane for the Rust+Python quant platfo
 requires-python = ">=3.13"
 readme = "README.md"
 license = { text = "MIT" }
-# Core control-plane deps: analytics numerics + config always present so layered YAML/env loading
-# does not silently degrade. Heavier research/live/ops deps stay optional.
+# Core deps always present. Workspace packages are linked via [tool.uv.sources].
 dependencies = [
     "numpy>=2.0",
     "pydantic>=2.7",
     "pyyaml>=6",
+    "coinext_contracts",
+    "coinext_config",
+    "coinext_data",
+    "coinext_broker",
+    "coinext_strategy",
+    "coinext_indicators",
+    "coinext_kernel",
+    "coinext_backtest",
+    "coinext_parity",
+    "coinext_analytics",
+    "coinext_screen",
+    "coinext_optimize",
+    "coinext_derivatives",
+    "coinext_risk",
+    "coinext_portfolio",
+    "coinext_live",
+    "coinext_bus",
+    "coinext_cli",
 ]
 
 [project.optional-dependencies]
 research = ["polars>=1.0", "pandas>=2.0", "matplotlib>=3.8", "duckdb>=1.0", "pyarrow>=16", "optuna>=3.6"]
-# `config` kept as an alias extra for older install docs (`uv sync --extra config`).
 config = []
 cli = ["typer>=0.12"]
 bus = ["redis>=5", "msgpack>=1.2.1"]  # >=1.2.1: GHSA-6v7p-g79w-8964
@@ -34,12 +51,51 @@ all = [
 coinext = "coinext_cli.main:app"
 
 [dependency-groups]
-# httpx2: required by starlette>=1.3 TestClient (the API auth/control-plane tests).
 dev = ["pytest>=8", "ruff>=0.5", "maturin>=1.7", "httpx2"]
 
-# Scaffold-friendly: lifecycle `python/` packages are importable without a full editable install
-# so `pytest` works against the source tree. Paths match the flattened layout:
-#   <lifecycle>/python/<coinext_*>
+[tool.uv.workspace]
+members = [
+    "foundation/python/coinext_contracts",
+    "foundation/python/coinext_config",
+    "market-data/python/coinext_data",
+    "market-data/python/coinext_broker",
+    "strategy-research/python/coinext_strategy",
+    "strategy-research/python/coinext_indicators",
+    "backtesting-simulation/python/coinext_kernel",
+    "backtesting-simulation/python/coinext_backtest",
+    "backtesting-simulation/python/coinext_parity",
+    "analytics-optimization/python/coinext_analytics",
+    "analytics-optimization/python/coinext_screen",
+    "analytics-optimization/python/coinext_optimize",
+    "analytics-optimization/python/coinext_derivatives",
+    "risk-portfolio/python/coinext_risk",
+    "risk-portfolio/python/coinext_portfolio",
+    "execution-live/python/coinext_live",
+    "operations-interface/python/coinext_bus",
+    "operations-interface/python/coinext_cli",
+]
+
+[tool.uv.sources]
+coinext_contracts = { workspace = true }
+coinext_config = { workspace = true }
+coinext_data = { workspace = true }
+coinext_broker = { workspace = true }
+coinext_strategy = { workspace = true }
+coinext_indicators = { workspace = true }
+coinext_kernel = { workspace = true }
+coinext_backtest = { workspace = true }
+coinext_parity = { workspace = true }
+coinext_analytics = { workspace = true }
+coinext_screen = { workspace = true }
+coinext_optimize = { workspace = true }
+coinext_derivatives = { workspace = true }
+coinext_risk = { workspace = true }
+coinext_portfolio = { workspace = true }
+coinext_live = { workspace = true }
+coinext_bus = { workspace = true }
+coinext_cli = { workspace = true }
+
+# Keep pythonpath as a zero-install fallback for `pytest` without `uv sync`.
 [tool.pytest.ini_options]
 pythonpath = [
     "foundation/python",
@@ -61,8 +117,6 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B"]
-# `ruff format` owns code width (line-length above); E501 here would only fire on prose
-# comments/docstrings it never reflows, so we don't hand-wrap them.
 ignore = ["E501"]
 
 [tool.uv]

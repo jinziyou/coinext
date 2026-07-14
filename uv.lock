@@ -10,6 +10,29 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
+[manifest]
+members = [
+    "coinext",
+    "coinext-analytics",
+    "coinext-backtest",
+    "coinext-broker",
+    "coinext-bus",
+    "coinext-cli",
+    "coinext-config",
+    "coinext-contracts",
+    "coinext-data",
+    "coinext-derivatives",
+    "coinext-indicators",
+    "coinext-kernel",
+    "coinext-live",
+    "coinext-optimize",
+    "coinext-parity",
+    "coinext-portfolio",
+    "coinext-risk",
+    "coinext-screen",
+    "coinext-strategy",
+]
+
 [[package]]
 name = "alembic"
 version = "1.18.4"
@@ -71,6 +94,24 @@ name = "coinext"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "coinext-analytics" },
+    { name = "coinext-backtest" },
+    { name = "coinext-broker" },
+    { name = "coinext-bus" },
+    { name = "coinext-cli" },
+    { name = "coinext-config" },
+    { name = "coinext-contracts" },
+    { name = "coinext-data" },
+    { name = "coinext-derivatives" },
+    { name = "coinext-indicators" },
+    { name = "coinext-kernel" },
+    { name = "coinext-live" },
+    { name = "coinext-optimize" },
+    { name = "coinext-parity" },
+    { name = "coinext-portfolio" },
+    { name = "coinext-risk" },
+    { name = "coinext-screen" },
+    { name = "coinext-strategy" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -140,6 +181,24 @@ dev = [
 requires-dist = [
     { name = "anyio", marker = "extra == 'live'", specifier = ">=4" },
     { name = "coinext", extras = ["research", "cli", "bus", "api", "live", "ib", "obs"], marker = "extra == 'all'" },
+    { name = "coinext-analytics", editable = "analytics-optimization/python/coinext_analytics" },
+    { name = "coinext-backtest", editable = "backtesting-simulation/python/coinext_backtest" },
+    { name = "coinext-broker", editable = "market-data/python/coinext_broker" },
+    { name = "coinext-bus", editable = "operations-interface/python/coinext_bus" },
+    { name = "coinext-cli", editable = "operations-interface/python/coinext_cli" },
+    { name = "coinext-config", editable = "foundation/python/coinext_config" },
+    { name = "coinext-contracts", editable = "foundation/python/coinext_contracts" },
+    { name = "coinext-data", editable = "market-data/python/coinext_data" },
+    { name = "coinext-derivatives", editable = "analytics-optimization/python/coinext_derivatives" },
+    { name = "coinext-indicators", editable = "strategy-research/python/coinext_indicators" },
+    { name = "coinext-kernel", editable = "backtesting-simulation/python/coinext_kernel" },
+    { name = "coinext-live", editable = "execution-live/python/coinext_live" },
+    { name = "coinext-optimize", editable = "analytics-optimization/python/coinext_optimize" },
+    { name = "coinext-parity", editable = "backtesting-simulation/python/coinext_parity" },
+    { name = "coinext-portfolio", editable = "risk-portfolio/python/coinext_portfolio" },
+    { name = "coinext-risk", editable = "risk-portfolio/python/coinext_risk" },
+    { name = "coinext-screen", editable = "analytics-optimization/python/coinext_screen" },
+    { name = "coinext-strategy", editable = "strategy-research/python/coinext_strategy" },
     { name = "duckdb", marker = "extra == 'research'", specifier = ">=1.0" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.110" },
     { name = "ib-insync", marker = "extra == 'ib'", specifier = ">=0.9.86" },
@@ -169,6 +228,114 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.5" },
 ]
+
+[[package]]
+name = "coinext-analytics"
+version = "0.1.0"
+source = { editable = "analytics-optimization/python/coinext_analytics" }
+
+[[package]]
+name = "coinext-backtest"
+version = "0.1.0"
+source = { editable = "backtesting-simulation/python/coinext_backtest" }
+
+[[package]]
+name = "coinext-broker"
+version = "0.1.0"
+source = { editable = "market-data/python/coinext_broker" }
+
+[[package]]
+name = "coinext-bus"
+version = "0.1.0"
+source = { editable = "operations-interface/python/coinext_bus" }
+
+[[package]]
+name = "coinext-cli"
+version = "0.1.0"
+source = { editable = "operations-interface/python/coinext_cli" }
+dependencies = [
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "typer", specifier = ">=0.12" }]
+
+[[package]]
+name = "coinext-config"
+version = "0.1.0"
+source = { editable = "foundation/python/coinext_config" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pyyaml", specifier = ">=6" },
+]
+
+[[package]]
+name = "coinext-contracts"
+version = "0.1.0"
+source = { editable = "foundation/python/coinext_contracts" }
+
+[[package]]
+name = "coinext-data"
+version = "0.1.0"
+source = { editable = "market-data/python/coinext_data" }
+
+[[package]]
+name = "coinext-derivatives"
+version = "0.1.0"
+source = { editable = "analytics-optimization/python/coinext_derivatives" }
+
+[[package]]
+name = "coinext-indicators"
+version = "0.1.0"
+source = { editable = "strategy-research/python/coinext_indicators" }
+
+[[package]]
+name = "coinext-kernel"
+version = "0.1.0"
+source = { editable = "backtesting-simulation/python/coinext_kernel" }
+
+[[package]]
+name = "coinext-live"
+version = "0.1.0"
+source = { editable = "execution-live/python/coinext_live" }
+
+[[package]]
+name = "coinext-optimize"
+version = "0.1.0"
+source = { editable = "analytics-optimization/python/coinext_optimize" }
+
+[[package]]
+name = "coinext-parity"
+version = "0.1.0"
+source = { editable = "backtesting-simulation/python/coinext_parity" }
+
+[[package]]
+name = "coinext-portfolio"
+version = "0.1.0"
+source = { editable = "risk-portfolio/python/coinext_portfolio" }
+
+[[package]]
+name = "coinext-risk"
+version = "0.1.0"
+source = { editable = "risk-portfolio/python/coinext_risk" }
+
+[[package]]
+name = "coinext-screen"
+version = "0.1.0"
+source = { editable = "analytics-optimization/python/coinext_screen" }
+
+[[package]]
+name = "coinext-strategy"
+version = "0.1.0"
+source = { editable = "strategy-research/python/coinext_strategy" }
 
 [[package]]
 name = "colorama"

@@ -1,0 +1,17 @@
+# Coinext workspace member — import as `coinext_indicators`.
+[project]
+name = "coinext_indicators"
+version = "0.1.0"
+description = "Coinext pure-Python package `coinext_indicators`"
+requires-python = ">=3.13"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["coinext_indicators"]
+
+[tool.setuptools.package-dir]
+"coinext_indicators" = "."

@@ -1,0 +1,17 @@
+# Coinext workspace member — import as `coinext_cli`.
+[project]
+name = "coinext_cli"
+version = "0.1.0"
+description = "Coinext pure-Python package `coinext_cli`"
+requires-python = ">=3.13"
+dependencies = ['typer>=0.12']
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["coinext_cli"]
+
+[tool.setuptools.package-dir]
+"coinext_cli" = "."

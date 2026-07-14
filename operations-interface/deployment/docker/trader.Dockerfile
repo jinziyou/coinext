@@ -16,7 +16,7 @@ FROM python:3.13-slim AS runtime
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md uv.lock ./
 COPY foundation ./foundation
 COPY market-data ./market-data
 COPY strategy-research ./strategy-research
@@ -26,6 +26,9 @@ COPY risk-portfolio ./risk-portfolio
 COPY execution-live ./execution-live
 COPY operations-interface ./operations-interface
 COPY execution-live/services/trader ./trader
+COPY operations-interface/deployment/docker/pythonpath.env /etc/coinext/pythonpath.env
+COPY operations-interface/deployment/docker/entrypoint-python.sh /entrypoint-python.sh
+RUN chmod +x /entrypoint-python.sh
 
 RUN uv pip install --system --no-cache \
       "redis>=5" "msgpack>=1.2.1" "anyio>=4" \
@@ -35,8 +38,9 @@ RUN uv pip install --system --no-cache \
 COPY --from=rust-builder /wheels/*.whl /tmp/wheels/
 RUN uv pip install --system --no-cache /tmp/wheels/*.whl && rm -rf /tmp/wheels
 
-ENV PYTHONPATH=/app/foundation/python:/app/market-data/python:/app/strategy-research/python:/app/backtesting-simulation/python:/app/analytics-optimization/python:/app/risk-portfolio/python:/app/execution-live/python:/app/operations-interface/python:/app/trader
 ENV PYTHONUNBUFFERED=1
+ENV COINEXT_SERVICE_PYTHONPATH=/app/trader
 
 EXPOSE 9103
-ENTRYPOINT ["python", "-m", "main"]
+ENTRYPOINT ["/entrypoint-python.sh"]
+CMD ["python", "-m", "main"]
