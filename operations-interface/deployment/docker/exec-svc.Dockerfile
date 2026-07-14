@@ -12,7 +12,7 @@
 # crate directory instead of the root workspace; the binary is still an OMS/risk wiring stub.
 # ----------------------------------------------------------------------------------------------
 
-FROM rust:1.95 AS chef
+FROM rust:1.97 AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /build
 

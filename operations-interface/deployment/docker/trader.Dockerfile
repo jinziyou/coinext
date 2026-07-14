@@ -12,7 +12,7 @@
 # ----------------------------------------------------------------------------------------------
 
 # --- stage 1: build the coinext_py PyO3 wheel (foundation/ffi-bridge/rust/coinext-py, --features python) ---
-FROM rust:1.95-slim AS rust-builder
+FROM rust:1.97-slim AS rust-builder
 RUN apt-get update  && apt-get install -y --no-install-recommends python3 python3-pip python3-venv build-essential  && rm -rf /var/lib/apt/lists/*
 # Install maturin to produce a wheel for coinext_py.
 RUN pip install --break-system-packages "maturin>=1.7,<2"
