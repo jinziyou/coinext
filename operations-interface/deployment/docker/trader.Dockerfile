@@ -2,7 +2,7 @@
 # trader — per-account live TradingNode. Metrics :9103. Status: scaffold.
 # Workspace packages via `uv sync`; service app on COINEXT_SERVICE_PYTHONPATH.
 
-FROM rust:1.95-bookworm AS rust-builder
+FROM rust:1.97-bookworm AS rust-builder
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-pip python3-venv build-essential \
  && rm -rf /var/lib/apt/lists/*
