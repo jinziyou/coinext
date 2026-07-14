@@ -1,5 +1,4 @@
-# Docker build-context excludes. Several Dockerfiles do `COPY . .`; keep the context small and
-# reproducible by dropping build/cache cruft and host-only state. Mirrors .gitignore's intent.
+# Docker build-context excludes. Dockerfiles often `COPY . .`; keep the context small.
 
 # Rust build output
 target/
@@ -21,19 +20,35 @@ __pycache__/
 
 # Node / UI build output
 **/node_modules/
-operations-interface/ui/service/ui/dist/
+operations-interface/services/ui/dist/
+operations-interface/ui/
 
 # Generic build/dist dirs
 dist/
 build/
 
-# VCS metadata
+# VCS / CI / editor
 .git/
+.github/
+.idea/
+.vscode/
+
+# Docs and tests are not needed inside application images
+docs/
+tests/
+**/*.md
+!README.md
 
 # Data lake (local) — not needed in the image
 /data/*
 
-# Secrets & local env
+# Secrets & local env / runtime state
 .env
 .env.*
 !.env.example
+.coinext/
+*.db
+*.sqlite
+
+# Notebooks checkpoints
+**/.ipynb_checkpoints/

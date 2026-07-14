@@ -29,23 +29,21 @@ from coinext_contracts import (
 _RISK_MONITOR = (
     pathlib.Path(__file__).resolve().parents[2]
     / "risk-portfolio"
-    / "risk-monitor"
-    / "service"
+    / "services"
     / "risk-monitor"
     / "main.py"
 )
 _TRADER = (
     pathlib.Path(__file__).resolve().parents[2]
     / "execution-live"
-    / "trader-service"
-    / "service"
+    / "services"
     / "trader"
     / "main.py"
 )
 
 
 def _load_risk_monitor():
-    """Load risk-portfolio/risk-monitor/service/risk-monitor/main.py by path (it is not an installed package)."""
+    """Load risk-portfolio/services/risk-monitor/main.py by path (it is not an installed package)."""
     spec = importlib.util.spec_from_file_location("coinext_risk_monitor_under_test", _RISK_MONITOR)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -55,7 +53,7 @@ def _load_risk_monitor():
 
 
 def _load_trader_service():
-    """Load execution-live/trader-service/service/trader/main.py by path (it is not an installed package)."""
+    """Load execution-live/services/trader/main.py by path (it is not an installed package)."""
     spec = importlib.util.spec_from_file_location("coinext_trader_service_under_test", _TRADER)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -1270,7 +1268,7 @@ def test_trader_build_node_wires_live_config_and_instantiates_strategy(monkeypat
 
 
 # --------------------------------------------------------------------------------------------------
-# risk-portfolio/risk-monitor/service/risk-monitor — consume + fold + trip exactly once
+# risk-portfolio/services/risk-monitor — consume + fold + trip exactly once
 # --------------------------------------------------------------------------------------------------
 
 

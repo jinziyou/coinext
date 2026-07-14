@@ -7,6 +7,7 @@ truth for module boundaries and parity invariants.
 |---|---|
 | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | **Canonical** design: lifecycle modules, domain model, ports, Kernel, data flow, deployment |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Stable-link stub: historical build order + open questions (points at root) |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Layout conventions, adding crates/packages, local checks |
 | [`ROADMAP.md`](ROADMAP.md) | Status snapshot, next steps, deferred live/ops, open questions |
 | [`CHANGELOG.md`](CHANGELOG.md) | Historical verified-work narrative |
 | [`STATUS.md`](STATUS.md) | verified / partial / scaffold label convention |
@@ -17,19 +18,18 @@ truth for module boundaries and parity invariants.
 | [`../tests/backtesting-simulation/parity/README.md`](../tests/backtesting-simulation/parity/README.md) | Advisory cross-check + sandbox parity gate |
 | [`../operations-interface/deployment/README.md`](../operations-interface/deployment/README.md) | Compose, Docker, observability overlay |
 | [`../operations-interface/deployment/services.md`](../operations-interface/deployment/services.md) | Deployable service index |
-| [`../strategy-research/research-notebooks/notebooks/README.md`](../strategy-research/research-notebooks/notebooks/README.md) | Research scripts |
+| [`../strategy-research/notebooks/README.md`](../strategy-research/notebooks/README.md) | Research scripts |
 | [`../data/sample/README.md`](../data/sample/README.md) | Sample lake fixture area |
-| [`../market-data/venue-adapters/README.md`](../market-data/venue-adapters/README.md) | Venue adapter pattern |
+| [`../market-data/README.md`](../market-data/README.md) | Market-data module + venue adapter pattern |
 
 ## Conventions
 
 - **Status honesty:** research/backtest paths are tested; live daemons (`ingestor`, `exec-svc`),
   `LiveKernel` end-to-end, API/UI data endpoints, and real venue parity remain scaffold or deferred.
-- **Paths:** source lives under the eight root lifecycle modules — there is no `modules/` prefix.
+- **Paths:** eight root lifecycle modules; inside each: `crates/`, `python/`, optional `services/`.
+  There is no `modules/` prefix and no `component/rust|python` nesting.
 - **Imports:** Python packages keep `coinext_*` names; Rust crates keep `coinext-*` names.
-- When linking to architecture from nested READMEs, count directory depth carefully (see recent
-  service README fixes under `*/service/*/README.md`).
-
+- Config defaults live in `foundation/config/`.
 
 ## Language
 

@@ -1,0 +1,3 @@
+# Dependencies for this service are declared via root pyproject.toml extras
+# (`api`, `bus`, `obs`) and installed by operations-interface/deployment/docker/api.Dockerfile.
+# Do not pin a second copy here — avoids version drift.

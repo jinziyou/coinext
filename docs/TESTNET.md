@@ -44,7 +44,7 @@ frames to the venue-agnostic `MarketEvent` types, and prints them:
 COINEXT__INGEST__SYMBOLS="BTCUSDT.BINANCE,ETHUSDT.BINANCE" \
 COINEXT__INGEST__MAX_EVENTS=20 \
 COINEXT__BINANCE__TESTNET=false \
-cargo run --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml --features live
+cargo run --manifest-path market-data/crates/coinext-ingest/Cargo.toml --features live
 ```
 
 Sample real output (mainnet BTCUSDT order-book deltas):
@@ -82,7 +82,7 @@ submit a resting LIMIT BUY far below market → `Accepted` → reconcile → can
 ```bash
 export COINEXT__BINANCE__API_KEY=...      # spot testnet key
 export COINEXT__BINANCE__API_SECRET=...
-cargo run --manifest-path market-data/venue-adapters/binance/rust/coinext-adapters-binance/Cargo.toml --example testnet_order
+cargo run --manifest-path market-data/crates/coinext-adapters-binance/Cargo.toml --example testnet_order
 # optional: COINEXT__ORDER__SYMBOL / COINEXT__ORDER__PRICE / COINEXT__ORDER__QTY
 ```
 

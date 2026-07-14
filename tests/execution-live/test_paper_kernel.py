@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip(
     "coinext_py",
-    reason="build coinext_py: uvx maturin develop --manifest-path foundation/ffi-bridge/rust/coinext-py/Cargo.toml --features python",
+    reason="build coinext_py: uvx maturin develop --manifest-path foundation/crates/coinext-py/Cargo.toml --features python",
 )
 
 from coinext_backtest import synthetic_ohlc_bars  # noqa: E402

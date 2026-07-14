@@ -12,13 +12,13 @@ only keeps the historical build order and open questions.
 ## Build order
 
 1. Bootstrap workspace + CI + root compose with redis/postgres/observability. ✅
-2. `coinext-core` in `foundation/primitives/rust/coinext-core` — value types, clock, timers. ✅
-3. `coinext-model` in `foundation/domain-model/rust/coinext-model` — IDs, Instrument, Order FSM, Fill, Position, market data. ✅
-4. `coinext-ports` in `foundation/ports/rust/coinext-ports` — port traits + command/report types. ✅
-5. `coinext-py` in `foundation/ffi-bridge/rust/coinext-py` — PyO3 bridge + `PyStrategyAdapter`. ✅
+2. `coinext-core` in `foundation/crates/coinext-core` — value types, clock, timers. ✅
+3. `coinext-model` in `foundation/crates/coinext-model` — IDs, Instrument, Order FSM, Fill, Position, market data. ✅
+4. `coinext-ports` in `foundation/crates/coinext-ports` — port traits + command/report types. ✅
+5. `coinext-py` in `foundation/crates/coinext-py` — PyO3 bridge + `PyStrategyAdapter`. ✅
 6. `coinext-bus` and `coinext-cache` — in-proc bus, Redis Envelope contract, indexed cache. ✅
 7. Data/execution/risk/portfolio engines wired through `coinext-kernel`. ✅
-8. `coinext-sim` in `backtesting-simulation/simulated-exchange/rust/coinext-sim` — matching + BrokerageModel + DelayedEventQueue. ✅
+8. `coinext-sim` in `backtesting-simulation/crates/coinext-sim` — matching + BrokerageModel + DelayedEventQueue. ✅
 9. Data lake foundation (`coinext_data`) under `market-data/data-lake`. ✅
 10. Strategy API + authoritative runner + advisory screen. ✅
 11. Analytics metrics + bias detectors. ✅

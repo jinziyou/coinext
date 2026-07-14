@@ -1,5 +1,6 @@
-# Uses the installed `stable` toolchain (1.95.0 in this environment). The hard MSRV floor is
-# pinned via `rust-version = "1.95"` in the workspace Cargo.toml, which `cargo` enforces at build.
+# Pin to the stable channel. MSRV floor is `rust-version = "1.95"` in the root Cargo.toml
+# (enforced by cargo at build). CI and Docker also use stable / MSRV-aligned images — see
+# operations-interface/deployment/docker/*.Dockerfile and .github/workflows/ci.yml.
 [toolchain]
 channel = "stable"
 components = ["rustfmt", "clippy"]

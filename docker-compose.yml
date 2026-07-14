@@ -16,7 +16,7 @@
 # Local dev overrides (exposed ports, source bind-mounts, hot reload) live in docker-compose.dev.yml.
 #
 # Env is loaded from .env (copy .env.example -> .env). Config precedence, per ARCHITECTURE.md:
-#   CLI flags > env (COINEXT__SECTION__KEY) > YAML files in foundation/runtime-config/config > built-in defaults.
+#   CLI flags > env (COINEXT__SECTION__KEY) > YAML files in foundation/config > built-in defaults.
 
 name: coinext
 

@@ -13,13 +13,13 @@
 # HOT-RELOAD NOTES
 #   * api (FastAPI/uvicorn): `--reload` watches the bind-mounted root workflow modules' */python trees
 #     plus the API service app. NOTE the compiled coinext_py extension is built into the image; if you
-#     change Rust under foundation/ffi-bridge/rust/coinext-py you must rebuild (`just py-build` locally,
+#     change Rust under foundation/crates/coinext-py you must rebuild (`just py-build` locally,
 #     or `docker compose build api`). Pure-Python edits reload.
 #   * trader / risk-monitor: bind-mounted source; restart the container to pick up changes, or run
 #     them under `watchfiles` (see commented command). The Kernel itself is the compiled coinext_py.
 #   * ingestor / exec-svc (Rust): no in-container hot reload — rebuild the image, or run the binary
-#     on the host with `cargo run --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml` /
-#     `cargo run --manifest-path execution-live/execution-service/rust/coinext-exec-svc/Cargo.toml`
+#     on the host with `cargo run --manifest-path market-data/crates/coinext-ingest/Cargo.toml` /
+#     `cargo run --manifest-path execution-live/crates/coinext-exec-svc/Cargo.toml`
 #     against the dev infra ports below.
 #   * ui (Vite): for true HMR run `npm run dev` on the host (port 3000; stop the compose `ui`
 #     service first). This overlay serves the built static bundle via nginx on :3000.
@@ -70,7 +70,7 @@ services:
       - ./risk-portfolio:/app/risk-portfolio:ro
       - ./execution-live:/app/execution-live:ro
       - ./operations-interface:/app/operations-interface:ro
-      - ./execution-live/trader-service/service/trader:/app/trader:ro
+      - ./execution-live/services/trader:/app/trader:ro
       - ./data:/data
     # Restart-to-reload by default. For auto-reload uncomment:
     # command: ["uv", "run", "watchfiles", "python -m main", "foundation", "market-data", "strategy-research", "backtesting-simulation", "analytics-optimization", "risk-portfolio", "execution-live", "operations-interface", "trader"]
@@ -89,7 +89,7 @@ services:
       - ./risk-portfolio:/app/risk-portfolio:ro
       - ./execution-live:/app/execution-live:ro
       - ./operations-interface:/app/operations-interface:ro
-      - ./risk-portfolio/risk-monitor/service/risk-monitor:/app/risk_monitor:ro
+      - ./risk-portfolio/services/risk-monitor:/app/risk_monitor:ro
 
   api:
     ports:
@@ -105,7 +105,7 @@ services:
       - ./risk-portfolio:/app/risk-portfolio:ro
       - ./execution-live:/app/execution-live:ro
       - ./operations-interface:/app/operations-interface:ro
-      - ./operations-interface/api/service/api:/app/api:ro
+      - ./operations-interface/services/api:/app/api:ro
       - ./data:/data
     # uvicorn auto-reload on the bind-mounted app + root workflow modules (pure-Python changes only; see header note).
     command: ["uvicorn", "app:app", "--app-dir", "/app/api", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/api", "--reload-dir", "/app/foundation", "--reload-dir", "/app/market-data", "--reload-dir", "/app/strategy-research", "--reload-dir", "/app/backtesting-simulation", "--reload-dir", "/app/analytics-optimization", "--reload-dir", "/app/risk-portfolio", "--reload-dir", "/app/execution-live", "--reload-dir", "/app/operations-interface"]

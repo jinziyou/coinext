@@ -1,9 +1,0 @@
-# operations-interface/api/service/api — FastAPI control-plane API (canonical port 8000).
-# These mirror the `api` + `bus` extras in the root pyproject.toml; pinned loosely for the
-# container build (operations-interface/deployment/docker/api.Dockerfile). The compiled `coinext_py` extension and the pure-Python
-# coinext_* packages are installed separately (from the workspace), not via this file.
-fastapi>=0.110
-starlette>=1.3.1
-uvicorn>=0.29
-redis>=5
-msgpack>=1.2.1

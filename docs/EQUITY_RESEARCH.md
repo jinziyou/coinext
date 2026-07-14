@@ -88,7 +88,7 @@ E2E tests: `tests/backtesting-simulation/test_ashare_t_plus_one.py`.
 ## 6. Research loop
 
 ```bash
-uv run python strategy-research/research-notebooks/notebooks/research_loop.py
+uv run python strategy-research/notebooks/research_loop.py
 ```
 
 Includes multi-market sample equity demo + A-share T+1 smoke when `coinext_py` is built.
