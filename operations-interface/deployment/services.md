@@ -1,19 +1,20 @@
 # Coinext service index
 
-Deployable service wrappers are grouped by lifecycle module. Dockerfiles stay centralized under `operations-interface/deployment/docker`; compose files stay at the repository root.
+Deployable service wrappers are grouped by lifecycle module. Dockerfiles stay under
+`operations-interface/deployment/docker`; compose files stay at the repository root.
 
 | Service | Lifecycle module | Source path | Dockerfile | Status |
 |---|---|---|---|---|
-| `ingestor` | `market-data/` | `market-data/ingestion-service/service/ingestor` + Rust crate `market-data/ingestion-service/rust/coinext-ingest` | `operations-interface/deployment/docker/ingestor.Dockerfile` | partial (monthly Parquet + Redis + :9101; live WS feature) |
-| `exec-svc` | `execution-live/` | Rust crate `execution-live/execution-service/rust/coinext-exec-svc` | `operations-interface/deployment/docker/exec-svc.Dockerfile` | partial (paper OMS; Binance venue when keys set) |
-| `trader` | `execution-live/` | `execution-live/trader-service/service/trader` | `operations-interface/deployment/docker/trader.Dockerfile` | scaffold wrapper around `coinext_live` |
-| `risk-monitor` | `risk-portfolio/` | `risk-portfolio/risk-monitor/service/risk-monitor` | `operations-interface/deployment/docker/risk-monitor.Dockerfile` | scaffold out-of-band supervisor |
-| `api` | `operations-interface/` | `operations-interface/api/service/api` | `operations-interface/deployment/docker/api.Dockerfile` | scaffold FastAPI control plane |
-| `ui` | `operations-interface/` | `operations-interface/ui/service/ui` | `operations-interface/deployment/docker/ui.Dockerfile` | scaffold React/Vite dashboard |
+| `ingestor` | `market-data/` | `market-data/crates/coinext-ingest` (+ optional `market-data/services/ingestor` notes) | `operations-interface/deployment/docker/ingestor.Dockerfile` | partial |
+| `exec-svc` | `execution-live/` | `execution-live/crates/coinext-exec-svc` | `operations-interface/deployment/docker/exec-svc.Dockerfile` | partial |
+| `trader` | `execution-live/` | `execution-live/services/trader` | `operations-interface/deployment/docker/trader.Dockerfile` | scaffold |
+| `risk-monitor` | `risk-portfolio/` | `risk-portfolio/services/risk-monitor` | `operations-interface/deployment/docker/risk-monitor.Dockerfile` | scaffold |
+| `api` | `operations-interface/` | `operations-interface/services/api` | `operations-interface/deployment/docker/api.Dockerfile` | scaffold |
+| `ui` | `operations-interface/` | `operations-interface/services/ui` | `operations-interface/deployment/docker/ui.Dockerfile` | scaffold |
 
 Notes:
 
-- Rust service daemons are intentionally workspace-excluded and verified by explicit manifest-path commands in `just test-live-edge` and CI.
+- Rust service daemons are workspace-excluded; verify with `just test-live-edge` (artifacts under `target/live-edge`).
 - Python wrappers keep heavy/native imports lazy so modules import in dependency-light tests.
-- Config uses the `COINEXT__SECTION__KEY` convention and defaults to `foundation/runtime-config/config`.
+- Config uses `COINEXT__SECTION__KEY` and defaults to `foundation/config`.
 - Runtime data lake mounts stay at root `data/` locally and `/data` in containers.

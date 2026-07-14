@@ -1,0 +1,8 @@
+# Coinext cargo config.
+#
+# Live-edge crates (workspace-excluded: network, adapters, persistence, ingest, exec-svc)
+# still default to a per-crate `target/` unless CARGO_TARGET_DIR is set. Prefer building them
+# with `just test-live-edge` / CI, which pin CARGO_TARGET_DIR to <repo>/target/live-edge so
+# artifacts share one tree and do not scatter multi-GB `target/` dirs under each crate.
+#
+# Workspace members already use the root `target/` (cargo workspace default).

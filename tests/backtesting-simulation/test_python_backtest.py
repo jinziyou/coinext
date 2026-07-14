@@ -11,7 +11,7 @@ import pytest
 
 coinext_py = pytest.importorskip(
     "coinext_py",
-    reason="build coinext_py first: see foundation/ffi-bridge/rust/coinext-py (uvx maturin develop --features python)",
+    reason="build coinext_py first: see foundation/crates/coinext-py (uvx maturin develop --features python)",
 )
 
 from coinext_analytics import (  # noqa: E402

@@ -23,23 +23,23 @@ updates:
 
   # --- Rust: workspace-EXCLUDED crates (each has its own Cargo.toml + Cargo.lock) ---
   - package-ecosystem: cargo
-    directory: /market-data/network-transport/rust/coinext-network
+    directory: /market-data/crates/coinext-network
     schedule:
       interval: weekly
   - package-ecosystem: cargo
-    directory: /market-data/venue-adapters/binance/rust/coinext-adapters-binance
+    directory: /market-data/crates/coinext-adapters-binance
     schedule:
       interval: weekly
   - package-ecosystem: cargo
-    directory: /operations-interface/persistence/rust/coinext-persistence
+    directory: /operations-interface/crates/coinext-persistence
     schedule:
       interval: weekly
   - package-ecosystem: cargo
-    directory: /market-data/ingestion-service/rust/coinext-ingest
+    directory: /market-data/crates/coinext-ingest
     schedule:
       interval: weekly
   - package-ecosystem: cargo
-    directory: /execution-live/execution-service/rust/coinext-exec-svc
+    directory: /execution-live/crates/coinext-exec-svc
     schedule:
       interval: weekly
 

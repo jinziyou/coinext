@@ -1,6 +1,6 @@
 # Coinext — Python control plane (managed by uv). The Rust domain is exposed to Python by the
-# `coinext_py` extension module (built with maturin from foundation/ffi-bridge/rust/coinext-py);
-# pure-Python packages live under root workflow modules' `*/python` directories.
+# `coinext_py` extension module (built with maturin from foundation/crates/coinext-py);
+# pure-Python packages live under lifecycle modules' `python/` directories.
 [project]
 name = "coinext"
 version = "0.1.0"
@@ -37,28 +37,19 @@ coinext = "coinext_cli.main:app"
 # httpx2: required by starlette>=1.3 TestClient (the API auth/control-plane tests).
 dev = ["pytest>=8", "ruff>=0.5", "maturin>=1.7", "httpx2"]
 
-# Scaffold-friendly: make root workflow modules' pure-Python packages importable and the compiled
-# coinext_py discoverable without a full editable install, so `pytest` works against the source tree.
+# Scaffold-friendly: lifecycle `python/` packages are importable without a full editable install
+# so `pytest` works against the source tree. Paths match the flattened layout:
+#   <lifecycle>/python/<coinext_*>
 [tool.pytest.ini_options]
 pythonpath = [
-    "foundation/python-contracts/python",
-    "foundation/runtime-config/python",
-    "market-data/data-lake/python",
-    "market-data/venue-adapters/equity/python",
-    "strategy-research/strategy-api/python",
-    "strategy-research/indicators/python",
-    "backtesting-simulation/kernel/python",
-    "backtesting-simulation/runner/python",
-    "backtesting-simulation/parity-gates/python",
-    "analytics-optimization/analytics/python",
-    "analytics-optimization/screening/python",
-    "analytics-optimization/optimizer/python",
-    "analytics-optimization/derivatives/python",
-    "risk-portfolio/risk-facade/python",
-    "risk-portfolio/portfolio-facade/python",
-    "execution-live/live-runtime/python",
-    "operations-interface/bus/python",
-    "operations-interface/cli/python",
+    "foundation/python",
+    "market-data/python",
+    "strategy-research/python",
+    "backtesting-simulation/python",
+    "analytics-optimization/python",
+    "risk-portfolio/python",
+    "execution-live/python",
+    "operations-interface/python",
     ".",
 ]
 testpaths = ["tests"]

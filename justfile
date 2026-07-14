@@ -1,6 +1,9 @@
 # Coinext task runner. `just` (https://github.com/casey/just) wraps the common workflows.
 set shell := ["bash", "-uc"]
 
+# Shared target dir for workspace-excluded live-edge crates (avoids nested multi-GB target/).
+export CARGO_TARGET_DIR_LIVE := justfile_directory() / "target" / "live-edge"
+
 # Default: list recipes
 default:
     @just --list
@@ -11,25 +14,25 @@ default:
 test:
     cargo test --workspace
 
-# Test/build the workspace-excluded live-edge crates the root workspace intentionally skips
+# Test/build the workspace-excluded live-edge crates (artifacts under target/live-edge)
 test-live-edge:
-    cargo test --manifest-path market-data/network-transport/rust/coinext-network/Cargo.toml
-    cargo test --manifest-path market-data/venue-adapters/binance/rust/coinext-adapters-binance/Cargo.toml
-    cargo test --manifest-path operations-interface/persistence/rust/coinext-persistence/Cargo.toml
-    cargo build --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml
-    cargo build --manifest-path execution-live/execution-service/rust/coinext-exec-svc/Cargo.toml
+    CARGO_TARGET_DIR="{{CARGO_TARGET_DIR_LIVE}}" cargo test --manifest-path market-data/crates/coinext-network/Cargo.toml
+    CARGO_TARGET_DIR="{{CARGO_TARGET_DIR_LIVE}}" cargo test --manifest-path market-data/crates/coinext-adapters-binance/Cargo.toml
+    CARGO_TARGET_DIR="{{CARGO_TARGET_DIR_LIVE}}" cargo test --manifest-path operations-interface/crates/coinext-persistence/Cargo.toml
+    CARGO_TARGET_DIR="{{CARGO_TARGET_DIR_LIVE}}" cargo build --manifest-path market-data/crates/coinext-ingest/Cargo.toml
+    CARGO_TARGET_DIR="{{CARGO_TARGET_DIR_LIVE}}" cargo build --manifest-path execution-live/crates/coinext-exec-svc/Cargo.toml
 
 # Run the partial exec-svc (SQLite + control :8081 + metrics :9102) until Ctrl-C
 exec-svc:
-    cargo run --manifest-path execution-live/execution-service/rust/coinext-exec-svc/Cargo.toml
+    CARGO_TARGET_DIR="{{CARGO_TARGET_DIR_LIVE}}" cargo run --manifest-path execution-live/crates/coinext-exec-svc/Cargo.toml
 
 # Offline ingest smoke (synthetic events → lake NDJSON + Parquet; optional REDIS URL)
 ingest-smoke:
-    cargo run --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml
+    CARGO_TARGET_DIR="{{CARGO_TARGET_DIR_LIVE}}" cargo run --manifest-path market-data/crates/coinext-ingest/Cargo.toml
 
 # Live market-data ingest (requires network)
 ingest-live:
-    cargo run --manifest-path market-data/ingestion-service/rust/coinext-ingest/Cargo.toml --features live
+    CARGO_TARGET_DIR="{{CARGO_TARGET_DIR_LIVE}}" cargo run --manifest-path market-data/crates/coinext-ingest/Cargo.toml --features live
 
 # Format + lint the Rust code
 lint:
@@ -44,6 +47,11 @@ backtest:
 build-release:
     cargo build --release
 
+# Remove workspace + live-edge + any nested crate target/ dirs (local disk hygiene)
+clean-targets:
+    rm -rf target
+    find . -type d -name target -not -path './.git/*' -prune -exec rm -rf {} +
+
 # --- Python control plane ---
 
 # Create the venv and install research/config/api/bus deps plus dev tools
@@ -52,7 +60,7 @@ py-setup:
 
 # Build the coinext_py PyO3 extension into the active venv (editable)
 py-build:
-    uvx maturin develop --manifest-path foundation/ffi-bridge/rust/coinext-py/Cargo.toml --features python
+    uvx maturin develop --manifest-path foundation/crates/coinext-py/Cargo.toml --features python
 
 # Run the Python tests (requires py-build first for coinext_py)
 py-test:

@@ -21,7 +21,7 @@ build/
 
 # Node / UI
 node_modules/
-operations-interface/ui/service/ui/dist/
+operations-interface/services/ui/dist/
 
 # Data lake (local) — keep sample/ tracked, ignore bulk
 /data/*

@@ -8,12 +8,12 @@ The topology preserves the parity model: the same engines run in every environme
 
 | Service | Functional source | Build asset | Runtime | Port(s) |
 |---|---|---|---|---|
-| `ingestor` | `market-data/ingestion-service` | `operations-interface/deployment/docker/ingestor.Dockerfile` | Rust `coinext-ingest` | metrics `9101` |
-| `exec-svc` | `execution-live/execution-service` | `operations-interface/deployment/docker/exec-svc.Dockerfile` | Rust `coinext-exec-svc` | metrics `9102`, ctl `8081` |
-| `trader` | `execution-live/trader-service` | `operations-interface/deployment/docker/trader.Dockerfile` | Python `coinext_live` | metrics `9103` |
-| `risk-monitor` | `risk-portfolio/risk-monitor` | `operations-interface/deployment/docker/risk-monitor.Dockerfile` | Python supervisor | metrics `9104` |
-| `api` | `operations-interface/api` | `operations-interface/deployment/docker/api.Dockerfile` | FastAPI | `8000` |
-| `ui` | `operations-interface/ui` | `operations-interface/deployment/docker/ui.Dockerfile` | Node/Vite build → nginx | host `3000` → container `80` |
+| `ingestor` | `market-data/crates/coinext-ingest` | `operations-interface/deployment/docker/ingestor.Dockerfile` | Rust `coinext-ingest` | metrics `9101` |
+| `exec-svc` | `execution-live/crates/coinext-exec-svc` | `operations-interface/deployment/docker/exec-svc.Dockerfile` | Rust `coinext-exec-svc` | metrics `9102`, ctl `8081` |
+| `trader` | `execution-live/services/trader` | `operations-interface/deployment/docker/trader.Dockerfile` | Python `coinext_live` | metrics `9103` |
+| `risk-monitor` | `risk-portfolio/services/risk-monitor` | `operations-interface/deployment/docker/risk-monitor.Dockerfile` | Python supervisor | metrics `9104` |
+| `api` | `operations-interface/services/api` | `operations-interface/deployment/docker/api.Dockerfile` | FastAPI | `8000` |
+| `ui` | `operations-interface/services/ui` | `operations-interface/deployment/docker/ui.Dockerfile` | Node/Vite build → nginx | host `3000` → container `80` |
 
 Backing services: Postgres (`event/audit store`), Redis (`Envelope` streams), and MinIO (`S3-compatible lake`). Runtime lake data remains rooted at `data/` locally and `/data` in containers.
 
@@ -24,7 +24,7 @@ cp .env.example .env
 # fill COINEXT__BINANCE__* only for sandbox/live execution
 ```
 
-All application services read `COINEXT__SECTION__KEY` env vars. The default YAML config directory is `foundation/runtime-config/config`.
+All application services read `COINEXT__SECTION__KEY` env vars. The default YAML config directory is `foundation/config`.
 
 ## Bring-up
 

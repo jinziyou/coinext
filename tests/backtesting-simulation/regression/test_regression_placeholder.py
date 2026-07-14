@@ -28,7 +28,7 @@ pytest.importorskip(
     "coinext_py",
     reason=(
         "build the extension: "
-        "uvx maturin develop --manifest-path foundation/ffi-bridge/rust/coinext-py/Cargo.toml --features python"
+        "uvx maturin develop --manifest-path foundation/crates/coinext-py/Cargo.toml --features python"
     ),
 )
 

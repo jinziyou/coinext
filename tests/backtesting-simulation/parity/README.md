@@ -77,7 +77,7 @@ start tight, widen with evidence — see `docs/ARCHITECTURE.md` open questions) 
 `coinext_parity.evaluate(metrics, criterion) -> Verdict` checks all four; `Verdict.reasons` lists every
 failing condition, and `coinext_parity.render_verdict(verdict)` renders the decision report
 (`promote-eligible` vs `BLOCKED from live`). These thresholds also live under the `parity` section of
-`foundation/runtime-config/config` YAML files. Covered by `test_parity_gate.py` (identical → PASS;
+`foundation/config` YAML files. Covered by `test_parity_gate.py` (identical → PASS;
 +2 bps + tiny equity noise → PASS within tolerance; +50 bps / dropped signals → FAIL with reasons;
 end-to-end `run_gate` with SmaCross over synthetic bars → PASS) and `test_recorded_sandbox.py`
 (recorded fixture load, offline replay gate, CLI replay, and `--record-out` roundtrip).

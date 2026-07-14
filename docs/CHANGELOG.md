@@ -147,7 +147,7 @@ Language: English (design/changelog). Operator quick-start remains Chinese in th
 - **Rust core** (`cargo test` green): fixed-precision value types, event-sourced Order FSM +
   Position PnL, hexagonal ports, cache, in-proc bus, streaming indicators, pre-trade risk gate,
   portfolio, data/exec engines, **SimulatedExchange** (BrokerageModel + delayed-fill queue on the
-  time-frontier), **deterministic synchronous kernel**. `backtesting-simulation/examples/rust/backtest-sma` runs end-to-end.
+  time-frontier), **deterministic synchronous kernel**. `backtesting-simulation/examples/backtest-sma` runs end-to-end.
 - **PyO3 bridge** (`coinext-py`, maturin): a Python `Strategy` runs through the SAME Rust kernel via
   `PyStrategyAdapter` (GIL per event) — the cross-FFI parity proof (`pytest` green).
 - **Binance adapter**: real WS market data (verified live) + REST execution (idempotent submit,

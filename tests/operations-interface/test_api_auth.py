@@ -1,4 +1,4 @@
-"""Security tests for the control-plane API (operations-interface/api/service/api/app.py).
+"""Security tests for the control-plane API (operations-interface/services/api/app.py).
 
 Asserts the trading-control surface is not reachable unauthenticated:
 
@@ -28,15 +28,14 @@ from starlette.testclient import TestClient  # noqa: E402
 _APP_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "operations-interface"
-    / "api"
-    / "service"
+    / "services"
     / "api"
     / "app.py"
 )
 
 
 def _load_app_module():
-    """Load operations-interface/api/service/api/app.py by path (it is not an installed package)."""
+    """Load operations-interface/services/api/app.py by path (it is not an installed package)."""
     spec = importlib.util.spec_from_file_location("coinext_api_app_under_test", _APP_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

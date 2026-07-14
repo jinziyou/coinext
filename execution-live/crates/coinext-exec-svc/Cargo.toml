@@ -1,0 +1,36 @@
+# coinext-exec-svc — the OMS/execution service (service name `exec-svc`).
+# EXCLUDED from the root cargo workspace — explicit path deps.
+[package]
+name = "coinext-exec-svc"
+description = "Coinext OMS/execution service: persistence + control plane + Redis kill-switch consumer. [partial]"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+authors = ["Coinext"]
+
+[[bin]]
+name = "coinext-exec-svc"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "signal",
+    "sync",
+    "time",
+] }
+coinext-persistence = { path = "../../../operations-interface/crates/coinext-persistence", default-features = false }
+coinext-model = { path = "../../../foundation/crates/coinext-model" }
+coinext-core = { path = "../../../foundation/crates/coinext-core" }
+coinext-ports = { path = "../../../foundation/crates/coinext-ports" }
+coinext-adapters-binance = { path = "../../../market-data/crates/coinext-adapters-binance" }
+redis = { version = "1" }
+rmp-serde = "1"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1"
+async-trait = "0.1"
