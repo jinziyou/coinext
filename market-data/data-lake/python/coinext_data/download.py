@@ -113,17 +113,94 @@ def download_to_lake(
     end_ms: int | None = None,
     testnet: bool = False,
     venue: str = "BINANCE",
+    listings: list[tuple[str, str]] | None = None,
+    apply_calendar: bool = True,
 ) -> dict[str, int]:
     """Download the last ``days`` of ``interval`` bars for each symbol and write the lake.
 
-    Returns ``{symbol: rows_written}``.
+    Routes by venue catalog:
+
+    * **crypto / Binance** (default): public Binance klines REST.
+    * **equity / index**: Yahoo Finance chart API (see :mod:`coinext_data.equity_download`).
+    * **market groups** (``ASHARE`` / ``US`` / ``HK`` / ``ETF``): pass ``listings`` from
+      :func:`coinext_data.venues.resolve_listings` so each symbol lands on the right partition.
+
+    Returns ``{symbol: rows_written}`` for single-venue calls, or
+    ``{"VENUE/symbol": rows_written}`` when multiple venues are written (market groups).
     """
+    from .venues import get_venue, is_equity_venue, resolve_market_group
+
+    # Multi-venue path (A股 / 美股 / ETF group downloads).
+    if listings is not None:
+        from .equity_download import download_equity_to_lake
+
+        end_s = None if end_ms is None else int(end_ms // 1000)
+        # Group symbols by venue to reuse pause / write logic.
+        by_venue: dict[str, list[str]] = {}
+        for vcode, sym in listings:
+            by_venue.setdefault(vcode, []).append(sym)
+        out: dict[str, int] = {}
+        multi = len(by_venue) > 1
+        for vcode, syms in by_venue.items():
+            counts = download_equity_to_lake(
+                lake,
+                syms,
+                interval=interval,
+                venue=vcode,
+                days=days,
+                end_s=end_s,
+                apply_calendar=apply_calendar,
+            )
+            for sym, n in counts.items():
+                key = f"{vcode}/{sym}" if multi else sym
+                out[key] = n
+        return out
+
+    venue_code = venue.strip().upper() or "BINANCE"
+    # Market-group strings without listings: fail with a clear message.
+    if resolve_market_group(venue) is not None and get_venue(venue) is None:
+        raise ValueError(
+            f"venue {venue!r} is a market group — pass listings=resolve_listings(...) "
+            "or a concrete venue (SSE, SZSE, NASDAQ, NYSE, HKEX, …)"
+        )
+
+    info = get_venue(venue_code)
+
+    if is_equity_venue(venue_code) and get_venue(venue_code) is not None:
+        from .equity_download import download_equity_to_lake
+
+        end_s = None if end_ms is None else int(end_ms // 1000)
+        return download_equity_to_lake(
+            lake,
+            symbols,
+            interval=interval,
+            venue=venue_code,
+            days=days,
+            end_s=end_s,
+            apply_calendar=apply_calendar,
+        )
+
+    if info is not None and info.data_source not in ("binance", "none"):
+        raise ValueError(
+            f"venue {venue_code} has data_source={info.data_source!r}; no downloader wired"
+        )
+    if info is not None and info.data_source == "none" and info.asset_family == "crypto":
+        raise ValueError(
+            f"venue {venue_code} is registered but has no public history downloader yet "
+            f"(only BINANCE klines + equity Yahoo venues are live)"
+        )
+    # Unknown venue codes still go to Binance for backward compatibility (custom labels).
+    if info is None and venue_code not in ("BINANCE",):
+        # Allow free-form crypto-style venue labels while still using Binance REST as the source
+        # of bars (caller owns the partition key). Documented as advanced use.
+        pass
+
     end = end_ms if end_ms is not None else _now_ms()
     start = end - int(days * 86_400_000)
-    out: dict[str, int] = {}
+    out = {}
     for symbol in symbols:
         rows = download_klines(symbol, interval, start_ms=start, end_ms=end, testnet=testnet)
-        out[symbol] = lake.write_bars(venue, symbol, interval, rows)
+        out[symbol] = lake.write_bars(venue_code, symbol, interval, rows)
     return out
 
 

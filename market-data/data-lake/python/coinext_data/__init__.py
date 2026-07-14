@@ -34,12 +34,72 @@ from .quotes import (
     quotes_from_trades,
     synth_quotes_from_bars,
 )
+from .venues import (
+    DEFAULT_FX_PAIRS,
+    DEFAULT_UNIVERSES,
+    ETF_UNIVERSES,
+    MARKET_GROUPS,
+    SAMPLE_EQUITY_SERIES,
+    InstrumentSpec,
+    VenueInfo,
+    all_venues,
+    default_universe,
+    equity_venues,
+    etf_universe,
+    expand_venues,
+    format_market_groups,
+    format_venue_table,
+    get_venue,
+    infer_ashare_venue,
+    instrument_spec,
+    is_equity_venue,
+    is_etf_symbol,
+    lake_symbol,
+    parse_user_symbol,
+    resolve_listing,
+    resolve_listings,
+    resolve_market_group,
+    resolve_symbols,
+    resolve_venue,
+    suggest_equity_download_defaults,
+    yahoo_symbol,
+)
+
+# Calendar + FX (zero-dep helpers; FX Yahoo load needs network).
+from .calendar import (
+    FilterStats,
+    SessionHours,
+    TradingCalendar,
+    bar_local_time,
+    calendar_for,
+    filter_session_bars,
+    filter_trading_bars,
+    in_session,
+    is_trading_day,
+    session_hours,
+)
+from .fx import (
+    FxBook,
+    FxCurve,
+    convert_bars,
+    download_fx_to_lake,
+    load_fx_book,
+    mark_portfolio_value,
+    revalue_bar_map,
+    venue_currency,
+    yahoo_fx_ticker,
+)
 
 # The Parquet lake (write/read/coverage), trade ingestion, and paginated downloader. Guarded so
 # `import coinext_data` works even when pyarrow is absent — only lake-backed features then raise a
 # clear error on use.
 try:
     from .download import download_klines, download_to_lake, interval_to_ms
+    from .equity_download import (
+        download_equity_bars,
+        download_equity_to_lake,
+        equity_interval_to_yahoo,
+    )
     from .ingest import ingest_agg_trades_to_lake, trade_ticks_to_ohlcv
     from .lake import DataLake, SeriesCoverage
 
@@ -54,6 +114,9 @@ except ImportError:  # pyarrow not installed
     # surfaces the actionable install message — never an opaque `'NoneType' is not callable`.
     DataLake = SeriesCoverage = _need_pyarrow  # type: ignore[assignment,misc]
     download_klines = download_to_lake = interval_to_ms = _need_pyarrow  # type: ignore[assignment]
+    download_equity_bars = download_equity_to_lake = equity_interval_to_yahoo = (  # type: ignore[assignment]
+        _need_pyarrow
+    )
     ingest_agg_trades_to_lake = trade_ticks_to_ohlcv = _need_pyarrow  # type: ignore[assignment]
 
 
@@ -288,10 +351,62 @@ __all__ = [
     "fetch_binance_agg_trades",
     "ingest_agg_trades_to_lake",
     "trade_ticks_to_ohlcv",
+    # Venue catalog (zero-dep)
+    "VenueInfo",
+    "InstrumentSpec",
+    "DEFAULT_UNIVERSES",
+    "ETF_UNIVERSES",
+    "MARKET_GROUPS",
+    "SAMPLE_EQUITY_SERIES",
+    "all_venues",
+    "default_universe",
+    "equity_venues",
+    "etf_universe",
+    "expand_venues",
+    "format_market_groups",
+    "format_venue_table",
+    "get_venue",
+    "infer_ashare_venue",
+    "instrument_spec",
+    "is_equity_venue",
+    "is_etf_symbol",
+    "lake_symbol",
+    "parse_user_symbol",
+    "resolve_listing",
+    "resolve_listings",
+    "resolve_market_group",
+    "resolve_symbols",
+    "resolve_venue",
+    "suggest_equity_download_defaults",
+    "yahoo_symbol",
+    # Calendar + FX
+    "FilterStats",
+    "SessionHours",
+    "TradingCalendar",
+    "bar_local_time",
+    "calendar_for",
+    "filter_session_bars",
+    "filter_trading_bars",
+    "in_session",
+    "is_trading_day",
+    "session_hours",
+    "DEFAULT_FX_PAIRS",
+    "FxBook",
+    "FxCurve",
+    "convert_bars",
+    "download_fx_to_lake",
+    "load_fx_book",
+    "mark_portfolio_value",
+    "revalue_bar_map",
+    "venue_currency",
+    "yahoo_fx_ticker",
     # Parquet lake (require pyarrow)
     "DataLake",
     "SeriesCoverage",
     "download_klines",
     "download_to_lake",
     "interval_to_ms",
+    "download_equity_bars",
+    "download_equity_to_lake",
+    "equity_interval_to_yahoo",
 ]

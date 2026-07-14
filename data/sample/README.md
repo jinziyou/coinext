@@ -21,10 +21,19 @@ The lake is Parquet, partitioned Hive-style by venue / symbol / interval (as imp
 ```
 data/sample/
 └── bars/
-    └── venue=BINANCE/
-        └── symbol=BTCUSDT/
-            └── interval=1m/
-                └── 202401.parquet   # optional committed fixture; none yet
+    ├── venue=BINANCE/
+    │   ├── symbol=BTCUSDT/interval=1m/…
+    │   └── symbol=ETHUSDT/interval=1m/…
+    ├── venue=NASDAQ/symbol=AAPL/interval=1d/…          # 美股
+    ├── venue=NYSE/symbol=JPM|SPY/interval=1d/…         # 美股 + 美股 ETF
+    ├── venue=HKEX/symbol=0700|2800/interval=1d/…       # 港股 + 港股 ETF
+    ├── venue=SSE/symbol=600519|510300/interval=1d/…    # A股 + A股 ETF
+    ├── venue=SZSE/symbol=000001/interval=1d/…          # A股（深交所）
+    ├── venue=TSE/symbol=7203/interval=1d/…
+    ├── venue=LSE/symbol=SHEL/interval=1d/…
+    └── venue=INDEX/
+        ├── symbol=^GSPC/interval=1d/…
+        └── symbol=^HSI/interval=1d/…
 ```
 
 `coinext download` and the CLI write into `COINEXT__DATA__LAKE_ROOT` (default `data/`), not necessarily
@@ -33,20 +42,39 @@ isolated from a working lake.
 
 ## Current state
 
-- No real Parquet fixture is committed yet. Runnable examples and most tests generate **synthetic**
-  bars in-memory via `coinext_backtest.synthetic_bars` / `synthetic_ohlc_bars` (deterministic, no
-  RNG), which is sufficient for parity and regression gates.
-- To populate a real local lake:
+- **Crypto:** committed short 1m OHLCV for `BINANCE/BTCUSDT` and `BINANCE/ETHUSDT`.
+- **Equities / ETFs / indices:** committed ~90–120 calendar days of **1d** bars for focus markets
+  (`SAMPLE_EQUITY_SERIES` in `coinext_data.venues`):
+  - **美股:** NASDAQ/AAPL, NYSE/JPM, NYSE/SPY (ETF)
+  - **港股:** HKEX/0700, HKEX/2800 (Tracker Fund ETF)
+  - **A股:** SSE/600519, SSE/510300 (CSI 300 ETF), SZSE/000001
+  - **FX:** FX/USDCNY, FX/USDHKD (for multi-currency revaluation)
+  - plus TSE/7203, LSE/SHEL, INDEX/^GSPC, INDEX/^HSI
+  Sourced from Yahoo Finance for offline demos.
+- Runnable examples also generate **synthetic** bars via `coinext_backtest.synthetic_bars` when
+  the lake is not used.
+- To refresh or expand a working lake (not the committed sample tree):
 
   ```bash
   just py-setup
+  # Crypto (Binance public klines)
   uv run coinext download --symbols BTCUSDT,ETHUSDT --interval 1m --days 30
-  uv run coinext catalog
+  # A股 / ETF / 美股 / 港股 (Yahoo Finance; see `coinext venues`)
+  uv run coinext download --venue ASHARE --symbols @default --interval 1d --days 365
+  uv run coinext download --venue SSE --symbols @etf --interval 1d --days 365
+  uv run coinext download --venue US --symbols @default --interval 1d --days 365
+  uv run coinext download --venue NYSE --symbols @etf --interval 1d --days 365
+  uv run coinext download --venue 港股 --symbols @default --interval 1d --days 365
+  uv run coinext download --venue INDEX --symbols @default --interval 1d --days 365
+  # FX for multi-ccy backtests (writes venue=FX)
+  uv run python -c "from coinext_data import DataLake, download_fx_to_lake; print(download_fx_to_lake(DataLake(), days=365))"
+  uv run coinext catalog --venue ALL
+  # Offline demo against the committed sample tree:
+  COINEXT__DATA__LAKE_ROOT=data/sample uv run coinext backtest \
+    --venue NASDAQ --symbol AAPL --from-lake --interval 1d
+  COINEXT__DATA__LAKE_ROOT=data/sample uv run coinext backtest \
+    --venue SSE --symbol 510300 --from-lake --interval 1d
   ```
-
-- When adding a committed fixture: drop a small genuine `.parquet` under the partition layout above
-  and point a `tests/market-data/` case at `DataLake(lake_root="data/sample")` so the real
-  HistoryReader path is exercised without network access.
 
 
 ## Quote recordings

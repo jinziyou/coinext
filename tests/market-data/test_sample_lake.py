@@ -31,3 +31,19 @@ def test_sample_history_reader_warmup():
     bars = reader.warmup_bars(BarSpec(symbol="BTCUSDT", interval="1m"), end_ns=2**63 - 1, n=50)
     assert len(bars) == 50
     assert all(isinstance(ts, int) and isinstance(px, float) for ts, px in bars)
+
+
+def test_sample_lake_has_global_equity_daily():
+    """Committed multi-venue equity fixtures (Yahoo 1d) for offline research demos."""
+    from coinext_data import SAMPLE_EQUITY_SERIES
+
+    lake = DataLake(str(_SAMPLE))
+    for venue, symbol in SAMPLE_EQUITY_SERIES:
+        rows = lake.read_ohlcv(venue, symbol, "1d")
+        assert len(rows) >= 40, f"{venue}/{symbol} too short: {len(rows)}"
+        assert len(rows[0]) == 6
+        assert rows[0][0] < rows[-1][0]
+        # OHLC sanity
+        _ts, o, h, lo, c, v = rows[-1]
+        assert h >= max(o, c) and lo <= min(o, c)
+        assert v >= 0
