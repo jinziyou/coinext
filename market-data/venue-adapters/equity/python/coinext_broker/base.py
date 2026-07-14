@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
 
-from .rules import is_t1_venue, limit_band, trade_date_from_ns
+from .rules import is_t1_venue, limit_band, resolve_prev_close, trade_date_from_ns
 
 OrderSide = Literal["buy", "sell"]
 OrderType = Literal["market", "limit"]
@@ -125,8 +125,8 @@ class PaperEquityBroker:
     _prev_close: dict[str, float] = field(default_factory=dict)
     # T+1: bought qty on each session day — key (venue:symbol, date_iso) → qty
     _bought_on: dict[tuple[str, str], float] = field(default_factory=dict)
-    _day_close: dict[str, float] = field(default_factory=dict)  # last close of current session day
-    _last_session: dict[str, dt.date] = field(default_factory=dict)
+    # Per listing: session_date → last close that day (for holiday-aware prev_close).
+    _closes_by_session: dict[str, dict[dt.date, float]] = field(default_factory=dict)
     _session_day: dt.date | None = None
     _id_seq: itertools.count = field(default_factory=lambda: itertools.count(1))
     _connected: bool = False
@@ -180,10 +180,11 @@ class PaperEquityBroker:
         sess = trade_date_from_ns(ts, v)
         if self.enforce_t1:
             self._session_day = sess
-        # Promote last close of a prior session day to prev_close before matching.
-        last_sess = self._last_session.get(key)
-        if last_sess is not None and sess != last_sess and key in self._day_close:
-            self._prev_close[key] = self._day_close[key]
+        # 涨跌停 base: last close on previous *trading* day (skips weekends/holidays).
+        by_day = self._closes_by_session.setdefault(key, {})
+        pc = resolve_prev_close(by_day, sess, v)
+        if pc is not None:
+            self._prev_close[key] = pc
         # Match limits against high/low (band from prev session).
         for order in list(self._orders.values()):
             if order.status not in ("accepted", "partial"):
@@ -195,8 +196,7 @@ class PaperEquityBroker:
             if hit:
                 self._fill(order, px, order.qty - order.filled_qty, ts)
         self._marks[key] = float(close)
-        self._day_close[key] = float(close)
-        self._last_session[key] = sess
+        by_day[sess] = float(close)
         return self._fills[before:]
 
     def sellable_qty(self, venue: str, symbol: str, *, day: dt.date | None = None) -> float:

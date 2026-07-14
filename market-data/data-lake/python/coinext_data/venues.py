@@ -484,6 +484,13 @@ SAMPLE_EQUITY_SERIES: tuple[tuple[str, str], ...] = (
     ("FX", "USDHKD"),
 )
 
+# Split/dividend-adjusted daily series (interval=1d_adj) for offline 前复权 demos.
+SAMPLE_ADJ_SERIES: tuple[tuple[str, str], ...] = (
+    ("SSE", "600519"),
+    ("NASDAQ", "AAPL"),
+    ("HKEX", "0700"),
+)
+
 # Default FX pairs for multi-currency equity research (Yahoo =X).
 DEFAULT_FX_PAIRS: tuple[str, ...] = ("USDCNY", "USDHKD", "EURUSD")
 
@@ -1251,6 +1258,7 @@ __all__ = [
     "InstrumentSpec",
     "MARKET_GROUPS",
     "MARKET_GROUP_ALIASES",
+    "SAMPLE_ADJ_SERIES",
     "SAMPLE_EQUITY_SERIES",
     "VenueInfo",
     "all_venues",

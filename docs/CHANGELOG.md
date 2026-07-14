@@ -90,6 +90,13 @@ Language: English (design/changelog). Operator quick-start remains Chinese in th
 2. **前复权**: `download --adjust` / `download_equity_bars(adjust=True)` scales OHLC by Yahoo adjclose.
 3. **CI**: explicit `test_ashare_t_plus_one.py` step before full pytest.
 
+## 2026-07-14k — prev-close lookback, shared rules, adj samples
+
+1. **Prev close**: OMS/paper walk prior session-day closes (skip empty holiday/weekend keys);
+   `resolve_prev_close` uses trading-day calendar.
+2. **Shared rules**: `coinext_data.ashare_rules` (single Python source); `coinext_broker.rules` re-export.
+3. **Sample**: `interval=1d_adj` for SSE/600519, NASDAQ/AAPL, HKEX/0700.
+
 ## 2026-07-13 — hygiene + research/live partial stack
 
 - Sample lake Parquet fixtures under `data/sample` + quote recording helpers (`coinext_data.quotes`).

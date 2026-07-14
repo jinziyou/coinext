@@ -74,9 +74,14 @@ uv run coinext backtest-multi --venue ASHARE --symbols @default --from-lake \
 | **US/HK** | No T+1 / no A-share price-limit band |
 
 ```bash
-# Optional: 前复权 OHLC (Yahoo adjclose scaling)
+# Optional: 前复权 OHLC (Yahoo adjclose scaling) → write as interval 1d by default;
+# sample lake ships interval=1d_adj for 600519/AAPL/0700.
 uv run coinext download --venue SSE --symbols 600519 --interval 1d --days 365 --adjust
+COINEXT__DATA__LAKE_ROOT=data/sample uv run coinext backtest \
+  --venue SSE --symbol 600519 --from-lake --interval 1d_adj
 ```
+
+Shared A-share rules: ``coinext_data.ashare_rules`` (paper re-exports; Kernel OMS mirrors %).
 
 E2E tests: `tests/backtesting-simulation/test_ashare_t_plus_one.py`.
 

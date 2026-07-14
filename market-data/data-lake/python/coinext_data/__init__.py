@@ -39,6 +39,7 @@ from .venues import (
     DEFAULT_UNIVERSES,
     ETF_UNIVERSES,
     MARKET_GROUPS,
+    SAMPLE_ADJ_SERIES,
     SAMPLE_EQUITY_SERIES,
     InstrumentSpec,
     VenueInfo,
@@ -63,6 +64,20 @@ from .venues import (
     resolve_venue,
     suggest_equity_download_defaults,
     yahoo_symbol,
+)
+
+from .ashare_rules import (
+    LIMIT_PCT_CHINEXT_STAR,
+    LIMIT_PCT_MAIN,
+    LIMIT_PCT_ST,
+    LimitBand,
+    T1_VENUES,
+    is_t1_venue,
+    limit_band,
+    price_limit_pct,
+    resolve_prev_close,
+    round_tick,
+    trade_date_from_ns,
 )
 
 # Calendar + FX (zero-dep helpers; FX Yahoo load needs network).
@@ -360,6 +375,7 @@ __all__ = [
     "DEFAULT_UNIVERSES",
     "ETF_UNIVERSES",
     "MARKET_GROUPS",
+    "SAMPLE_ADJ_SERIES",
     "SAMPLE_EQUITY_SERIES",
     "all_venues",
     "default_universe",
@@ -382,6 +398,18 @@ __all__ = [
     "resolve_venue",
     "suggest_equity_download_defaults",
     "yahoo_symbol",
+    # A-share rules (shared with coinext_broker)
+    "LIMIT_PCT_CHINEXT_STAR",
+    "LIMIT_PCT_MAIN",
+    "LIMIT_PCT_ST",
+    "LimitBand",
+    "T1_VENUES",
+    "is_t1_venue",
+    "limit_band",
+    "price_limit_pct",
+    "resolve_prev_close",
+    "round_tick",
+    "trade_date_from_ns",
     # Calendar + FX
     "FilterStats",
     "SessionHours",

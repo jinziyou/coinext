@@ -50,7 +50,15 @@ isolated from a working lake.
   - **A股:** SSE/600519, SSE/510300 (CSI 300 ETF), SZSE/000001
   - **FX:** FX/USDCNY, FX/USDHKD (for multi-currency revaluation)
   - plus TSE/7203, LSE/SHEL, INDEX/^GSPC, INDEX/^HSI
+  - **前复权 (adjusted):** `interval=1d_adj` for SSE/600519, NASDAQ/AAPL, HKEX/0700
+    (`SAMPLE_ADJ_SERIES`; Yahoo adjclose scaling)
   Sourced from Yahoo Finance for offline demos.
+
+  ```bash
+  # Offline adjusted demo
+  COINEXT__DATA__LAKE_ROOT=data/sample uv run coinext backtest \
+    --venue SSE --symbol 600519 --from-lake --interval 1d_adj
+  ```
 - Runnable examples also generate **synthetic** bars via `coinext_backtest.synthetic_bars` when
   the lake is not used.
 - To refresh or expand a working lake (not the committed sample tree):

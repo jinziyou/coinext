@@ -47,3 +47,15 @@ def test_sample_lake_has_global_equity_daily():
         _ts, o, h, lo, c, v = rows[-1]
         assert h >= max(o, c) and lo <= min(o, c)
         assert v >= 0
+
+
+def test_sample_lake_has_adjusted_daily():
+    """前复权 fixtures under interval=1d_adj for offline demos."""
+    from coinext_data import SAMPLE_ADJ_SERIES
+
+    lake = DataLake(str(_SAMPLE))
+    for venue, symbol in SAMPLE_ADJ_SERIES:
+        rows = lake.read_ohlcv(venue, symbol, "1d_adj")
+        assert len(rows) >= 40, f"{venue}/{symbol} 1d_adj too short: {len(rows)}"
+        raw = lake.read_ohlcv(venue, symbol, "1d")
+        assert raw, f"raw 1d missing for {venue}/{symbol}"

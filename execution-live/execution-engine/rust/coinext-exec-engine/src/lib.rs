@@ -31,10 +31,9 @@ pub struct ExecutionEngine {
     seen_trade_ids: RefCell<HashSet<TradeId>>,
     /// A-share T+1 ledger: (instrument, yyyymmdd UTC) → qty bought that day (not yet free to sell).
     bought_today: RefCell<HashMap<(InstrumentId, u32), Decimal>>,
-    /// Previous trading day's last mark (prev close) for 涨跌停 bands.
-    prev_close: RefCell<HashMap<InstrumentId, Decimal>>,
-    /// Last observed mark and its UTC day — used to promote prev_close on day change.
-    last_mark: RefCell<HashMap<InstrumentId, (u32, Decimal)>>,
+    /// Session-day last marks: (instrument, session_day_key) → last mark that day.
+    /// Prev close for 涨跌停 = latest entry with day_key < today (skips empty weekend/holiday keys).
+    close_by_day: RefCell<HashMap<(InstrumentId, u32), Decimal>>,
 }
 
 impl ExecutionEngine {
@@ -43,8 +42,7 @@ impl ExecutionEngine {
             cache,
             seen_trade_ids: RefCell::new(HashSet::new()),
             bought_today: RefCell::new(HashMap::new()),
-            prev_close: RefCell::new(HashMap::new()),
-            last_mark: RefCell::new(HashMap::new()),
+            close_by_day: RefCell::new(HashMap::new()),
         }
     }
 
@@ -99,12 +97,11 @@ impl ExecutionEngine {
         Decimal::new(10, 2) // 0.10
     }
 
-    /// Observe the cache mark for `id` at `now`; roll prev_close when the UTC day advances.
+    /// Observe the cache mark for `id` at `now` (store session-day close).
     fn observe_mark(&self, id: &InstrumentId, now: UnixNanos) {
         let Some(mark) = self.cache.borrow().mark(id) else {
             return;
         };
-        // Session day for the instrument's venue (Shanghai for A-shares).
         let day = {
             let cache = self.cache.borrow();
             if let Some(inst) = cache.instrument(id) {
@@ -114,22 +111,26 @@ impl ExecutionEngine {
             }
         };
         let px = mark.as_decimal();
-        let mut last = self.last_mark.borrow_mut();
-        let mut prev = self.prev_close.borrow_mut();
-        match last.get(id).copied() {
-            Some((d, last_px)) if d != day => {
-                // New session day: prior day's last mark is prev_close for 涨跌停.
-                prev.insert(id.clone(), last_px);
-                last.insert(id.clone(), (day, px));
+        self.close_by_day
+            .borrow_mut()
+            .insert((id.clone(), day), px);
+    }
+
+    /// Last mark on a session day strictly before ``day`` (walk back ≤ 40 day-keys).
+    /// Empty keys (weekends / holidays with no prints) are skipped automatically.
+    fn prev_close_for(&self, id: &InstrumentId, day: u32) -> Option<Decimal> {
+        let map = self.close_by_day.borrow();
+        for back in 1u32..=40 {
+            if day < back {
+                break;
             }
-            Some((d, _)) if d == day => {
-                last.insert(id.clone(), (day, px));
-            }
-            _ => {
-                // First observation: seed last_mark only; no prev_close yet (skip limit).
-                last.insert(id.clone(), (day, px));
+            if let Some(px) = map.get(&(id.clone(), day - back)) {
+                if *px > Decimal::ZERO {
+                    return Some(*px);
+                }
             }
         }
+        None
     }
 
     fn price_limit_violation(
@@ -142,7 +143,8 @@ impl ExecutionEngine {
             return None;
         }
         self.observe_mark(&order.instrument_id, now);
-        let prev = self.prev_close.borrow().get(&order.instrument_id).copied()?;
+        let day = Self::day_key_for_inst(inst, now);
+        let prev = self.prev_close_for(&order.instrument_id, day)?;
         if prev <= Decimal::ZERO {
             return None;
         }
