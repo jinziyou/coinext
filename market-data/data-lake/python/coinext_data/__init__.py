@@ -76,7 +76,10 @@ from .calendar import (
     filter_trading_bars,
     in_session,
     is_trading_day,
+    previous_session_date,
+    session_date,
     session_hours,
+    session_timezone,
 )
 from .fx import (
     FxBook,
@@ -389,7 +392,10 @@ __all__ = [
     "filter_trading_bars",
     "in_session",
     "is_trading_day",
+    "previous_session_date",
+    "session_date",
     "session_hours",
+    "session_timezone",
     "DEFAULT_FX_PAIRS",
     "FxBook",
     "FxCurve",

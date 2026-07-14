@@ -654,6 +654,7 @@ def _cmd_download(
     venue: str = "BINANCE",
     *,
     apply_calendar: bool = True,
+    adjust: bool = False,
 ) -> int:
     """Download REAL venue history into the local Parquet lake (no API key).
 
@@ -718,6 +719,7 @@ def _cmd_download(
                 venue=venue_raw,
                 listings=listings,
                 apply_calendar=apply_calendar,
+                adjust=adjust,
             )
         else:
             vcode = listings[0][0]
@@ -729,6 +731,7 @@ def _cmd_download(
                 days=days,
                 venue=vcode,
                 apply_calendar=apply_calendar,
+                adjust=adjust,
             )
     except (ValueError, RuntimeError, KeyError) as exc:
         print(f"download failed: {exc}")
@@ -1219,14 +1222,23 @@ def _build_typer_app():
         days: float = 7.0,
         venue: str = "BINANCE",
         no_calendar_filter: bool = False,
+        adjust: bool = False,
     ) -> None:
         """Download REAL venue history into the local Parquet lake (no key).
 
         Crypto: Binance klines. Equity/index: Yahoo Finance (see `coinext venues`).
         Equity daily bars drop holidays / flat-halt prints unless --no-calendar-filter.
+        --adjust stores split/dividend-adjusted OHLC (前复权).
         """
         raise typer.Exit(
-            _cmd_download(symbols, interval, days, venue, apply_calendar=not no_calendar_filter)
+            _cmd_download(
+                symbols,
+                interval,
+                days,
+                venue,
+                apply_calendar=not no_calendar_filter,
+                adjust=adjust,
+            )
         )
 
     @app.command()
@@ -1438,6 +1450,11 @@ def _build_argparse_parser():
         action="store_true",
         help="Keep weekend/holiday/flat-halt equity bars (default: filter them out)",
     )
+    p.add_argument(
+        "--adjust",
+        action="store_true",
+        help="Store split/dividend-adjusted equity OHLC (前复权 via Yahoo adjclose)",
+    )
 
     p = sub.add_parser("venues", help="List registered global venues (crypto + stock markets).")
     p.add_argument(
@@ -1580,6 +1597,7 @@ def _run_argparse(argv: list[str] | None) -> int:
             ns.days,
             ns.venue,
             apply_calendar=not getattr(ns, "no_calendar_filter", False),
+            adjust=getattr(ns, "adjust", False),
         ),
         "download-fx": lambda: _cmd_download_fx(ns.pairs, ns.days, getattr(ns, "lake_root", None)),
         "paper-equity": lambda: _cmd_paper_equity(

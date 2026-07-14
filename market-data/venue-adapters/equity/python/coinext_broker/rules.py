@@ -1,5 +1,8 @@
 """A-share market rules: T+1 sellability + daily price limits (涨跌停).
 
+Session dates use **venue-local** calendars (Asia/Shanghai for A-shares) via
+:func:`coinext_data.calendar.session_date` — not UTC midnight.
+
 Research-grade approximations — not a full exchange rule engine.
 """
 
@@ -18,27 +21,34 @@ def is_t1_venue(venue: str) -> bool:
     return venue.strip().upper() in _T1_VENUES
 
 
-def trade_date_from_ns(ts_ns: int) -> dt.date:
-    """UTC calendar date of a bar/order timestamp (good enough for daily research T+1)."""
-    return dt.datetime.fromtimestamp(int(ts_ns) // _NS_PER_S, tz=dt.UTC).date()
+def trade_date_from_ns(ts_ns: int, venue: str = "SSE") -> dt.date:
+    """Local **session** calendar date for a bar/order timestamp.
+
+    Defaults to A-share (Asia/Shanghai). Pass ``venue`` for US/HK session TZ.
+    """
+    try:
+        from coinext_data.calendar import session_date
+
+        return session_date(int(ts_ns), venue)
+    except Exception:
+        # Offline fallback if coinext_data is not on path (should not happen in-repo).
+        return dt.datetime.fromtimestamp(int(ts_ns) // _NS_PER_S, tz=dt.UTC).date()
 
 
 def price_limit_pct(venue: str, symbol: str) -> float | None:
     """Return daily limit fraction (e.g. 0.10 = ±10%) or ``None`` if no limit.
 
-    A-share heuristics:
+    A-share heuristics (aligned with Kernel OMS):
     * ST / *ST names → 5%
     * STAR (688) / ChiNext (300) → 20%
     * Main board + most ETFs → 10%
-    * Non-A venues → ``None`` (no limit check)
+    * Non-A venues → ``None``
     """
     v = venue.strip().upper()
     if v not in _T1_VENUES:
         return None
     s = symbol.strip().upper()
-    # ST detection: common lake symbols won't include ST prefix; callers may pass "ST*" /
-    # "STXXXX". Numeric codes only use board rules.
-    if s.startswith("ST") or s.startswith("*ST") or "ST" in s[:4]:
+    if s.startswith("*ST") or s.startswith("ST"):
         return 0.05
     body = s
     for suf in (".SS", ".SZ"):
@@ -48,9 +58,13 @@ def price_limit_pct(venue: str, symbol: str) -> float | None:
         b = body.zfill(6)
         if b.startswith(("300", "301", "688", "689")):
             return 0.20
-        # SSE/SZSE ETFs 51/15 often 10% (some are 20% — research default 10%).
         return 0.10
     return 0.10
+
+
+def _round_tick(px: float, decimals: int = 2) -> float:
+    """A-share style price rounding (0.01 CNY)."""
+    return round(float(px), decimals)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,20 +74,17 @@ class LimitBand:
 
     @property
     def up(self) -> float:
-        return round(self.prev_close * (1.0 + self.pct), 2)
+        return _round_tick(self.prev_close * (1.0 + self.pct))
 
     @property
     def down(self) -> float:
-        return round(self.prev_close * (1.0 - self.pct), 2)
+        return _round_tick(self.prev_close * (1.0 - self.pct))
 
     def clamp(self, price: float) -> float:
         return min(self.up, max(self.down, float(price)))
 
     def allows(self, price: float, *, side: str) -> bool:
-        """Marketable price check: buy cannot be above up-limit; sell not below down-limit.
-
-        Prices exactly on the limit are allowed (limit-up buy / limit-down sell still queue).
-        """
+        """Buy cannot be above up-limit; sell not below down-limit (at-limit OK)."""
         px = float(price)
         if side == "buy":
             return px <= self.up + 1e-9

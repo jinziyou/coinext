@@ -116,6 +116,10 @@ jobs:
           done
           curl -sf http://127.0.0.1:18081/health || (cat /tmp/exec-svc.log; exit 1)
 
+      # Explicit A-share OMS e2e (T+1 / 涨跌停) — also covered by full pytest, but fail loudly here.
+      - name: A-share OMS e2e (T+1 / price limit)
+        run: uv run pytest tests/backtesting-simulation/test_ashare_t_plus_one.py -v --tb=short
+
       - name: Pytest
         run: uv run pytest
 

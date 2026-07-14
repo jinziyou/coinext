@@ -667,6 +667,47 @@ def session_hours(venue: str) -> SessionHours | None:
     return calendar_for(venue).session
 
 
+def session_timezone(venue: str) -> str:
+    """IANA timezone for session-date / T+1 day boundaries on ``venue``."""
+    cal = calendar_for(venue)
+    if cal.session is not None:
+        return cal.session.timezone
+    group = resolve_market_group(venue)
+    if group == "ASHARE":
+        return "Asia/Shanghai"
+    if group == "HK":
+        return "Asia/Hong_Kong"
+    if group == "US":
+        return "America/New_York"
+    info = get_venue(venue)
+    if info is not None:
+        return info.timezone
+    return "UTC"
+
+
+def session_date(ts_ns: int, venue: str = "SSE") -> dt.date:
+    """Local **session calendar date** for ``ts_ns`` (bar/order time).
+
+    A-share T+1 and 涨跌停 use **Asia/Shanghai** dates (not UTC). US/HK use their session TZ.
+    """
+    from zoneinfo import ZoneInfo
+
+    tz_name = session_timezone(venue)
+    utc = dt.datetime.fromtimestamp(int(ts_ns) // _NS_PER_S, tz=dt.UTC)
+    return utc.astimezone(ZoneInfo(tz_name)).date()
+
+
+def previous_session_date(venue: str, day: dt.date) -> dt.date | None:
+    """Nearest trading day strictly before ``day`` on ``venue`` (look back ≤ 30 calendar days)."""
+    cal = calendar_for(venue)
+    d = day - dt.timedelta(days=1)
+    for _ in range(30):
+        if cal.is_trading_day(d):
+            return d
+        d -= dt.timedelta(days=1)
+    return None
+
+
 def _hm_to_minutes(hm: tuple[int, int]) -> int:
     return hm[0] * 60 + hm[1]
 
@@ -748,5 +789,8 @@ __all__ = [
     "filter_trading_bars",
     "in_session",
     "is_trading_day",
+    "previous_session_date",
+    "session_date",
     "session_hours",
+    "session_timezone",
 ]

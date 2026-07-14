@@ -125,6 +125,8 @@ class PaperEquityBroker:
     _prev_close: dict[str, float] = field(default_factory=dict)
     # T+1: bought qty on each session day — key (venue:symbol, date_iso) → qty
     _bought_on: dict[tuple[str, str], float] = field(default_factory=dict)
+    _day_close: dict[str, float] = field(default_factory=dict)  # last close of current session day
+    _last_session: dict[str, dt.date] = field(default_factory=dict)
     _session_day: dt.date | None = None
     _id_seq: itertools.count = field(default_factory=lambda: itertools.count(1))
     _connected: bool = False
@@ -168,16 +170,21 @@ class PaperEquityBroker:
     ) -> list[BrokerFill]:
         """Drive session day, prev-close roll, limit matching, and close mark.
 
-        Call once per bar in chronological order. The **previous** close used for limits is the
-        close from the prior :meth:`on_bar` (or :meth:`set_prev_close`).
+        Call once per bar in chronological order. 涨跌停 uses the **previous session day's**
+        last close (session-local TZ); T+1 uses the same session date.
         """
         before = len(self._fills)
         ts = ts_ns if ts_ns is not None else _now_ns()
-        if self.enforce_t1:
-            self._session_day = trade_date_from_ns(ts)
         v, s = venue.upper(), symbol.upper()
         key = f"{v}:{s}"
-        # Match limits against high/low before rolling prev_close to today's close.
+        sess = trade_date_from_ns(ts, v)
+        if self.enforce_t1:
+            self._session_day = sess
+        # Promote last close of a prior session day to prev_close before matching.
+        last_sess = self._last_session.get(key)
+        if last_sess is not None and sess != last_sess and key in self._day_close:
+            self._prev_close[key] = self._day_close[key]
+        # Match limits against high/low (band from prev session).
         for order in list(self._orders.values()):
             if order.status not in ("accepted", "partial"):
                 continue
@@ -188,8 +195,8 @@ class PaperEquityBroker:
             if hit:
                 self._fill(order, px, order.qty - order.filled_qty, ts)
         self._marks[key] = float(close)
-        # After the bar, today's close becomes next bar's prev_close.
-        self._prev_close[key] = float(close)
+        self._day_close[key] = float(close)
+        self._last_session[key] = sess
         return self._fills[before:]
 
     def sellable_qty(self, venue: str, symbol: str, *, day: dt.date | None = None) -> float:
@@ -368,7 +375,7 @@ class PaperEquityBroker:
         key = f"{order.venue}:{order.symbol}"
         pos = self._positions.get(key, 0.0)
         cash = self._cash.get(ccy, 0.0)
-        day = self._session_day or trade_date_from_ns(ts_ns)
+        day = self._session_day or trade_date_from_ns(ts_ns, order.venue)
 
         if order.side == "buy":
             cost = notional + fee

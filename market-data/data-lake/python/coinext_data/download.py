@@ -115,6 +115,7 @@ def download_to_lake(
     venue: str = "BINANCE",
     listings: list[tuple[str, str]] | None = None,
     apply_calendar: bool = True,
+    adjust: bool = False,
 ) -> dict[str, int]:
     """Download the last ``days`` of ``interval`` bars for each symbol and write the lake.
 
@@ -150,6 +151,7 @@ def download_to_lake(
                 days=days,
                 end_s=end_s,
                 apply_calendar=apply_calendar,
+                adjust=adjust,
             )
             for sym, n in counts.items():
                 key = f"{vcode}/{sym}" if multi else sym
@@ -178,6 +180,7 @@ def download_to_lake(
             days=days,
             end_s=end_s,
             apply_calendar=apply_calendar,
+            adjust=adjust,
         )
 
     if info is not None and info.data_source not in ("binance", "none"):

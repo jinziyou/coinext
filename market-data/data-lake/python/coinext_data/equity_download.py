@@ -79,8 +79,12 @@ def _fetch_chart(
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _bars_from_chart(payload: dict[str, Any]) -> list[BarRow]:
-    """Parse Yahoo chart payload into ``(ts_close_ns, o, h, l, c, v)`` rows."""
+def _bars_from_chart(payload: dict[str, Any], *, adjust: bool = False) -> list[BarRow]:
+    """Parse Yahoo chart payload into ``(ts_close_ns, o, h, l, c, v)`` rows.
+
+    When ``adjust=True`` and Yahoo provides ``adjclose``, scale OHLC by ``adjclose/close``
+    (forward-looking split/dividend adjustment commonly called 前复权 for research).
+    """
     try:
         result = payload["chart"]["result"]
     except (KeyError, TypeError) as exc:
@@ -96,6 +100,8 @@ def _bars_from_chart(payload: dict[str, Any]) -> list[BarRow]:
     lows = quote.get("low") or []
     closes = quote.get("close") or []
     volumes = quote.get("volume") or []
+    adj_block = ((block.get("indicators") or {}).get("adjclose") or [{}])[0]
+    adj_closes = adj_block.get("adjclose") or []
 
     meta = block.get("meta") or {}
     # tradingPeriod / data granularity: use interval seconds when present for close stamp.
@@ -117,22 +123,17 @@ def _bars_from_chart(payload: dict[str, Any]) -> list[BarRow]:
         if c is None or o is None or h is None or lo is None:
             continue  # skip unformed / halted bars with null OHLC
         vol = volumes[i] if i < len(volumes) and volumes[i] is not None else 0.0
+        fo, fh, flo, fc = float(o), float(h), float(lo), float(c)
+        if adjust and i < len(adj_closes) and adj_closes[i] is not None and fc != 0.0:
+            factor = float(adj_closes[i]) / fc
+            fo, fh, flo, fc = fo * factor, fh * factor, flo * factor, fc * factor
         open_s = int(timestamps[i])
         # Stamp at bar close (open + step - 1s), consistent with Binance closeTime semantics.
         close_s = open_s + max(step_s - 1, 0)
         ts_ns = close_s * _NS_PER_S
         # gmtoffset is informational only; timestamps are already UTC unix.
         _ = gmtoffset
-        rows.append(
-            (
-                ts_ns,
-                float(o),
-                float(h),
-                float(lo),
-                float(c),
-                float(vol),
-            )
-        )
+        rows.append((ts_ns, fo, fh, flo, fc, float(vol)))
     return rows
 
 
@@ -168,6 +169,7 @@ def download_equity_bars(
     ticker: str | None = None,
     apply_calendar: bool = True,
     drop_flat_halts: bool = True,
+    adjust: bool = False,
 ) -> list[BarRow]:
     """Download OHLCV for one equity/index symbol via Yahoo Finance.
 
@@ -186,6 +188,8 @@ def download_equity_bars(
         for daily (and coarser) bars. Intraday is left unfiltered (session hours not sliced).
     drop_flat_halts:
         Drop zero-volume flat OHLC prints (likely halted / untraded days).
+    adjust:
+        When True, scale OHLC by Yahoo ``adjclose/close`` (split/dividend adjusted / 前复权).
     """
     if not is_equity_venue(venue):
         info = resolve_venue(venue)
@@ -215,7 +219,7 @@ def download_equity_bars(
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Yahoo chart network error for {y_ticker!r}: {exc.reason}") from exc
 
-    rows = _bars_from_chart(payload)
+    rows = _bars_from_chart(payload, adjust=adjust)
     if apply_calendar:
         if interval in ("1d", "5d", "1wk", "1mo", "3mo"):
             rows, _stats = filter_trading_bars(
@@ -252,10 +256,12 @@ def download_equity_to_lake(
     pause: float = 0.15,
     timeout: float = 30.0,
     apply_calendar: bool = True,
+    adjust: bool = False,
 ) -> dict[str, int]:
     """Download equity/index history for each symbol and write the lake.
 
     Returns ``{lake_symbol: rows_written}``. Symbols are normalized via :func:`lake_symbol`.
+    ``adjust=True`` stores split/dividend-adjusted OHLC (前复权).
     """
     resolve_venue(venue)  # fail fast on unknown venue
     end = end_s if end_s is not None else _now_s()
@@ -270,6 +276,7 @@ def download_equity_to_lake(
             end_s=end,
             timeout=timeout,
             apply_calendar=apply_calendar,
+            adjust=adjust,
         )
         out[lake_sym] = lake.write_bars(venue.upper(), lake_sym, interval, rows)
         if pause and i + 1 < len(symbols):

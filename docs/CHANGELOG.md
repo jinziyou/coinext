@@ -83,6 +83,13 @@ Language: English (design/changelog). Operator quick-start remains Chinese in th
 2. E2E: `test_sse_equity_price_limit_denies_limit_above_band`.
 3. Docs: `docs/EQUITY_RESEARCH.md`; research_loop §8 A-share T+1 smoke.
 
+## 2026-07-14j — Shanghai session day, adjclose, CI e2e
+
+1. **Session date**: A-share T+1/涨跌停 use **Asia/Shanghai** (`session_date`); OMS
+   `day_key_shanghai`; paper broker prev_close rolls on session-day change; band tick 0.01.
+2. **前复权**: `download --adjust` / `download_equity_bars(adjust=True)` scales OHLC by Yahoo adjclose.
+3. **CI**: explicit `test_ashare_t_plus_one.py` step before full pytest.
+
 ## 2026-07-13 — hygiene + research/live partial stack
 
 - Sample lake Parquet fixtures under `data/sample` + quote recording helpers (`coinext_data.quotes`).

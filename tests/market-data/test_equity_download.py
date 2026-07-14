@@ -62,6 +62,21 @@ def test_bars_from_chart_skips_nulls_and_stamps_close():
     assert ts0 == (open_s + 86_400 - 1) * 1_000_000_000
 
 
+def test_bars_from_chart_adjust_scales_ohlc():
+    payload = _chart_payload(3)
+    # Inject adjclose at half price for all bars (incl. the null-close middle bar).
+    quote = payload["chart"]["result"][0]["indicators"]["quote"][0]
+    n = len(quote["close"])
+    payload["chart"]["result"][0]["indicators"]["adjclose"] = [
+        {"adjclose": [c * 0.5 if c is not None else None for c in quote["close"]]}
+    ]
+    rows = ed._bars_from_chart(payload, adjust=True)
+    assert len(rows) == 2  # null close dropped
+    _ts, o, h, lo, c, _v = rows[0]
+    assert c == pytest.approx(50.25)  # 100.5 * 0.5
+    assert o == pytest.approx(50.0)
+
+
 def test_download_equity_bars_uses_yahoo_ticker(monkeypatch):
     seen: dict = {}
 

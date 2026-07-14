@@ -121,9 +121,9 @@ def replay_bars(
 
     for row in bars:
         ts, o, h, lo, c, _vol = _ohlcv(row)
-        day = trade_date_from_ns(ts)
+        day = trade_date_from_ns(ts, v)
         broker.set_session_day(day)
-        # Drive OHLC matching + prev_close roll.
+        # Drive OHLC matching + prev_close roll (session-local T+1 / 涨跌停).
         broker.on_bar(v, s, high=h, low=lo, close=c, open_=o, ts_ns=ts)
         last_close = c
         closes.append(c)
@@ -293,7 +293,7 @@ def replay_portfolio(
         meta = results_meta[key]
         meta["bars"] += 1
         ts_i, o, h, lo, c, _v = _ohlcv(row)
-        day = trade_date_from_ns(ts_i)
+        day = trade_date_from_ns(ts_i, venue)
         broker.set_session_day(day)
         broker.on_bar(venue, symbol, high=h, low=lo, close=c, open_=o, ts_ns=ts_i)
         closes[key].append(c)

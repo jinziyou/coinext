@@ -69,9 +69,14 @@ uv run coinext backtest-multi --venue ASHARE --symbols @default --from-lake \
 
 | Rule | Behavior |
 |------|----------|
-| **T+1** | Same-UTC-day sell of newly bought shares → `orders_denied` / reason `TPlusOne` |
-| **涨跌停** | Limit/market price outside ±10% (main) / ±20% (300·688) / ±5% (ST) of prior-day mark → `PriceLimit` |
+| **T+1** | Same **Asia/Shanghai** session-day sell of newly bought shares → `TPlusOne` |
+| **涨跌停** | Limit/market price outside ±10% / ±20% (300·688) / ±5% (ST) of **prior session-day** last mark (0.01 tick) → `PriceLimit` |
 | **US/HK** | No T+1 / no A-share price-limit band |
+
+```bash
+# Optional: 前复权 OHLC (Yahoo adjclose scaling)
+uv run coinext download --venue SSE --symbols 600519 --interval 1d --days 365 --adjust
+```
 
 E2E tests: `tests/backtesting-simulation/test_ashare_t_plus_one.py`.
 

@@ -60,9 +60,23 @@ impl ExecutionEngine {
         Self::is_ashare_equity(inst)
     }
 
-    fn day_key(now: UnixNanos) -> u32 {
-        // UTC epoch day — same boundary as coinext_broker's UTC calendar date for T+1.
+    fn day_key_utc(now: UnixNanos) -> u32 {
         (now.as_u64() / 1_000_000_000 / 86_400) as u32
+    }
+
+    /// Session day key for A-share rules: **Asia/Shanghai** (UTC+8, no DST).
+    /// Matches `coinext_data.calendar.session_date(..., "SSE")`.
+    fn day_key_shanghai(now: UnixNanos) -> u32 {
+        let secs = now.as_u64() / 1_000_000_000 + 8 * 3600;
+        (secs / 86_400) as u32
+    }
+
+    fn day_key_for_inst(inst: &dyn coinext_model::Instrument, now: UnixNanos) -> u32 {
+        if Self::is_ashare_equity(inst) {
+            Self::day_key_shanghai(now)
+        } else {
+            Self::day_key_utc(now)
+        }
     }
 
     /// Limit fraction: ST 5%, ChiNext/STAR 20%, else main/ETF 10%.
@@ -90,12 +104,21 @@ impl ExecutionEngine {
         let Some(mark) = self.cache.borrow().mark(id) else {
             return;
         };
-        let day = Self::day_key(now);
+        // Session day for the instrument's venue (Shanghai for A-shares).
+        let day = {
+            let cache = self.cache.borrow();
+            if let Some(inst) = cache.instrument(id) {
+                Self::day_key_for_inst(&*inst, now)
+            } else {
+                Self::day_key_shanghai(now)
+            }
+        };
         let px = mark.as_decimal();
         let mut last = self.last_mark.borrow_mut();
         let mut prev = self.prev_close.borrow_mut();
         match last.get(id).copied() {
             Some((d, last_px)) if d != day => {
+                // New session day: prior day's last mark is prev_close for 涨跌停.
                 prev.insert(id.clone(), last_px);
                 last.insert(id.clone(), (day, px));
             }
@@ -124,8 +147,9 @@ impl ExecutionEngine {
             return None;
         }
         let pct = Self::price_limit_pct(order.instrument_id.symbol.as_str());
-        let up = prev * (Decimal::ONE + pct);
-        let down = prev * (Decimal::ONE - pct);
+        // Round band to 0.01 (A-share tick) like coinext_broker.LimitBand.
+        let up = (prev * (Decimal::ONE + pct)).round_dp(2);
+        let down = (prev * (Decimal::ONE - pct)).round_dp(2);
         // Market: check mark; limit: check limit price.
         let ref_px = match order.order_type {
             OrderType::Limit | OrderType::StopLimit => order.price.map(|p| p.as_decimal()),
@@ -159,12 +183,13 @@ impl ExecutionEngine {
         portfolio: &dyn Portfolio,
         id: &InstrumentId,
         now: UnixNanos,
+        inst: &dyn coinext_model::Instrument,
     ) -> Decimal {
         let long = match portfolio.position(id) {
             Some(p) if p.side == PositionSide::Long => p.quantity.as_decimal(),
             _ => Decimal::ZERO,
         };
-        let day = Self::day_key(now);
+        let day = Self::day_key_for_inst(inst, now);
         let bought = self
             .bought_today
             .borrow()
@@ -206,9 +231,9 @@ impl ExecutionEngine {
                 return vec![ev];
             }
         }
-        // A-share T+1: sell qty must be ≤ long − same-day buys.
+        // A-share T+1: sell qty must be ≤ long − same-session-day buys (Shanghai date).
         if order.side == OrderSide::Sell && Self::is_t_plus_one(&*inst) {
-            let sellable = self.sellable_qty(portfolio, &order.instrument_id, now);
+            let sellable = self.sellable_qty(portfolio, &order.instrument_id, now, &*inst);
             if order.quantity.as_decimal() > sellable {
                 let ev = OrderEvent::Denied {
                     reason: format!(
@@ -326,7 +351,7 @@ impl ExecutionEngine {
                     if let Some(inst) = inst {
                         // T+1 ledger: record same-day buy fills for SSE/SZSE equities.
                         if fill.side == OrderSide::Buy && Self::is_ashare_equity(&*inst) {
-                            let day = Self::day_key(fill.ts_event);
+                            let day = Self::day_key_for_inst(&*inst, fill.ts_event);
                             let mut ledger = self.bought_today.borrow_mut();
                             let e = ledger.entry((iid.clone(), day)).or_insert(Decimal::ZERO);
                             *e += fill.last_qty.as_decimal();

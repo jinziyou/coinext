@@ -13,17 +13,25 @@ pytest.importorskip("coinext_py", reason="build coinext_py: just py-build")
 import coinext_backtest as bt  # noqa: E402
 from coinext_strategy import Strategy  # noqa: E402
 
-# Align with exec-engine day_key: UTC epoch day = ns // 1e9 // 86400.
-# Use noon UTC on two consecutive days so bar spacing stays clean.
-_DAY_S = 86_400
+# Session-local days (Asia/Shanghai for A-share OMS), noon local → clean day boundaries.
+import datetime as _dt
+from zoneinfo import ZoneInfo
+
 _NS = 1_000_000_000
-# 2024-06-03 12:00:00 UTC and next day (both weekdays).
-_DAY0 = 1_717_416_000  # approx 2024-06-03 12:00 UTC
-_DAY1 = _DAY0 + _DAY_S
+_SH = ZoneInfo("Asia/Shanghai")
+
+
+def _shanghai_noon(y: int, m: int, d: int) -> int:
+    return int(_dt.datetime(y, m, d, 12, 0, tzinfo=_SH).timestamp())
+
+
+# 2024-06-03 / 2024-06-04 are weekdays in Shanghai.
+_DAY0 = _shanghai_noon(2024, 6, 3)
+_DAY1 = _shanghai_noon(2024, 6, 4)
 
 
 def _ns(day_unix_s: int, bar: int = 0) -> int:
-    """Bar timestamps within one UTC day (1h apart)."""
+    """Bar timestamps within one session day (1h apart from noon base)."""
     return (day_unix_s + bar * 3600) * _NS
 
 
