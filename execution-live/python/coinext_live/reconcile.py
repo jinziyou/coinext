@@ -1,16 +1,6 @@
-"""Local event-log reconcile helpers for the live TradingNode.
+"""Reconcile helpers — offline/file and SQLite-backed position/fill diffs.
 
-Full venue REST reconcile remains live-ops (needs API keys + ``coinext-adapters-binance``).
-This module provides a **file-backed** order-event log and a pure-Python diff so:
-
-* restart paths can load local truth without the Rust persistence crate linked into Python;
-* tests can exercise reconcile without a network;
-* operators get a real report shape instead of an empty stub.
-
-Wire format (JSONL under ``COINEXT__PERSIST__EVENT_LOG`` or ``TradingNodeConfig.event_log_path``)::
-
-    {"client_order_id": "...", "event": "submitted|filled|canceled", "symbol": "BTCUSDT",
-     "side": "buy", "qty": 0.1, "px": 50000.0, "ts_ns": 1, "venue_order_id": "..."}
+Status: partial. Live venue reconcile still evolving.
 """
 
 from __future__ import annotations

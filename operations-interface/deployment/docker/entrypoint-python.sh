@@ -1,15 +1,10 @@
 #!/bin/sh
-# Shared Python service entrypoint: load lifecycle PYTHONPATH, optional service suffix, exec CMD.
-# Source of truth for the base path: /etc/coinext/pythonpath.env (from pythonpath.env in this dir).
+# Shared Python service entrypoint.
+# Workspace packages are installed into the image venv via `uv sync` (no bulk PYTHONPATH).
+# Only the thin service app directory is appended when COINEXT_SERVICE_PYTHONPATH is set.
 set -eu
-if [ -f /etc/coinext/pythonpath.env ]; then
-  # shellcheck disable=SC1091
-  set -a
-  . /etc/coinext/pythonpath.env
-  set +a
-fi
 if [ -n "${COINEXT_SERVICE_PYTHONPATH:-}" ]; then
-  PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}${COINEXT_SERVICE_PYTHONPATH}"
+  PYTHONPATH="${COINEXT_SERVICE_PYTHONPATH}${PYTHONPATH:+:$PYTHONPATH}"
   export PYTHONPATH
 fi
 exec "$@"

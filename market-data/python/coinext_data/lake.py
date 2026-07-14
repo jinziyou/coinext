@@ -1,15 +1,6 @@
-"""coinext_data.lake — the local Parquet data lake (write + read + coverage).
+"""DataLake — Parquet partition layout + OHLCV read/write helpers.
 
-Partition layout (Hive-style dirs + per-month file shards)::
-
-    {root}/bars/venue={v}/symbol={s}/interval={i}/{YYYYMM}.parquet
-
-One Parquet file per calendar month (UTC, by bar **close** time), rows sorted by ``ts_event`` and
-deduped by it (idempotent re-downloads). Schema is full OHLCV so later work (OHLC-aware fills,
-richer analytics) has what it needs; backtests pull ``(ts_ns, close)`` via ``read_closes``.
-
-This is the reproducibility foundation: download once, backtest many times over the SAME bytes
-(``ARCHITECTURE.md`` §7 — the ONE HistoryReader path shared by backtest and live warm-up).
+Status: verified. Runtime root is repo `data/` or `/data` in containers.
 """
 
 from __future__ import annotations

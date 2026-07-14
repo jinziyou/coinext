@@ -1,13 +1,6 @@
-"""coinext_derivatives — European option pricing (Black–Scholes) + greeks + implied vol.
+"""coinext_derivatives — Black-Scholes / Greeks / IV facades.
 
-Thin wrappers over the compiled Rust ``coinext-derivatives`` (via ``coinext_py``), so a Python strategy prices
-options, computes greeks, and backs out implied vol with the IDENTICAL math the Rust core uses.
-Inputs are decimals (``rate=0.05``, ``vol=0.2``, ``t_years=0.5``); ``right`` is call or put.
-
-    from coinext_derivatives import bs_price, greeks, implied_vol
-    px = bs_price(spot=100, strike=100, t_years=1.0, rate=0.05, vol=0.2, right="call")
-    g = greeks(100, 100, 1.0, 0.05, 0.2, "call")   # g.delta, g.gamma, g.vega, g.theta, g.rho
-    iv = implied_vol(px, 100, 100, 1.0, 0.05, "call")
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

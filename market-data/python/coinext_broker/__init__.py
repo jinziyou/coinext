@@ -1,13 +1,6 @@
-"""coinext_broker — research-side equity broker ports (scaffold).
+"""coinext_broker — Equity paper / IB paper brokers (research path).
 
-Live stock execution is **not** wired into the Kernel yet. This package defines the Python-facing
-contracts a future IB / 券商 adapter must satisfy so research code can paper-trade equities against
-the same order shapes the backtest path uses.
-
-Status: **scaffold** — paper broker is usable offline; IB module is a config + method skeleton
-(no network orders until keys + full fill loop land).
-
-See ``market-data/python/coinext_broker/README.md``.
+Status: partial. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

@@ -1,23 +1,6 @@
-"""coinext_optimize — walk-forward strategy optimization with out-of-sample validation.
+"""coinext_optimize — Walk-forward optimizer.
 
-Hyperparameter search over strategy params, validated with **walk-forward** (rolling or anchored
-train/test) splits so a chosen parameter set is not overfit to one regime. Each evaluation runs the
-AUTHORITATIVE ``coinext_backtest`` runner (the same Rust engines + SimulatedExecutionClient as live),
-then scores the result with a ``coinext_analytics`` metric — so optimization is parity-valid, not a
-vectorized shortcut (ARCHITECTURE.md §1, build step 12).
-
-Two layers:
-
-* :func:`walk_forward_optimize` — the **honest** walk-forward: for each fold it optimizes params on
-  the *train* window and re-evaluates the winner on the *out-of-sample* (OOS) *test* window, then
-  reports in-sample vs OOS **degradation** (the overfitting guard the roadmap calls out). The inner
-  search is a pure-Python grid by default (no extra deps), or Optuna when ``optimizer="optuna"``.
-* :class:`OptimizeNode` — the single Optuna study with CV-averaged scoring (kept for compatibility).
-  It optimizes *directly* against the test folds, so its score is optimistic relative to the true
-  OOS estimate from :func:`walk_forward_optimize`; prefer the latter for a trustworthy figure.
-
-``optuna`` is optional and guarded: this module imports cleanly without it, and the grid-search path
-of :func:`walk_forward_optimize` needs only the stdlib.
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

@@ -1,11 +1,6 @@
-"""Local file-backed state for control-plane read endpoints.
+"""Local API state store — runs/fills/catalog for the control-plane UI.
 
-Replaces hard-coded stubs when Postgres is not yet wired:
-
-* **runs** — JSON array at ``COINEXT__API__RUNS_PATH`` (default ``.coinext/runs.json``)
-* **positions** — last live telemetry snapshot held in process memory (updated by bus consumer)
-* **fills** — derived from the latest run or ``COINEXT__API__FILLS_PATH`` JSONL
-* **catalog** — live scan of ``coinext_data.DataLake`` / ``DataCatalog`` when pyarrow is available
+Status: partial. Long-term backend remains Postgres.
 """
 
 from __future__ import annotations

@@ -1,17 +1,6 @@
-"""coinext_analytics.bias — heuristic bias / overfitting screens for a backtest.
+"""Bias screens — simple overfit / look-ahead style checks on tear-sheet inputs.
 
-These are **screens, not proofs**: each function returns human-readable warning strings (never
-raises) flagging patterns that commonly accompany look-ahead leakage or an overfit result. A clean
-screen does not certify a strategy; a dirty one says "look here before trusting this backtest".
-
-Two families, matching ``docs/ROADMAP.md`` (research side, item 2):
-
-* **Look-ahead** — structural impossibilities in the run: equity timestamps that move backwards, or
-  fills stamped before/off the bar grid the strategy was fed (a fill can only react to a bar it has
-  already seen). Driven by the run's own timeline, so it needs no oracle.
-* **Overfitting** — "too good to be true" shapes: an implausibly high Sharpe, a never-losing trade
-  record, or a positive return with literally zero drawdown while actively trading. None is proof of
-  a bug, but each is a known tell of leakage or curve-fitting and is worth a manual look.
+Status: verified. Advisory; does not replace parity gates.
 """
 
 from __future__ import annotations

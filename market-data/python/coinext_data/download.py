@@ -1,9 +1,6 @@
-"""coinext_data.download — paginated Binance kline downloader (public REST, no API key).
+"""Binance (and generic) kline download into the local lake.
 
-Binance caps ``/api/v3/klines`` at 1000 bars per request; this pages by advancing ``startTime`` past
-the last open time until the requested range is covered, so you can pull months of history rather
-than the single 500/1000-bar window. Output rows are full OHLCV stamped with the bar **close** time
-in nanoseconds — exactly what :mod:`coinext_data.lake` stores.
+Status: verified.
 """
 
 from __future__ import annotations

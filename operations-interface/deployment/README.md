@@ -38,7 +38,10 @@ docker compose up -d --build
 just up-dev
 ```
 
-The dev overlay publishes ports to localhost, bind-mounts all eight root lifecycle modules, and runs the API with `uvicorn --reload` over the API app plus module roots. Rust services and the compiled `coinext_py` extension still require rebuilds.
+The dev overlay publishes ports to localhost, bind-mounts lifecycle sources, and runs the API with
+`uvicorn --reload` watching `*/python` trees plus the API app. Python images install workspace
+packages via `uv sync` (see Dockerfiles); only the thin service directory uses
+`COINEXT_SERVICE_PYTHONPATH`. Rust services and `coinext_py` still require image rebuilds.
 
 ## Observability overlay
 
@@ -87,8 +90,15 @@ docker compose down -v
 just down
 ```
 
+## Python image layout
+
+1. `uv sync --frozen` installs root workspace members + service extras into `/opt/venv`.
+2. `maturin` wheel (`coinext_py`) is layered on top (api/trader).
+3. Entrypoint: `entrypoint-python.sh` only appends `COINEXT_SERVICE_PYTHONPATH` (service app dir).
+4. `pythonpath.env` is a **fallback doc** for source-mount-only containers — not used by default images.
+
 ## Known gaps
 
-- `coinext-ingest` and `coinext-exec-svc` are workspace-excluded daemon stubs today.
-- `trader`, `risk-monitor`, `api`, and `ui` are deployable wrappers/scaffolds, not a proved live trading stack.
+- `coinext-ingest` and `coinext-exec-svc` are workspace-excluded daemons (partial).
+- `trader`, `risk-monitor`, `api`, and `ui` are deployable scaffolds, not a proved live stack.
 - Production secret management remains open; `.env` is for local/dev single-VPS operation.

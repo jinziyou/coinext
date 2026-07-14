@@ -1,11 +1,6 @@
-"""coinext_cli — the ``coinext`` command-line entry point for the Coinext control plane.
+"""coinext_cli — Operator CLI (`coinext` entrypoint).
 
-Exposes a Typer ``app`` (the ``coinext`` console script, see root ``pyproject.toml``
-``[project.scripts]``) with subcommands: ``backtest``, ``backtest-multi``, ``parity``,
-``testnet-gate``, ``optimize``, ``screen``, ``download``, ``live``, ``reconcile``, ``catalog``.
-
-Typer is optional: if it is not installed, ``coinext_cli.main`` falls back to an ``argparse`` driver so
-``python -m coinext_cli.main ...`` still works with NO heavy deps. See :mod:`coinext_cli.main`.
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

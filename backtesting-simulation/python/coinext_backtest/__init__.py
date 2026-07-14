@@ -1,8 +1,6 @@
-"""coinext_backtest — the BacktestNode.
+"""coinext_backtest — Authoritative event-driven backtest runner.
 
-The AUTHORITATIVE event-driven runner: it drives a Python ``Strategy`` through the Rust kernel via
-``coinext_py.run_backtest`` (the SAME engines + SimulatedExecutionClient the live path uses). The
-vectorized ``coinext_screen`` path is advisory only; only this runner is parity-valid.
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

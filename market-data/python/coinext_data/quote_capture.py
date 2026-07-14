@@ -1,16 +1,6 @@
-"""BookTicker capture daemon (public REST poll; optional raw WS when available).
+"""Quote capture — REST/WS session recorder for research fixtures.
 
-Binance does not expose historical bookTicker over REST. This module records a **live** quote
-series into the same JSON schema as :mod:`coinext_data.quotes` so research can replay real
-spreads via ``load_quote_recording`` / ``coinext_backtest.run(..., quotes=...)``.
-
-Default transport is **stdlib REST polling** of ``/api/v3/ticker/bookTicker`` (no API key). When the
-optional ``websockets`` package is installed, ``mode="ws"`` uses the public combined stream
-``{symbol}@bookTicker`` for lower-latency capture.
-
-CLI::
-
-    coinext capture-quotes --symbol BTCUSDT --seconds 30 --out data/sample/quotes/...
+Status: verified (CLI `coinext capture-quotes`).
 """
 
 from __future__ import annotations

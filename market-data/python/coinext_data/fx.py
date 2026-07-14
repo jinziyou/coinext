@@ -1,15 +1,6 @@
-"""FX curves for multi-currency equity research (CNY / HKD / USD).
+"""FX helpers — pair download and FxBook for multi-currency research.
 
-The backtest kernel is single-settlement-currency. For multi-market portfolios (A股 + 港股 + 美股)
-we convert **prices** into a chosen base currency before feeding the kernel, using Yahoo FX pairs
-(``USDCNY=X``, ``USDHKD=X``, …).
-
-API sketch::
-
-    book = FxBook.with_defaults()          # identity + inverse pairs
-    book.load_yahoo(["USDCNY", "USDHKD"], days=365)
-    usd_bars = convert_bars(cny_bars, book, quote="CNY", base="USD")
-    multi = revalue_bar_map(bar_map, venues, book, base="USD")
+Status: verified.
 """
 
 from __future__ import annotations

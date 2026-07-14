@@ -1,14 +1,6 @@
-"""coinext_analytics.trades — round-trip trade reconstruction and trade-level statistics.
+"""Trade stats — round-trip trade metrics from fill logs.
 
-A backtest's ``fills_log`` (``(ts_ns, symbol, side, qty, px)``; ``side`` +1 buy / -1 sell) is a
-flat stream of executions. Most trade analytics (win rate, profit factor, average trade) are defined
-over *round-trip trades* — a position opened and later closed — not individual fills. This module
-folds the fill stream into closed :class:`Trade` round-trips using **FIFO** matching (the first lot
-opened is the first closed), the same convention the Rust ``Position`` PnL uses, then reduces them
-to :class:`TradeStats`.
-
-Pure stdlib; no dependency on the compiled ``coinext_py`` (it consumes the already-materialized fills),
-so the math is unit-testable without building the extension.
+Status: verified. Consumed by tear_sheet.
 """
 
 from __future__ import annotations

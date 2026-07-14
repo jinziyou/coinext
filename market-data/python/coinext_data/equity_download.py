@@ -1,11 +1,6 @@
-"""Public equity / index history downloader (Yahoo Finance chart API, no API key).
+"""Yahoo equity/index OHLCV download into the local lake.
 
-Fetches OHLCV for mainstream stock venues registered in :mod:`coinext_data.venues` and writes
-the same ``BarRow`` shape the Binance downloader produces, so the Parquet lake and backtest path
-are venue-agnostic.
-
-Yahoo intervals: ``1m 2m 5m 15m 30m 60m 90m 1h 1d 5d 1wk 1mo 3mo``. Intraday ranges are limited
-by Yahoo (typically ~7–60 days depending on interval); daily history spans decades.
+Status: verified. See docs/EQUITY_RESEARCH.md.
 """
 
 from __future__ import annotations

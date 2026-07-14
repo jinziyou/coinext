@@ -1,13 +1,6 @@
-"""coinext_kernel — thin Python wrapper over the compiled ``coinext_py`` Kernel.
+"""coinext_kernel — Python wrappers for BacktestKernel / LiveKernel / paper.
 
-The Kernel is the synchronous deterministic core (ARCHITECTURE.md §5). This package is a *thin*
-adapter: it picks the :class:`Environment`, builds the SAME ``RunConfig``, and asks ``coinext_py`` to
-wire the core. Only three things differ per environment — the Clock, the Cache contents, and the
-Data/Execution clients (behind byte-identical ports) — and that swap lives entirely on the Rust
-side. Python never re-implements the loop.
-
-``coinext_py`` is imported lazily so this module (and everything that imports it) loads with NO native
-extension present; the import error is surfaced only when you actually try to build/run a kernel.
+Status: verified (BacktestKernel); LiveKernel partial. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

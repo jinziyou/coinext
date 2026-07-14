@@ -1,12 +1,6 @@
-"""coinext_analytics — performance metrics, trade statistics, tear sheets, and bias detectors.
+"""coinext_analytics — Tear sheets, trade stats, bias screens.
 
-Computes returns/Sharpe/Sortino/drawdown from a backtest equity curve (:func:`compute_metrics`),
-reconstructs round-trip trades from the fill log for trade-level stats (:mod:`coinext_analytics.trades`),
-screens for look-ahead / overfitting tells (:mod:`coinext_analytics.bias`), and renders a text or
-graphical tear sheet (:func:`tear_sheet`, :func:`plot_tear_sheet`).
-
-The equity/metrics math is pure stdlib. Plotting needs ``matplotlib`` (the ``research`` extra) and
-is imported lazily, so the headline path stays dependency-free.
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

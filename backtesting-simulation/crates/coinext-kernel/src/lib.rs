@@ -1,17 +1,10 @@
-//! `coinext-kernel` — the single place backtest vs live differs, and the deterministic synchronous core
-//! loop. For backtest the [`BacktestKernel`] merge-sorts four event sources by timestamp — incoming
-//! market data, due delayed execution reports from the sim's DelayedEventQueue, due timers from the
-//! HistoricalClock, and due dated-contract expiry/settlement from the expiry schedule — and
-//! dispatches each to the engines and the Strategy SYNCHRONOUSLY.
+//! `coinext-kernel` — deterministic core loop; the single backtest↔live seam.
 //!
-//! For sandbox/live the [`LiveKernel`] runs the SAME engine set + Strategy, but driven by the
-//! `coinext_ports::DataClient`/`ExecutionClient` PORTS (market events + execution reports arrive over
-//! `tokio::mpsc` instead of the inherent sim queue). [`Environment`] selects which kernel is used;
-//! only the Clock and the Data/Execution clients change — the OMS/Risk/Portfolio/Strategy above the
-//! `ExecutionClient` seam are byte-for-byte identical (the parity invariant). NOTE: the live path
-//! structurally consumes the ports and folds reports through the shared engines, but end-to-end
-//! live/sandbox trading against a real venue (reconnect, reconcile, full trader loop) is not yet
-//! the default verified path.
+//! Status: BacktestKernel verified; LiveKernel partial.
+//! [`BacktestKernel`] merge-sorts market data, delayed sim reports, timers, and expiry events and
+//! dispatches synchronously. [`LiveKernel`] uses the same engines with port-fed channels.
+//! Only Clock + Data/Execution clients differ by [`Environment`] (parity invariant).
+//! See root ARCHITECTURE.md §1/§5/§6.
 
 mod backtest;
 mod live;

@@ -1,13 +1,6 @@
-"""coinext_screen — the FAST, NON-AUTHORITATIVE vectorized research screen.
+"""coinext_screen — Advisory vectorized parameter screen (non-authoritative).
 
-For coarse parameter sweeps: compute signals → target positions → mark-to-market PnL with numpy in
-ONE vectorized pass, skipping the Risk / Execution / Brokerage engines. This is **not** parity-valid
-(no fees-beyond-a-flat-rate, no slippage, no latency, no partial fills, no queue) — use it to narrow
-a large parameter space cheaply, then confirm the survivors with the AUTHORITATIVE
-``coinext_backtest.run`` (the event-driven Rust kernel). The advisory ``coinext_parity.cross_check`` flags
-when the screen drifts materially from the event-driven runner (see :func:`cross_check_vs_event`).
-
-Pure ``numpy`` (a core dependency); importing this module needs no compiled ``coinext_py``.
+Status: verified (advisory only). See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

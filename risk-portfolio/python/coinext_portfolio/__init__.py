@@ -1,13 +1,6 @@
-"""coinext_portfolio — Python facade mirroring the Rust ``Portfolio`` port.
+"""coinext_portfolio — Portfolio PnL / exposure facade.
 
-The AUTHORITATIVE portfolio (balances, realized/unrealized PnL, exposure) lives in Rust
-(``coinext-portfolio``), sourced from the Cache marks (ARCHITECTURE.md §3, §7). This package is a read
-facade used by `coinext_live.TradingNode.publish_portfolio(...)` to turn an authoritative portfolio
-snapshot into the `LivePositionPnl` bus payload consumed by the API and `risk-monitor`. It exposes the
-SAME shape whether the data comes from ``coinext_py`` in-process or from the Redis bus out-of-process.
-
-All money/size values keep the integer-backed domain semantics; here they surface as plain floats
-for display/aggregation only (never used for matching — ARCHITECTURE.md §4).
+Status: verified. See root ARCHITECTURE.md and docs/STATUS.md.
 """
 
 from __future__ import annotations

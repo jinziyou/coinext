@@ -44,9 +44,17 @@ just compose-check
 just clean-targets     # reclaim nested/workspace cargo targets
 ```
 
+## Python Docker images
+
+- Install workspace packages with `uv sync --frozen --no-dev --extra …` into `/opt/venv`.
+- Install `coinext_py` wheel from the maturin stage when needed (api/trader).
+- Set `COINEXT_SERVICE_PYTHONPATH` to the thin service app dir only; use
+  `operations-interface/deployment/docker/entrypoint-python.sh`.
+- Do **not** reintroduce multi-root `PYTHONPATH` for installed packages.
+
 ## Docs
 
 - Design truth: root `ARCHITECTURE.md` (English).
 - Operator quick start: root `README.md` (Chinese).
 - Status labels: `docs/STATUS.md` (`verified` / `partial` / `scaffold` / `deferred`).
-- Module top comments: one-line role + status + link to ARCHITECTURE — avoid re-stating the parity essay.
+- Package `__init__.py` top docs: one-line role + status — avoid re-stating the parity essay.
