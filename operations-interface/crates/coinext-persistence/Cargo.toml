@@ -34,7 +34,7 @@ chrono = "0.4"
 rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Columnar data-lake writer — gated behind the `parquet` feature (see [features]).
-arrow = { version = "54", optional = true }
+arrow = { version = "59", optional = true }
 parquet = { version = "54", optional = true }
 
 [dev-dependencies]
