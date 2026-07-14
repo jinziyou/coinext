@@ -9,7 +9,7 @@ use coinext_core::{Clock, Currency, HistoricalClock, Money, Price, UnixNanos};
 use coinext_data_engine::DataEngine;
 use coinext_exec_engine::ExecutionEngine;
 use coinext_model::{
-    AssetClass, ClientOrderId, Fill, Instrument, InstrumentId, LiquiditySide, MarketEvent,
+    AssetClass, ClientOrderId, Fill, InstrumentId, LiquiditySide, MarketEvent,
     OrderEvent, OrderSide, PositionSide, StrategyId, TradeId, VenueOrderId,
 };
 use coinext_portfolio::PortfolioState;
