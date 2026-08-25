@@ -2,7 +2,7 @@
 # exec-svc — OMS/execution service (coinext-exec-svc). Metrics :9102, control :8081.
 # Status: partial. Workspace-excluded crate; cargo-chef multi-stage → debian-slim.
 
-FROM rust:1.95-bookworm AS chef
+FROM rust:1.98-bookworm AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /build
 ENV CARGO_TARGET_DIR=/build/target
